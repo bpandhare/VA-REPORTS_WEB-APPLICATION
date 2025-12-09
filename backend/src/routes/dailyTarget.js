@@ -165,6 +165,17 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       })
     }
 
+    // Enforce one daily target per user per day
+    const [existing] = await pool.execute(
+      'SELECT id FROM daily_target_reports WHERE user_id = ? AND report_date = ? LIMIT 1',
+      [userId, finalReportDate]
+    )
+
+    if (existing && existing.length > 0) {
+      // If a report already exists for this user on this date, reject to enforce single daily target
+      return res.status(409).json({ message: 'Daily target for this date already submitted' })
+    }
+
     // Get PDF file path if uploaded
     const momReportPath = req.file ? req.file.path : null
 

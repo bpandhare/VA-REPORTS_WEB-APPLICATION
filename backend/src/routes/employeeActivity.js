@@ -43,14 +43,21 @@ router.get('/activities', verifyToken, async (req, res) => {
     const r = (role || '').toLowerCase()
     const isManagerish = r.includes('manager') || r.includes('team leader') || r.includes('group leader')
 
-    // Build WHERE clauses depending on role
+    // Build WHERE clauses depending on role. For historical records that predate adding
+    // user_id we fall back to matching the "incharge" username on daily reports.
     let dailyWhere = ''
     let hourlyWhere = ''
-    const params = []
+    let params = []
+    let username = null
     if (!isManagerish) {
-      dailyWhere = ' WHERE dtr.user_id = ?'
-      hourlyWhere = ' WHERE hr.user_id = ?'
-      params.push(userId)
+      // fetch username for fallback matching
+      const [uRows] = await pool.execute('SELECT username FROM users WHERE id = ?', [userId])
+      username = (uRows && uRows[0] && uRows[0].username) || null
+
+      dailyWhere = ' WHERE (dtr.user_id = ? OR dtr.incharge = ?)'
+      hourlyWhere = ' WHERE (hr.user_id = ? OR u.username = ?)'
+      // params order: daily (userId, username), hourly (userId, username)
+      params = [userId, username, userId, username]
     }
 
     // Select common fields and add reportType
@@ -92,8 +99,8 @@ router.get('/activities', verifyToken, async (req, res) => {
     // Union both queries and order by createdAt
     const unionQuery = `(${dailyQuery}) UNION ALL (${hourlyQuery}) ORDER BY createdAt DESC LIMIT ${limitNum} OFFSET ${offset}`
 
-    console.log('Executing union activities query for role', role)
-    const [activities] = await pool.execute(unionQuery, params.concat(params))
+    console.log('Executing union activities query for role', role, 'with params', params)
+    const [activities] = await pool.execute(unionQuery, params)
     console.log('Fetched combined activities count:', activities.length)
 
     res.json({
@@ -202,6 +209,35 @@ router.get('/summary', verifyToken, async (req, res) => {
   } catch (error) {
     console.error('Failed to fetch summary', error)
     res.status(500).json({ message: 'Unable to fetch summary' })
+  }
+})
+
+// Get absentees (users without a daily target report for a given date)
+router.get('/absentees', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id
+    const role = req.user.role || ''
+    const date = req.query.date || new Date().toISOString().slice(0, 10)
+
+    const r = role.toLowerCase()
+    const isManagerish = r.includes('manager') || r.includes('team leader') || r.includes('group leader')
+
+    if (isManagerish) {
+      // Return all users who do not have a daily_target_reports row for the date
+      const [users] = await pool.execute(`SELECT id, username, role FROM users ORDER BY username ASC`)
+      const [reported] = await pool.execute(`SELECT DISTINCT user_id FROM daily_target_reports WHERE report_date = ?`, [date])
+      const reportedIds = new Set((reported || []).map((r) => r.user_id))
+      const absentees = users.filter((u) => !reportedIds.has(u.id))
+      return res.json({ date, absentees })
+    }
+
+    // For non-managers, return whether the current user has submitted today
+    const [rows] = await pool.execute(`SELECT id FROM daily_target_reports WHERE user_id = ? AND report_date = ? LIMIT 1`, [userId, date])
+    const hasSubmitted = rows && rows.length > 0
+    return res.json({ date, hasSubmitted, absent: !hasSubmitted })
+  } catch (error) {
+    console.error('Failed to fetch absentees', error)
+    res.status(500).json({ message: 'Unable to fetch absentees' })
   }
 })
 
