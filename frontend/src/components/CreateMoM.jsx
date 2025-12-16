@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from './AuthContext'
 import './OnboardingForm.css'
-import jsPDF from "jspdf";
+
 
 export default function CreateMoM() {
   const { token, user } = useAuth()
@@ -12,7 +12,7 @@ export default function CreateMoM() {
     logo: '/vite.svg', // public asset; change to your company logo path
   }
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10))
-  const [autoFill, setAutoFill] = useState(false)
+  const [autoFill] = useState(false)
   const [momData, setMomData] = useState({
     customerName: '',
     customerPerson: '',
