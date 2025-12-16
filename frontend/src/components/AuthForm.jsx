@@ -11,7 +11,7 @@ function AuthForm() {
   const [role, setRole] = useState('')
   const [loading, setLoading] = useState(false)
   const [alert, setAlert] = useState(null)
-
+   
   const endpointBase = useMemo(
     () => import.meta.env.VITE_API_URL?.replace('/api/activity', '/api/auth') ?? '/api/auth',
     []
