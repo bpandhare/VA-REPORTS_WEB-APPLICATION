@@ -1,6 +1,11 @@
 import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import path from 'path'
+import { fileURLToPath } from 'url'
+import helmet from 'helmet'
+import compression from 'compression'
+import rateLimit from 'express-rate-limit'
 import activityRouter from './routes/activity.js'
 import authRouter from './routes/auth.js'
 import hourlyReportRouter from './routes/hourlyReport.js'
@@ -9,6 +14,10 @@ import employeeActivityRouter from './routes/employeeActivity.js'
 import pool from './db.js'
 
 dotenv.config()
+
+// ES Modules fix for __dirname
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 // Auto-migrate: Add missing columns to users table and create new tables
 async function migrateDatabase() {
@@ -196,35 +205,150 @@ const app = express()
 const PORT = process.env.PORT || 5000
 const HOST = '0.0.0.0'
 
-// CRITICAL FIX: Update CORS origin for your production frontend
-app.use(
-  cors({
-    origin: ['https://vaweb.onrender.com', 'http://localhost:5173'], // Add both frontend URLs
-    credentials: true
-  })
-)
-app.use(express.json())
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP for now, configure as needed
+  crossOriginEmbedderPolicy: false,
+}))
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+// Rate limiting for API
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
 })
 
-// FIXED: Mount authRouter at /api/auth to match frontend calls
-app.use('/api/auth', authRouter)  // ← FIXED LINE
+// Apply rate limiting to API routes
+app.use('/api', limiter)
+
+// CORS configuration - dynamically allow origins
+const allowedOrigins = process.env.NODE_ENV === 'production'
+  ? [
+      'https://vaweb.onrender.com',
+      'https://va-report-frontend.onrender.com', // Your frontend URL
+      'https://yourdomain.com', // Add your custom domain if any
+    ]
+  : [
+      'http://localhost:5173',
+      'http://localhost:3000',
+    ]
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true)
+      
+      if (allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true)
+      } else {
+        console.log('Blocked by CORS:', origin)
+        callback(new Error('Not allowed by CORS'), false)
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  })
+)
+
+// Compression middleware for production
+if (process.env.NODE_ENV === 'production') {
+  app.use(compression())
+}
+
+app.use(express.json({ limit: '10mb' })) // Increased limit for file uploads
+app.use(express.urlencoded({ extended: true, limit: '10mb' }))
+
+// Health check endpoint
+app.get('/health', (_req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    uptime: process.uptime()
+  })
+})
+
+// API Routes
+app.use('/api/auth', authRouter)
 app.use('/api/activity', activityRouter)
 app.use('/api/hourly-report', hourlyReportRouter)
 app.use('/api/daily-target', dailyTargetRouter)
 app.use('/api/employee-activity', employeeActivityRouter)
 
-app.use((err, _req, res, _next) => {
-  console.error('Unhandled error', err)
-  res.status(500).json({ message: 'Unexpected error occurred' })
+// Serve frontend static files in production
+if (process.env.NODE_ENV === 'production') {
+  // Assuming frontend is built in a folder relative to backend
+  const frontendPath = path.join(__dirname, '../frontend/dist')
+  
+  // Serve static files from frontend build
+  app.use(express.static(frontendPath))
+  
+  // Handle SPA routing - return index.html for all non-API routes
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api')) {
+      res.sendFile(path.join(frontendPath, 'index.html'))
+    }
+  })
+  
+  console.log('✓ Serving frontend static files from:', frontendPath)
+}
+
+// 404 handler for API routes
+app.use('/api/*', (req, res) => {
+  res.status(404).json({ 
+    message: 'API endpoint not found',
+    path: req.originalUrl,
+    method: req.method 
+  })
+})
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', {
+    error: err.message,
+    stack: err.stack,
+    path: req.path,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  })
+  
+  const statusCode = err.status || 500
+  const message = process.env.NODE_ENV === 'production' 
+    ? 'Unexpected error occurred' 
+    : err.message
+    
+  res.status(statusCode).json({ 
+    message,
+    ...(process.env.NODE_ENV !== 'production' && { error: err.message, stack: err.stack })
+  })
+})
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received. Shutting down gracefully...')
+  server.close(() => {
+    console.log('Server closed')
+    pool.end(() => {
+      console.log('Database pool closed')
+      process.exit(0)
+    })
+  })
 })
 
 // Run migration on startup
 migrateDatabase().then(() => {
-  app.listen(PORT, HOST, () => {
-    console.log(`API server ready on http://${HOST}:${PORT}`)
-    console.log(`Auth endpoint available at: http://${HOST}:${PORT}/api/auth/login`)
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`🚀 Server running in ${process.env.NODE_ENV || 'development'} mode`)
+    console.log(`📡 API server ready on http://${HOST}:${PORT}`)
+    console.log(`🔐 Auth endpoint: http://${HOST}:${PORT}/api/auth/login`)
+    console.log(`🏥 Health check: http://${HOST}:${PORT}/health`)
+    
+    if (process.env.NODE_ENV === 'production') {
+      console.log(`🌐 Serving frontend from static build`)
+    }
   })
 })
