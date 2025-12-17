@@ -193,11 +193,14 @@ async function migrateDatabase() {
 }
 
 const app = express()
-const port = process.env.PORT ?? 5000
+const PORT = process.env.PORT || 5000
+const HOST = '0.0.0.0'
 
+// CRITICAL FIX: Update CORS origin for your production frontend
 app.use(
   cors({
-    origin: process.env.ALLOWED_ORIGIN ?? 'http://localhost:5173',
+    origin: ['https://vaweb.onrender.com', 'http://localhost:5173'], // Add both frontend URLs
+    credentials: true
   })
 )
 app.use(express.json())
@@ -219,8 +222,7 @@ app.use((err, _req, res, _next) => {
 
 // Run migration on startup
 migrateDatabase().then(() => {
-  app.listen(port, () => {
-    console.log(`API server ready on http://localhost:${port}`)
+  app.listen(PORT, HOST, () => {
+    console.log(`API server ready on http://${HOST}:${PORT}`)
   })
 })
-
