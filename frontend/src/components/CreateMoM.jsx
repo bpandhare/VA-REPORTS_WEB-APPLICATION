@@ -7,7 +7,7 @@ export default function CreateMoM() {
   
   const COMPANY = {
     name: 'VICKHARDTH AUTOMATION',
-    subtitle: 'Automation System Integrators • Turnkey Projects • Control Panel Manufacturers',
+    subtitle: 'Automation System Integrators ',
     contact: 'VATRA | TATRA | SARVATRA (LLL: +9) 9/66 46 / 899',
     email: 'e-mail: sales@vickhardth.com , services@vickhardth.com',
     logo: '/src/assets/logo.jpeg', // Update this path to your actual logo
@@ -72,10 +72,20 @@ export default function CreateMoM() {
     }
   })
 
-  // Location states - UPDATED
+  // Location states
   const [isFetchingLocation, setIsFetchingLocation] = useState(false)
   const [locationError, setLocationError] = useState('')
   const [locationAccess, setLocationAccess] = useState(false)
+
+  // PDF Filename Modal states
+  const [pdfFilename, setPdfFilename] = useState('')
+  const [showPdfModal, setShowPdfModal] = useState(false)
+  const [selectedMomForPdf, setSelectedMomForPdf] = useState(null)
+
+  // NEW: Calendar states for Site End Date
+  const [showCalendar, setShowCalendar] = useState(false)
+  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth())
+  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear())
 
   // Role enforcement
   const allowedRoles = ['manager', 'team leader', 'senior engineer', 'junior engineer', 'sr engg', 'jr engg']
@@ -109,6 +119,29 @@ export default function CreateMoM() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate, roleAllowed, autoFill])
 
+  // NEW: Calculate site duration
+  const calculateSiteDuration = () => {
+    if (momData.siteStartDate && momData.siteEndDate) {
+      try {
+        // Parse dates from DD/MM/YYYY format
+        const startParts = momData.siteStartDate.split('/')
+        const endParts = momData.siteEndDate.split('/')
+        
+        if (startParts.length === 3 && endParts.length === 3) {
+          const startDate = new Date(parseInt(startParts[2]), parseInt(startParts[1]) - 1, parseInt(startParts[0]))
+          const endDate = new Date(parseInt(endParts[2]), parseInt(endParts[1]) - 1, parseInt(endParts[0]))
+          
+          const diffTime = Math.abs(endDate - startDate)
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+          return diffDays
+        }
+      } catch (error) {
+        console.error('Error calculating site duration:', error)
+      }
+    }
+    return 0
+  }
+
   const formatDateForDisplay = (dateString) => {
     if (!dateString) return ''
     // Handle both yyyy-mm-dd and dd/mm/yyyy formats
@@ -117,6 +150,102 @@ export default function CreateMoM() {
       return `${day}/${month}/${year}`
     }
     return dateString
+  }
+
+  // NEW: Generate calendar days for the month
+  const generateCalendarDays = () => {
+    const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate()
+    const firstDayOfMonth = new Date(calendarYear, calendarMonth, 1).getDay()
+    const days = []
+    
+    // Add empty cells for days before first day of month
+    for (let i = 0; i < firstDayOfMonth; i++) {
+      days.push(null)
+    }
+    
+    // Add days of month
+    for (let i = 1; i <= daysInMonth; i++) {
+      const date = new Date(calendarYear, calendarMonth, i)
+      days.push(date)
+    }
+    
+    return days
+  }
+
+  // NEW: Handle calendar date selection
+  const handleCalendarDateSelect = (date) => {
+    const day = String(date.getDate()).padStart(2, '0')
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const year = date.getFullYear()
+    const dateStr = `${day}/${month}/${year}`
+    
+    setMomData(prev => ({ ...prev, siteEndDate: dateStr }))
+    setShowCalendar(false)
+  }
+
+  // NEW: Navigate calendar months
+  const navigateCalendarMonth = (direction) => {
+    setCalendarMonth(prev => {
+      let newMonth = prev + direction
+      let newYear = calendarYear
+      
+      if (newMonth < 0) {
+        newMonth = 11
+        newYear--
+      } else if (newMonth > 11) {
+        newMonth = 0
+        newYear++
+      }
+      
+      setCalendarYear(newYear)
+      return newMonth
+    })
+  }
+
+  // NEW: Quick date actions
+  const handleTodayClick = () => {
+    const today = new Date()
+    const day = String(today.getDate()).padStart(2, '0')
+    const month = String(today.getMonth() + 1).padStart(2, '0')
+    const year = today.getFullYear()
+    const dateStr = `${day}/${month}/${year}`
+    
+    setMomData(prev => ({ ...prev, siteEndDate: dateStr }))
+    setShowCalendar(false)
+  }
+
+  const handleTomorrowClick = () => {
+    const tomorrow = new Date(Date.now() + 86400000)
+    const day = String(tomorrow.getDate()).padStart(2, '0')
+    const month = String(tomorrow.getMonth() + 1).padStart(2, '0')
+    const year = tomorrow.getFullYear()
+    const dateStr = `${day}/${month}/${year}`
+    
+    setMomData(prev => ({ ...prev, siteEndDate: dateStr }))
+    setShowCalendar(false)
+  }
+
+  const handleNextWeekClick = () => {
+    const nextWeek = new Date(Date.now() + 7 * 86400000)
+    const day = String(nextWeek.getDate()).padStart(2, '0')
+    const month = String(nextWeek.getMonth() + 1).padStart(2, '0')
+    const year = nextWeek.getFullYear()
+    const dateStr = `${day}/${month}/${year}`
+    
+    setMomData(prev => ({ ...prev, siteEndDate: dateStr }))
+    setShowCalendar(false)
+  }
+
+  const handleEndOfMonthClick = () => {
+    const today = new Date()
+    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+    const day = String(endOfMonth.getDate()).padStart(2, '0')
+    const month = String(endOfMonth.getMonth() + 1).padStart(2, '0')
+    const year = endOfMonth.getFullYear()
+    const dateStr = `${day}/${month}/${year}`
+    
+    setMomData(prev => ({ ...prev, siteEndDate: dateStr }))
+    setShowCalendar(false)
   }
 
   const prefillFromReportsForDate = async (date) => {
@@ -369,11 +498,68 @@ export default function CreateMoM() {
     );
   }
 
+  // ===== Generate PDF filename =====
+  const generatePdfFilename = (data = momData) => {
+    const safeDate = (data.momDate || '').replace(/\//g, '-') || 
+                    new Date().toISOString().slice(0, 10).split('-').reverse().join('-')
+    const customerShort = data.customerName 
+      ? data.customerName.substring(0, 20).replace(/[^a-z0-9]/gi, '_')
+      : 'Customer'
+    const projectShort = data.projectName
+      ? data.projectName.substring(0, 15).replace(/[^a-z0-9]/gi, '_')
+      : 'Project'
+    
+    return `MoM_${customerShort}_${projectShort}_${safeDate}.pdf`
+  }
+
+  // ===== Show PDF filename modal =====
+  const downloadPdf = async (data) => {
+    setSelectedMomForPdf(data || momData)
+    const defaultName = generatePdfFilename(data || momData)
+    setPdfFilename(defaultName.replace('.pdf', ''))
+    setShowPdfModal(true)
+  }
+
+  // ===== Handle PDF filename change =====
+  const handlePdfFilenameChange = (e) => {
+    let value = e.target.value
+    // Remove any .pdf extension if user adds it
+    value = value.replace(/\.pdf$/i, '')
+    // Ensure filename is safe for Windows
+    value = value.replace(/[<>:"/\\|?*]/g, '_')
+    setPdfFilename(value)
+  }
+
+  // ===== Use default filename =====
+  const useDefaultFilename = () => {
+    const defaultName = generatePdfFilename(selectedMomForPdf || momData)
+    setPdfFilename(defaultName.replace('.pdf', ''))
+  }
+
+  // ===== Cancel PDF download =====
+  const cancelPdfDownload = () => {
+    setShowPdfModal(false)
+    setSelectedMomForPdf(null)
+  }
+
+  // ===== Confirm and download PDF =====
+  const confirmPdfDownload = async () => {
+    if (!pdfFilename.trim()) {
+      alert('Please enter a filename for the PDF')
+      return
+    }
+    
+    await generatePdfWithFilename(selectedMomForPdf || momData, pdfFilename)
+    setShowPdfModal(false)
+    setSelectedMomForPdf(null)
+  }
+
+  // ===== Download TXT function =====
   const downloadMoM = (data) => {
     const t = data || momData
     const lines = []
     lines.push('VICKHARDTH AUTOMATION')
-    lines.push('Automation System Integrators • Turnkey Projects • Control Panel Manufacturers')
+    lines.push('Automation System Integrators')
     lines.push(`[ ] VATRA | [ ] TATRA | [ ] SARVATRA(LLL: +9) 9/66 46 / 899, e-mail: sales@vickhardth.com , services@vickhardth.com`)
     lines.push('')
     lines.push('='.repeat(80))
@@ -445,282 +631,285 @@ export default function CreateMoM() {
     URL.revokeObjectURL(url)
   }
 
-  const downloadPdf = async (data) => {
-  const used = data || momData
-  try {
-    const { jsPDF } = await import('jspdf')
-    const autoTableModule = await import('jspdf-autotable')
-    const autoTable = autoTableModule && (autoTableModule.default || autoTableModule)
-
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' })
-    const pageWidth = doc.internal.pageSize.getWidth()
-    let y = 8
-
-    // ===== Header with Logo and Company Info =====
-    // Add logo if available
+  // ===== Actual PDF generation function =====
+  const generatePdfWithFilename = async (data, filename) => {
+    const used = data || momData
     try {
-      const logoImg = new Image()
-      logoImg.src = COMPANY.logo
-      await new Promise((resolve, reject) => {
-        logoImg.onload = resolve
-        logoImg.onerror = reject
-      })
-      doc.addImage(logoImg, 'PNG', 10, 5, 20, 20)
-    } catch (err) {
-      console.log('Logo not available, proceeding without it')
-    }
+      const { jsPDF } = await import('jspdf')
+      const autoTableModule = await import('jspdf-autotable')
+      const autoTable = autoTableModule && (autoTableModule.default || autoTableModule)
 
-    // Company name and details
-    doc.setFontSize(13)
-    doc.setFont(undefined, 'bold')
-    doc.setTextColor(0, 0, 0)
-    doc.text(COMPANY.name, pageWidth / 2, 10, { align: 'center' })
-    y = 15
-    
-    doc.setFontSize(8)
-    doc.setFont(undefined, 'normal')
-    doc.text('Automation System Integrators • Turnkey Projects • Control Panel Manufacturers', pageWidth / 2, y, { align: 'center' })
-    y += 4
-    
-    doc.setFontSize(7)
-    doc.text(`[ ] VATRA | [ ] TATRA | [ ] SARVATRA(LLL: +9) 9/66 46 / 899, e-mail: sales@vickhardth.com , services@vickhardth.com`, pageWidth / 2, y, { align: 'center' })
-    y += 12
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+      const pageWidth = doc.internal.pageSize.getWidth()
+      let y = 8
 
-    // ===== Main Details Table =====
-    const detailsTable = [
-      [
-        { content: 'CUSTOMER NAME', styles: { fillColor: [240, 240, 240] } },
-        used.customerName || '',
-        { content: 'MOM DATE (DD-MM-YY)', styles: { fillColor: [240, 240, 240] } },
-        used.momDate || ''
-      ],
-      [
-        { content: '*CUSTOMER PERSON', styles: { fillColor: [240, 240, 240] } },
-        used.customerPerson || '',
-        { content: '*REPORTING TIME (FORMAT: 24 HRS)', styles: { fillColor: [240, 240, 240] } },
-        used.reportingTime || ''
-      ],
-      // FIXED: Added country code to contact number
-      [
-        { content: '*CUST CONTACT NO.', styles: { fillColor: [240, 240, 240] } },
-        `${used.custCountryCode || '+91'} ${used.custContact || ''}`,
-        { content: '*MOM CLOSE TIME (FORMAT: 24 HRS)', styles: { fillColor: [240, 240, 240] } },
-        used.momCloseTime || ''
-      ],
-      [
-        { content: '*END CUST. NAME', styles: { fillColor: [240, 240, 240] } },
-        used.endCustName || '',
-        { content: '*MAN HOURS (HH:MM)', styles: { fillColor: [240, 240, 240] } },
-        used.manHours || ''
-      ],
-      // FIXED: Added country code to end customer contact
-      [
-        { content: 'END CUST. CONTACT', styles: { fillColor: [240, 240, 240] } },
-        `${used.endCustCountryCode || '+91'} ${used.endCustContact || ''}`,
-        { content: '*MAN HOURS>=9 HRS (YES /NO)', styles: { fillColor: [240, 240, 240] } },
-        used.manHoursMoreThan9 || ''
-      ],
-      [
-        { content: 'END CUST. PERSON', styles: { fillColor: [240, 240, 240] } },
-        used.endCustPerson || '',
-        { content: '*BILLING DAYS (HRS <=9 HRS =1, HRS >9 HRS =2', styles: { fillColor: [240, 240, 240] } },
-        used.billingDays || ''
-      ],
-      [
-        { content: '*ENGG NAME', styles: { fillColor: [240, 240, 240] } },
-        used.enggName || '',
-        { content: '*SITE START DATE (DD-MM-YY)', styles: { fillColor: [240, 240, 240] } },
-        used.siteStartDate || ''
-      ],
-      [
-        { content: '*SITE LOCATION', styles: { fillColor: [240, 240, 240] } },
-        used.siteLocation || '',
-        { content: '*SITE END DATE (DD-MM-YY)', styles: { fillColor: [240, 240, 240] } },
-        used.siteEndDate || ''
-      ],
-      [
-        { content: '*PROJECT NAME', styles: { fillColor: [240, 240, 240] } },
-        used.projectName || '',
-        { content: '*PROJECT NO', styles: { fillColor: [240, 240, 240] } },
-        used.projectNo || ''
-      ],
-    ]
-
-    autoTable(doc, {
-      startY: y,
-      head: [],
-      body: detailsTable,
-      theme: 'grid',
-      styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
-      columnStyles: {
-        0: { cellWidth: 45, halign: 'left' },
-        1: { cellWidth: 45, halign: 'left' },
-        2: { cellWidth: 45, halign: 'left' },
-        3: { cellWidth: 45, halign: 'left' },
-      },
-    })
-
-    y = doc.lastAutoTable.finalY + 6
-
-    // ===== Section A: Observations =====
-    doc.setFontSize(9)
-    doc.setFont(undefined, 'bold')
-    doc.text("*A) OBSERVATION OR PRE-SITE REPORT BEFORE IMPLEMENTING ANY SOLUTIONS ON REACHING SITE", 10, y)
-    y += 4
-    doc.setFontSize(8)
-    doc.setFont(undefined, 'normal')
-    doc.text('[GENERAL/ELECT. / PLC/VFD/AUTOMATION SW./MECH. ETC]', 10, y)
-    y += 6
-
-    const obsLines = (used.observationNotes || '')
-      .split('\n')
-      .filter(line => line.trim())
-      .map((line, idx) => [
-        { content: `${String.fromCharCode(97 + idx)})`, styles: { halign: 'center' } },
-        line
-      ])
-
-    if (obsLines.length === 0) {
-      obsLines.push(['', ''])
-    }
-
-    autoTable(doc, {
-      startY: y,
-      head: [['S. N.', 'DESCRIPTION OF OBSERVATIONS']],
-      body: obsLines,
-      theme: 'grid',
-      styles: { fontSize: 8, cellPadding: 2 },
-      headStyles: { fillColor: [220, 220, 220], textColor: 0, fontSize: 8 },
-      columnStyles: {
-        0: { cellWidth: 15, halign: 'center' },
-        1: { cellWidth: 175, halign: 'left', overflow: 'linebreak' },
-      },
-    })
-
-    y = doc.lastAutoTable.finalY + 6
-
-    // ===== Section B: Solutions =====
-    doc.setFontSize(9)
-    doc.setFont(undefined, 'bold')
-    doc.text("*B) SOLUTIONS IMPLEMENTED/SUGGESTIONS, BY VA ENGG. ON SITE [GENERAL/PLC]", 10, y)
-    y += 6
-
-    const solLines = (used.solutionNotes || '')
-      .split('\n')
-      .filter(line => line.trim())
-      .map((line, idx) => [
-        { content: `${String.fromCharCode(97 + idx)})`, styles: { halign: 'center' } },
-        line
-      ])
-
-    if (solLines.length === 0) {
-      solLines.push(['', ''])
-    }
-
-    autoTable(doc, {
-      startY: y,
-      head: [['S. N.', 'DESCRIPTION OF OBSERVATIONS']],
-      body: solLines,
-      theme: 'grid',
-      styles: { fontSize: 8, cellPadding: 2 },
-      headStyles: { fillColor: [220, 220, 220], textColor: 0, fontSize: 8 },
-      columnStyles: {
-        0: { cellWidth: 15, halign: 'center' },
-        1: { cellWidth: 175, halign: 'left', overflow: 'linebreak' },
-      },
-    })
-
-    y = doc.lastAutoTable.finalY + 6
-
-    // ===== Conclusion with Table Format =====
-    doc.setFontSize(9)
-    doc.setFont(undefined, 'bold')
-    doc.text('*CONCLUSION', 10, y)
-    y += 6
-
-    // Create a table for conclusion with 2 columns
-    const conLines = doc.splitTextToSize(used.conclusion || '', 180)
-    
-    // Create table rows for conclusion
-    const conTableData = conLines.map((line, idx) => [
-      { content: idx === 0 ? 'DESCRIPTION' : '', styles: { fillColor: [240, 240, 240] } },
-      line
-    ])
-
-    if (conTableData.length === 0) {
-      conTableData.push(['DESCRIPTION', ''])
-    }
-
-    autoTable(doc, {
-      startY: y,
-      head: [['', '']],
-      body: conTableData,
-      theme: 'grid',
-      styles: { fontSize: 8, cellPadding: 2 },
-      headStyles: { fillColor: [220, 220, 220], textColor: 0, fontSize: 8 },
-      columnStyles: {
-        0: { cellWidth: 45, halign: 'left', fillColor: [240, 240, 240] },
-        1: { cellWidth: 145, halign: 'left', overflow: 'linebreak' },
-      },
-    })
-
-    y = doc.lastAutoTable.finalY + 10
-
-    // ===== Signature Section =====
-    doc.setFontSize(9)
-    doc.setFont(undefined, 'bold')
-    doc.text('AUTHORISED SIGNATORIES', 10, y)
-    doc.text('AUTHORISED SIGNATORIES', pageWidth / 2, y)
-    y += 4
-
-    doc.setFontSize(8)
-    doc.setFont(undefined, 'normal')
-    doc.text('*FOR M/S VICKHARDTH AUTOMATION', 10, y)
-    doc.text(`*CUSTOMER NAME FOR ${used.customerName || ''}`, pageWidth / 2, y)
-    y += 4
-    doc.text(`END CUST. NAME FOR ${used.endCustName || ''}`, pageWidth / 2, y)
-
-    const safeDate = (used.momDate || '').replace(/\//g, '-') || new Date().toISOString().slice(0, 10).split('-').reverse().join('/')
-    const name = `MoM-${safeDate}.pdf`
-    
-    try {
-      let pdfBlob
+      // ===== Header with Logo and Company Info =====
+      // Add logo if available
       try {
-        const arrayBuf = doc.output('arraybuffer')
-        pdfBlob = new Blob([arrayBuf], { type: 'application/pdf' })
-      } catch (oErr) {
-        try {
-          pdfBlob = doc.output('blob')
-        } catch (oErr2) {
-          pdfBlob = null
-        }
+        const logoImg = new Image()
+        logoImg.src = COMPANY.logo
+        await new Promise((resolve, reject) => {
+          logoImg.onload = resolve
+          logoImg.onerror = reject
+        })
+        doc.addImage(logoImg, 'PNG', 10, 5, 20, 20)
+      } catch (err) {
+        console.log('Logo not available, proceeding without it')
       }
 
-      if (pdfBlob) {
-        const url = URL.createObjectURL(pdfBlob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = name
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-      } else {
-        try {
-          doc.save(name)
-        } catch (saveErr) {
-          downloadMoM(data)
-        }
+      // Company name and details
+      doc.setFontSize(13)
+      doc.setFont(undefined, 'bold')
+      doc.setTextColor(0, 0, 0)
+      doc.text(COMPANY.name, pageWidth / 2, 10, { align: 'center' })
+      y = 15
+      
+      doc.setFontSize(8)
+      doc.setFont(undefined, 'normal')
+      doc.text('Automation System Integrators ', pageWidth / 2, y, { align: 'center' })
+      y += 4
+      
+      doc.setFontSize(7)
+      doc.text(`[ ] VATRA | [ ] TATRA | [ ] SARVATRA(LLL: +9) 9/66 46 / 899, e-mail: sales@vickhardth.com , services@vickhardth.com`, pageWidth / 2, y, { align: 'center' })
+      y += 12
+
+      // ===== Main Details Table =====
+      const detailsTable = [
+        [
+          { content: 'CUSTOMER NAME', styles: { fillColor: [240, 240, 240] } },
+          used.customerName || '',
+          { content: 'MOM DATE (DD-MM-YY)', styles: { fillColor: [240, 240, 240] } },
+          used.momDate || ''
+        ],
+        [
+          { content: '*CUSTOMER PERSON', styles: { fillColor: [240, 240, 240] } },
+          used.customerPerson || '',
+          { content: '*REPORTING TIME (FORMAT: 24 HRS)', styles: { fillColor: [240, 240, 240] } },
+          used.reportingTime || ''
+        ],
+        // FIXED: Added country code to contact number
+        [
+          { content: '*CUST CONTACT NO.', styles: { fillColor: [240, 240, 240] } },
+          `${used.custCountryCode || '+91'} ${used.custContact || ''}`,
+          { content: '*MOM CLOSE TIME (FORMAT: 24 HRS)', styles: { fillColor: [240, 240, 240] } },
+          used.momCloseTime || ''
+        ],
+        [
+          { content: '*END CUST. NAME', styles: { fillColor: [240, 240, 240] } },
+          used.endCustName || '',
+          { content: '*MAN HOURS (HH:MM)', styles: { fillColor: [240, 240, 240] } },
+          used.manHours || ''
+        ],
+        // FIXED: Added country code to end customer contact
+        [
+          { content: 'END CUST. CONTACT', styles: { fillColor: [240, 240, 240] } },
+          `${used.endCustCountryCode || '+91'} ${used.endCustContact || ''}`,
+          { content: '*MAN HOURS>=9 HRS (YES /NO)', styles: { fillColor: [240, 240, 240] } },
+          used.manHoursMoreThan9 || ''
+        ],
+        [
+          { content: 'END CUST. PERSON', styles: { fillColor: [240, 240, 240] } },
+          used.endCustPerson || '',
+          { content: '*BILLING DAYS (HRS <=9 HRS =1, HRS >9 HRS =2', styles: { fillColor: [240, 240, 240] } },
+          used.billingDays || ''
+        ],
+        [
+          { content: '*ENGG NAME', styles: { fillColor: [240, 240, 240] } },
+          used.enggName || '',
+          { content: '*SITE START DATE (DD-MM-YY)', styles: { fillColor: [240, 240, 240] } },
+          used.siteStartDate || ''
+        ],
+        [
+          { content: '*SITE LOCATION', styles: { fillColor: [240, 240, 240] } },
+          used.siteLocation || '',
+          { content: '*SITE END DATE (DD-MM-YY)', styles: { fillColor: [240, 240, 240] } },
+          used.siteEndDate || ''
+        ],
+        [
+          { content: '*PROJECT NAME', styles: { fillColor: [240, 240, 240] } },
+          used.projectName || '',
+          { content: '*PROJECT NO', styles: { fillColor: [240, 240, 240] } },
+          used.projectNo || ''
+        ],
+      ]
+
+      autoTable(doc, {
+        startY: y,
+        head: [],
+        body: detailsTable,
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
+        columnStyles: {
+          0: { cellWidth: 45, halign: 'left' },
+          1: { cellWidth: 45, halign: 'left' },
+          2: { cellWidth: 45, halign: 'left' },
+          3: { cellWidth: 45, halign: 'left' },
+        },
+      })
+
+      y = doc.lastAutoTable.finalY + 6
+
+      // ===== Section A: Observations =====
+      doc.setFontSize(9)
+      doc.setFont(undefined, 'bold')
+      doc.text("*A) OBSERVATION OR PRE-SITE REPORT BEFORE IMPLEMENTING ANY SOLUTIONS ON REACHING SITE", 10, y)
+      y += 4
+      doc.setFontSize(8)
+      doc.setFont(undefined, 'normal')
+      doc.text('[GENERAL/ELECT. / PLC/VFD/AUTOMATION SW./MECH. ETC]', 10, y)
+      y += 6
+
+      const obsLines = (used.observationNotes || '')
+        .split('\n')
+        .filter(line => line.trim())
+        .map((line, idx) => [
+          { content: `${String.fromCharCode(97 + idx)})`, styles: { halign: 'center' } },
+          line
+        ])
+
+      if (obsLines.length === 0) {
+        obsLines.push(['', ''])
       }
-    } catch (finalErr) {
-      console.error('Unexpected error during PDF generation/download', finalErr)
+
+      autoTable(doc, {
+        startY: y,
+        head: [['S. N.', 'DESCRIPTION OF OBSERVATIONS']],
+        body: obsLines,
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [220, 220, 220], textColor: 0, fontSize: 8 },
+        columnStyles: {
+          0: { cellWidth: 15, halign: 'center' },
+          1: { cellWidth: 175, halign: 'left', overflow: 'linebreak' },
+        },
+      })
+
+      y = doc.lastAutoTable.finalY + 6
+
+      // ===== Section B: Solutions =====
+      doc.setFontSize(9)
+      doc.setFont(undefined, 'bold')
+      doc.text("*B) SOLUTIONS IMPLEMENTED/SUGGESTIONS, BY VA ENGG. ON SITE [GENERAL/PLC]", 10, y)
+      y += 6
+
+      const solLines = (used.solutionNotes || '')
+        .split('\n')
+        .filter(line => line.trim())
+        .map((line, idx) => [
+          { content: `${String.fromCharCode(97 + idx)})`, styles: { halign: 'center' } },
+          line
+        ])
+
+      if (solLines.length === 0) {
+        solLines.push(['', ''])
+      }
+
+      autoTable(doc, {
+        startY: y,
+        head: [['S. N.', 'DESCRIPTION OF OBSERVATIONS']],
+        body: solLines,
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [220, 220, 220], textColor: 0, fontSize: 8 },
+        columnStyles: {
+          0: { cellWidth: 15, halign: 'center' },
+          1: { cellWidth: 175, halign: 'left', overflow: 'linebreak' },
+        },
+      })
+
+      y = doc.lastAutoTable.finalY + 6
+
+      // ===== Conclusion with Table Format =====
+      doc.setFontSize(9)
+      doc.setFont(undefined, 'bold')
+      doc.text('*CONCLUSION', 10, y)
+      y += 6
+
+      // Create a table for conclusion with 2 columns
+      const conLines = doc.splitTextToSize(used.conclusion || '', 180)
+      
+      // Create table rows for conclusion
+      const conTableData = conLines.map((line, idx) => [
+        { content: idx === 0 ? 'DESCRIPTION' : '', styles: { fillColor: [240, 240, 240] } },
+        line
+      ])
+
+      if (conTableData.length === 0) {
+        conTableData.push(['DESCRIPTION', ''])
+      }
+
+      autoTable(doc, {
+        startY: y,
+        head: [['', '']],
+        body: conTableData,
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [220, 220, 220], textColor: 0, fontSize: 8 },
+        columnStyles: {
+          0: { cellWidth: 45, halign: 'left', fillColor: [240, 240, 240] },
+          1: { cellWidth: 145, halign: 'left', overflow: 'linebreak' },
+        },
+      })
+
+      y = doc.lastAutoTable.finalY + 10
+
+      // ===== Signature Section =====
+      doc.setFontSize(9)
+      doc.setFont(undefined, 'bold')
+      doc.text('AUTHORISED SIGNATORIES', 10, y)
+      doc.text('AUTHORISED SIGNATORIES', pageWidth / 2, y)
+      y += 4
+
+      doc.setFontSize(8)
+      doc.setFont(undefined, 'normal')
+      doc.text('*FOR M/S VICKHARDTH AUTOMATION', 10, y)
+      doc.text(`*CUSTOMER NAME FOR ${used.customerName || ''}`, pageWidth / 2, y)
+      y += 4
+      doc.text(`END CUST. NAME FOR ${used.endCustName || ''}`, pageWidth / 2, y)
+
+      // Clean filename
+      const cleanFilename = filename.trim()
+      const finalFilename = cleanFilename.endsWith('.pdf') ? cleanFilename : `${cleanFilename}.pdf`
+      
+      // Save the PDF
+      try {
+        let pdfBlob
+        try {
+          const arrayBuf = doc.output('arraybuffer')
+          pdfBlob = new Blob([arrayBuf], { type: 'application/pdf' })
+        } catch (oErr) {
+          try {
+            pdfBlob = doc.output('blob')
+          } catch (oErr2) {
+            pdfBlob = null
+          }
+        }
+
+        if (pdfBlob) {
+          const url = URL.createObjectURL(pdfBlob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = finalFilename
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+          URL.revokeObjectURL(url)
+        } else {
+          try {
+            doc.save(finalFilename)
+          } catch (saveErr) {
+            downloadMoM(data)
+          }
+        }
+      } catch (finalErr) {
+        console.error('Unexpected error during PDF generation/download', finalErr)
+        downloadMoM(data)
+      }
+    } catch (err) {
+      console.warn('PDF generation failed, falling back to .txt', err)
       downloadMoM(data)
     }
-  } catch (err) {
-    console.warn('PDF generation failed, falling back to .txt', err)
-    downloadMoM(data)
   }
-}
 
   const saveCurrentMom = () => {
     const entry = { id: Date.now(), savedAt: new Date().toISOString(), ...momData }
@@ -762,6 +951,254 @@ export default function CreateMoM() {
     borderRadius: '4px',
     border: '1px solid #ccc'
   }
+
+  // NEW: Calendar Popup Component
+  const CalendarPopup = () => (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 1001,
+      padding: '1rem'
+    }}>
+      <div style={{
+        background: 'white',
+        borderRadius: '12px',
+        padding: '1.5rem',
+        maxWidth: '350px',
+        width: '100%',
+        boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+        animation: 'fadeIn 0.3s ease-out'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+          <h3 style={{ margin: 0, color: '#092544', fontSize: '1.1rem' }}>
+            Select Site End Date
+          </h3>
+          <button
+            onClick={() => setShowCalendar(false)}
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: '1.5rem',
+              color: '#666',
+              cursor: 'pointer',
+              padding: '0.25rem'
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Calendar Header - Month Navigation */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+          <button
+            onClick={() => navigateCalendarMonth(-1)}
+            style={{
+              padding: '0.5rem',
+              borderRadius: '50%',
+              border: '1px solid #ddd',
+              background: 'white',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            ←
+          </button>
+          <div style={{ fontSize: '1rem', fontWeight: '600', color: '#333' }}>
+            {new Date(calendarYear, calendarMonth).toLocaleDateString('en-US', { 
+              month: 'long', 
+              year: 'numeric' 
+            })}
+          </div>
+          <button
+            onClick={() => navigateCalendarMonth(1)}
+            style={{
+              padding: '0.5rem',
+              borderRadius: '50%',
+              border: '1px solid #ddd',
+              background: 'white',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            →
+          </button>
+        </div>
+
+        {/* Calendar Days Header */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '0.5rem' }}>
+          {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
+            <div key={index} style={{ textAlign: 'center', fontSize: '0.85rem', fontWeight: '600', color: '#666', padding: '0.25rem' }}>
+              {day}
+            </div>
+          ))}
+        </div>
+
+        {/* Calendar Days */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+          {generateCalendarDays().map((date, index) => {
+            if (!date) {
+              return <div key={`empty-${index}`} style={{ height: '36px' }}></div>
+            }
+
+            const day = date.getDate()
+            const month = date.getMonth() + 1
+            const year = date.getFullYear()
+            const dateStr = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`
+            
+            const isToday = dateStr === momData.siteEndDate
+            const isCurrentMonth = date.getMonth() === calendarMonth
+            const isWeekend = date.getDay() === 0 || date.getDay() === 6
+            const isPast = date < new Date()
+
+            return (
+              <button
+                key={dateStr}
+                onClick={() => handleCalendarDateSelect(date)}
+                disabled={isPast}
+                style={{
+                  height: '36px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: isToday 
+                    ? '#007bff' 
+                    : isCurrentMonth 
+                      ? isWeekend 
+                        ? '#f8f9fa' 
+                        : 'white'
+                      : '#f8f9fa',
+                  color: isToday 
+                    ? 'white' 
+                    : isCurrentMonth 
+                      ? isWeekend 
+                        ? '#dc3545' 
+                        : '#333'
+                      : '#999',
+                  cursor: isPast ? 'not-allowed' : 'pointer',
+                  fontSize: '0.9rem',
+                  fontWeight: isToday ? '600' : '400',
+                  opacity: isPast ? 0.5 : 1,
+                  transition: 'all 0.2s ease'
+                }}
+                onMouseOver={(e) => {
+                  if (!isPast && !isToday) {
+                    e.target.style.background = isCurrentMonth ? '#e9ecef' : '#f8f9fa'
+                  }
+                }}
+                onMouseOut={(e) => {
+                  if (!isPast && !isToday) {
+                    e.target.style.background = isCurrentMonth 
+                      ? (isWeekend ? '#f8f9fa' : 'white') 
+                      : '#f8f9fa'
+                  }
+                }}
+              >
+                {day}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Quick Actions */}
+        <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid #eee' }}>
+          <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#333', marginBottom: '0.75rem' }}>
+            Quick Select:
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+            <button
+              onClick={handleTodayClick}
+              style={{
+                padding: '0.5rem',
+                background: '#e9ecef',
+                border: '1px solid #ddd',
+                borderRadius: '6px',
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+                transition: 'background 0.2s ease'
+              }}
+              onMouseOver={(e) => e.target.style.background = '#dee2e6'}
+              onMouseOut={(e) => e.target.style.background = '#e9ecef'}
+            >
+              Today
+            </button>
+            <button
+              onClick={handleTomorrowClick}
+              style={{
+                padding: '0.5rem',
+                background: '#e9ecef',
+                border: '1px solid #ddd',
+                borderRadius: '6px',
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+                transition: 'background 0.2s ease'
+              }}
+              onMouseOver={(e) => e.target.style.background = '#dee2e6'}
+              onMouseOut={(e) => e.target.style.background = '#e9ecef'}
+            >
+              Tomorrow
+            </button>
+            <button
+              onClick={handleNextWeekClick}
+              style={{
+                padding: '0.5rem',
+                background: '#e9ecef',
+                border: '1px solid #ddd',
+                borderRadius: '6px',
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+                transition: 'background 0.2s ease'
+              }}
+              onMouseOver={(e) => e.target.style.background = '#dee2e6'}
+              onMouseOut={(e) => e.target.style.background = '#e9ecef'}
+            >
+              Next Week
+            </button>
+            <button
+              onClick={handleEndOfMonthClick}
+              style={{
+                padding: '0.5rem',
+                background: '#e9ecef',
+                border: '1px solid #ddd',
+                borderRadius: '6px',
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+                transition: 'background 0.2s ease'
+              }}
+              onMouseOver={(e) => e.target.style.background = '#dee2e6'}
+              onMouseOut={(e) => e.target.style.background = '#e9ecef'}
+            >
+              End of Month
+            </button>
+          </div>
+        </div>
+
+        {/* Selected Date Display */}
+        <div style={{ marginTop: '1rem', padding: '1rem', background: '#f8f9fa', borderRadius: '8px' }}>
+          <div style={{ fontSize: '0.85rem', color: '#666', marginBottom: '0.25rem' }}>
+            Selected Date:
+          </div>
+          <div style={{ fontSize: '1rem', fontWeight: '600', color: '#007bff' }}>
+            {momData.siteEndDate || 'Not selected'}
+          </div>
+          {momData.siteEndDate && (
+            <div style={{ fontSize: '0.85rem', color: '#28a745', marginTop: '0.25rem' }}>
+              Site Duration: {calculateSiteDuration()} days
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 
   return (
     <section className="vh-form-shell">
@@ -1026,16 +1463,52 @@ export default function CreateMoM() {
                   style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem' }} 
                 />
               </div>
+              
+              {/* NEW: Site End Date with Calendar Button */}
               <div style={{ marginBottom: '0.75rem' }}>
                 <label>Site End Date (DD/MM/YYYY):</label>
-                <input 
-                  type="text" 
-                  value={momData.siteEndDate} 
-                  onChange={(e) => handleChange('siteEndDate', e.target.value)} 
-                  placeholder="DD/MM/YYYY"
-                  style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem' }} 
-                />
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <input 
+                    type="text" 
+                    value={momData.siteEndDate} 
+                    onChange={(e) => handleChange('siteEndDate', e.target.value)} 
+                    placeholder="DD/MM/YYYY"
+                    style={{ 
+                      flex: 1, 
+                      padding: '0.5rem', 
+                      marginTop: '0.25rem',
+                      border: '1px solid #ced4da'
+                    }} 
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCalendar(true)}
+                    style={{
+                      marginTop: '0.25rem',
+                      padding: '0.5rem',
+                      background: '#6f42c1',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      minWidth: '40px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '0.9rem'
+                    }}
+                    title="Open Calendar"
+                  >
+                    📅
+                  </button>
+                </div>
+                {momData.siteEndDate && (
+                  <div style={{ fontSize: '0.85rem', color: '#28a745', marginTop: '0.25rem' }}>
+                    Site Duration: <strong>{calculateSiteDuration()} days</strong>
+                  </div>
+                )}
               </div>
+              
               <div style={{ marginBottom: '0.75rem' }}>
                 <label>Project Name:</label>
                 <input 
@@ -1261,7 +1734,12 @@ export default function CreateMoM() {
                     <td style={{ padding: '0.5rem' }}>{s.customerName}</td>
                     <td style={{ padding: '0.5rem' }}>{s.projectName}</td>
                     <td style={{ padding: '0.5rem', textAlign: 'right' }}>
-                      <button onClick={() => downloadPdf(s)} style={{ marginRight: 8 }}>PDF</button>
+                      <button 
+                        onClick={() => downloadPdf(s)} 
+                        style={{ marginRight: 8 }}
+                      >
+                        PDF
+                      </button>
                       <button onClick={() => downloadMoM(s)} style={{ marginRight: 8 }}>TXT</button>
                       <button onClick={() => setMomData(s)} style={{ marginRight: 8 }}>Load</button>
                       <button onClick={() => deleteSaved(s.id)} style={{ color: '#c00' }}>Delete</button>
@@ -1273,6 +1751,181 @@ export default function CreateMoM() {
           )}
         </div>
       </div>
+
+      {/* NEW: Calendar Popup */}
+      {showCalendar && <CalendarPopup />}
+
+      {/* PDF Filename Modal */}
+      {showPdfModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '1rem'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '8px',
+            padding: '2rem',
+            maxWidth: '500px',
+            width: '100%',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+            animation: 'fadeIn 0.3s ease-out'
+          }}>
+            <h3 style={{ margin: '0 0 1rem 0', color: '#092544' }}>
+              Customize PDF Filename
+            </h3>
+            
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
+                Enter filename for the PDF:
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  value={pdfFilename}
+                  onChange={handlePdfFilenameChange}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem 3.5rem 0.75rem 0.75rem',
+                    border: '2px solid #ddd',
+                    borderRadius: '4px',
+                    fontSize: '1rem',
+                    outline: 'none',
+                    transition: 'border-color 0.2s'
+                  }}
+                  onFocus={(e) => e.target.style.borderColor = '#007bff'}
+                  onBlur={(e) => e.target.style.borderColor = '#ddd'}
+                  autoFocus
+                />
+                <span style={{
+                  position: 'absolute',
+                  right: '0.75rem',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: '#666',
+                  fontFamily: 'monospace',
+                  fontSize: '0.9rem'
+                }}>.pdf</span>
+              </div>
+              
+              <div style={{ marginTop: '0.75rem' }}>
+                <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>
+                  Preview: <code style={{ 
+                    backgroundColor: '#f0f8ff', 
+                    padding: '0.25rem 0.5rem', 
+                    borderRadius: '3px',
+                    fontFamily: 'monospace'
+                  }}>
+                    {pdfFilename.trim() ? `${pdfFilename.trim()}.pdf` : 'Enter a filename'}
+                  </code>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '0.5rem' }}>
+                  <div>• Don't include .pdf extension, it will be added automatically</div>
+                  <div>• Invalid characters (&lt; &gt; : " / \ | ? *) will be replaced with underscore</div>
+                </div>
+              </div>
+            </div>
+            
+            <div style={{ marginBottom: '1.5rem' }}>
+              <div style={{ fontSize: '0.9rem', fontWeight: '500', marginBottom: '0.5rem' }}>
+                Suggested filename:
+              </div>
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '0.75rem',
+                padding: '0.75rem',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '4px'
+              }}>
+                <code style={{ 
+                  flex: 1, 
+                  fontFamily: 'monospace',
+                  fontSize: '0.85rem',
+                  color: '#333',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}>
+                  {generatePdfFilename(selectedMomForPdf || momData)}
+                </code>
+                <button
+                  type="button"
+                  onClick={useDefaultFilename}
+                  style={{
+                    padding: '0.4rem 0.75rem',
+                    backgroundColor: '#e3f2fd',
+                    color: '#1976d2',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    fontWeight: '500'
+                  }}
+                >
+                  Use This
+                </button>
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={cancelPdfDownload}
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  backgroundColor: '#f5f5f5',
+                  color: '#666',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '1rem',
+                  fontWeight: '500'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmPdfDownload}
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  backgroundColor: '#dc3545',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '1rem',
+                  fontWeight: '500'
+                }}
+              >
+                Download PDF
+              </button>
+            </div>
+          </div>
+          
+          <style>{`
+            @keyframes fadeIn {
+              from {
+                opacity: 0;
+                transform: translateY(-20px);
+              }
+              to {
+                opacity: 1;
+                transform: translateY(0);
+              }
+            }
+          `}</style>
+        </div>
+      )}
     </section>
   )
 }

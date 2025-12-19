@@ -19,4 +19,46 @@
 }
 
 
+.form-hint {
+  display: block;
+  font-size: 0.85rem;
+  color: #666;
+  margin-top: 4px;
+  font-style: italic;
+}
 
+input[pattern]:invalid {
+  border-color: #ff6b6b;
+}
+
+input[pattern]:valid {
+  border-color: #51cf66;
+}
+/* Employee ID input styling */
+input[type="text"][pattern]:valid {
+  border-color: #28a745;
+  background-color: #f8fff9;
+}
+
+input[type="text"][pattern]:invalid {
+  border-color: #dc3545;
+  background-color: #fff8f8;
+}
+
+input[type="text"][pattern]:focus {
+  border-color: #007bff;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+.form-hint {
+  display: block;
+  font-size: 0.8rem;
+  color: #6c757d;
+  margin-top: 4px;
+  font-style: italic;
+}
+
+/* Capitalize Employee ID automatically */
+input#employeeId {
+  text-transform: uppercase;
+}
