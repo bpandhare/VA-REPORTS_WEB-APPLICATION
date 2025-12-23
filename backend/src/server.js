@@ -100,7 +100,7 @@ async function migrateDatabase() {
       }
     }
 
-    // Create daily_target_reports table if it doesn't exist
+    // Create daily_target_reports table if it doesn't exist - UPDATED WITH leave_type
     try {
       await pool.execute(`
         CREATE TABLE IF NOT EXISTS daily_target_reports (
@@ -116,6 +116,7 @@ async function migrateDatabase() {
           end_customer_contact VARCHAR(20) NOT NULL,
           project_no VARCHAR(120) NOT NULL,
           location_type VARCHAR(20) NOT NULL,
+          leave_type VARCHAR(50) DEFAULT NULL,  -- ADDED THIS LINE
           site_location VARCHAR(255),
           location_lat DECIMAL(10, 8),
           location_lng DECIMAL(11, 8),
@@ -161,6 +162,7 @@ async function migrateDatabase() {
       { name: 'end_customer_contact', type: 'VARCHAR(20) DEFAULT ""' },
       { name: 'project_no', type: 'VARCHAR(120) DEFAULT ""' },
       { name: 'location_type', type: 'VARCHAR(20) DEFAULT ""' },
+      { name: 'leave_type', type: 'VARCHAR(50) DEFAULT NULL' }, // ADDED THIS LINE
       { name: 'site_location', type: 'VARCHAR(255)' },
       { name: 'location_lat', type: 'DECIMAL(10, 8)' },
       { name: 'location_lng', type: 'DECIMAL(11, 8)' },
@@ -196,6 +198,22 @@ async function migrateDatabase() {
         }
       }
     }
+
+    // ADD THIS: Create index for leave_type
+    try {
+      await pool.execute(`
+        CREATE INDEX IF NOT EXISTS idx_leave_type 
+        ON daily_target_reports(location_type, leave_type, report_date)
+      `)
+      console.log('✓ Created idx_leave_type index')
+    } catch (error) {
+      if (error.code === 'ER_DUP_KEYNAME') {
+        console.log('Index idx_leave_type already exists')
+      } else {
+        console.error('Error creating idx_leave_type index:', error.message)
+      }
+    }
+
   } catch (error) {
     console.error('Migration error (non-fatal):', error.message)
   }

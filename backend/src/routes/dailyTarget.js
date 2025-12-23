@@ -59,6 +59,393 @@ const upload = multer({
   },
 })
 
+// ==================== LEAVE TYPES CONFIGURATION ====================
+
+// Define leave types with configurations
+const LEAVE_TYPES = [
+  { id: 'casual', name: 'Casual Leave', maxDays: 12, requiresApproval: false, description: 'For personal work or urgent matters' },
+  { id: 'sick', name: 'Sick Leave', maxDays: 12, requiresApproval: false, description: 'For health issues or medical appointments' },
+  { id: 'earned', name: 'Earned Leave', maxDays: 30, requiresApproval: true, description: 'Accumulated leave based on service period' },
+  { id: 'maternity', name: 'Maternity Leave', maxDays: 180, requiresApproval: true, genderSpecific: 'female', description: 'For pregnancy and childbirth' },
+  { id: 'paternity', name: 'Paternity Leave', maxDays: 15, requiresApproval: true, genderSpecific: 'male', description: 'For new fathers after childbirth' },
+  { id: 'compensatory', name: 'Compensatory Leave', maxDays: 0, requiresApproval: true, description: 'Granted for working on holidays/weekends' },
+  { id: 'optional', name: 'Optional Holiday', maxDays: 3, requiresApproval: false, description: 'For religious or optional holidays' },
+  { id: 'unpaid', name: 'Unpaid Leave', maxDays: 0, requiresApproval: true, description: 'Leave without pay for extended absence' }
+]
+
+// ==================== NEW ENDPOINT: CHECK REPORT DATE ====================
+
+// Check if report already exists for a specific date
+router.get('/check-report-date', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id
+    const { date } = req.query
+    
+    if (!date) {
+      return res.status(400).json({ message: 'Date parameter is required' })
+    }
+    
+    // Check if any report exists for this date
+    const [existingReport] = await pool.execute(
+      `SELECT id, location_type, leave_type FROM daily_target_reports 
+       WHERE user_id = ? 
+       AND report_date = ?`,
+      [userId, date]
+    )
+    
+    res.json({
+      exists: existingReport.length > 0,
+      id: existingReport[0]?.id || null,
+      locationType: existingReport[0]?.location_type || null,
+      leaveType: existingReport[0]?.leave_type || null,
+      date: date
+    })
+  } catch (error) {
+    console.error('Failed to check report date:', error)
+    res.status(500).json({ message: 'Unable to check report date' })
+  }
+})
+
+// ==================== LEAVE MANAGEMENT ENDPOINTS ====================
+
+// Get all leave types
+router.get('/leave-types', verifyToken, (req, res) => {
+  try {
+    const userGender = req.user.gender || 'male'
+    const leaveTypes = LEAVE_TYPES.map(type => {
+      const typeCopy = { ...type }
+      if (type.genderSpecific && type.genderSpecific !== userGender) {
+        typeCopy.available = false
+        typeCopy.reason = `Only available for ${type.genderSpecific} employees`
+      } else {
+        typeCopy.available = true
+      }
+      return typeCopy
+    })
+    
+    res.json(leaveTypes)
+  } catch (error) {
+    console.error('Failed to fetch leave types:', error)
+    res.status(500).json({ message: 'Unable to fetch leave types' })
+  }
+})
+
+// Get leave balance for current user
+router.get('/leave-balance', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id
+    const currentYear = new Date().getFullYear()
+    
+    // Count leave reports for current year
+    const [leaveCount] = await pool.execute(
+      `SELECT COUNT(*) as leaveCount 
+       FROM daily_target_reports 
+       WHERE user_id = ? 
+       AND location_type = 'leave' 
+       AND YEAR(report_date) = ?`,
+      [userId, currentYear]
+    )
+    
+    const totalLeaves = 24 // Annual leave quota
+    const usedLeaves = leaveCount[0]?.leaveCount || 0
+    const remainingLeaves = Math.max(0, totalLeaves - usedLeaves)
+    
+    res.json({
+      totalLeaves,
+      usedLeaves,
+      remainingLeaves,
+      currentYear
+    })
+  } catch (error) {
+    console.error('Failed to fetch leave balance:', error)
+    res.status(500).json({ message: 'Unable to fetch leave balance' })
+  }
+})
+
+// Get leave balance by type
+router.get('/leave-balance-by-type', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id
+    const currentYear = new Date().getFullYear()
+    const userGender = req.user.gender || 'male'
+    
+    // Get leave counts by type for current year
+    const [leaveCounts] = await pool.execute(
+      `SELECT leave_type, COUNT(*) as count 
+       FROM daily_target_reports 
+       WHERE user_id = ? 
+       AND location_type = 'leave' 
+       AND YEAR(report_date) = ?
+       GROUP BY leave_type`,
+      [userId, currentYear]
+    )
+    
+    // Create a map of used leaves by type
+    const usedLeavesMap = {}
+    leaveCounts.forEach(item => {
+      usedLeavesMap[item.leave_type] = item.count
+    })
+    
+    // Calculate balance for each leave type
+    const leaveBalance = LEAVE_TYPES.map(type => {
+      const used = usedLeavesMap[type.id] || 0
+      const remaining = type.maxDays === 0 ? 'Unlimited' : Math.max(0, type.maxDays - used)
+      const isAvailable = !type.genderSpecific || type.genderSpecific === userGender
+      
+      return {
+        typeId: type.id,
+        typeName: type.name,
+        maxDays: type.maxDays,
+        usedDays: used,
+        remainingDays: remaining,
+        requiresApproval: type.requiresApproval,
+        available: isAvailable,
+        description: type.description
+      }
+    })
+    
+    res.json({
+      leaveBalance,
+      currentYear,
+      totalUsed: Object.values(usedLeavesMap).reduce((a, b) => a + b, 0)
+    })
+  } catch (error) {
+    console.error('Failed to fetch leave balance by type:', error)
+    res.status(500).json({ message: 'Unable to fetch leave balance' })
+  }
+})
+
+// Check if leave is already taken on a specific date
+router.get('/check-leave', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id
+    const { date } = req.query
+    
+    if (!date) {
+      return res.status(400).json({ message: 'Date parameter is required' })
+    }
+    
+    // Check if leave exists for this date
+    const [existingLeave] = await pool.execute(
+      `SELECT id, leave_type FROM daily_target_reports 
+       WHERE user_id = ? 
+       AND location_type = 'leave' 
+       AND report_date = ?`,
+      [userId, date]
+    )
+    
+    res.json({
+      isLeaveTaken: existingLeave.length > 0,
+      leaveType: existingLeave[0]?.leave_type || null,
+      date: date
+    })
+  } catch (error) {
+    console.error('Failed to check leave:', error)
+    res.status(500).json({ message: 'Unable to check leave status' })
+  }
+})
+
+// Check leave availability for specific type and date
+router.get('/check-leave-availability', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id
+    const { leaveType, startDate, endDate, numberOfDays } = req.query
+    
+    if (!leaveType || !startDate) {
+      return res.status(400).json({ message: 'Leave type and start date are required' })
+    }
+    
+    const leaveConfig = LEAVE_TYPES.find(lt => lt.id === leaveType)
+    if (!leaveConfig) {
+      return res.status(400).json({ message: 'Invalid leave type' })
+    }
+    
+    const userGender = req.user.gender || 'male'
+    
+    // Check if leave type is gender specific
+    if (leaveConfig.genderSpecific && leaveConfig.genderSpecific !== userGender) {
+      return res.status(400).json({ 
+        message: `This leave type is only available for ${leaveConfig.genderSpecific} employees` 
+      })
+    }
+    
+    // Calculate actual number of days (excluding weekends)
+    const calculateWorkingDays = (start, end) => {
+      const startDate = new Date(start)
+      const endDate = end ? new Date(end) : new Date(start)
+      let count = 0
+      const current = new Date(startDate)
+      
+      while (current <= endDate) {
+        const dayOfWeek = current.getDay()
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Exclude weekends
+          count++
+        }
+        current.setDate(current.getDate() + 1)
+      }
+      return count
+    }
+    
+    const daysRequested = numberOfDays || (endDate ? calculateWorkingDays(startDate, endDate) : 1)
+    
+    // Check if leave exceeds max days for the type
+    if (leaveConfig.maxDays > 0) {
+      const startYear = new Date(startDate).getFullYear()
+      
+      // Get used leaves of this type for the year
+      const [usedCount] = await pool.execute(
+        `SELECT COUNT(*) as count 
+         FROM daily_target_reports 
+         WHERE user_id = ? 
+         AND location_type = 'leave' 
+         AND leave_type = ?
+         AND YEAR(report_date) = ?`,
+        [userId, leaveType, startYear]
+      )
+      
+      const usedDays = usedCount[0]?.count || 0
+      
+      if (usedDays + daysRequested > leaveConfig.maxDays) {
+        return res.json({
+          available: false,
+          message: `Insufficient balance. Used: ${usedDays}/${leaveConfig.maxDays} days`,
+          usedDays,
+          maxDays: leaveConfig.maxDays,
+          requestedDays: daysRequested
+        })
+      }
+    }
+    
+    // Check if dates are already taken as leave
+    let existingLeaves = []
+    if (endDate) {
+      const [existing] = await pool.execute(
+        `SELECT report_date, leave_type 
+         FROM daily_target_reports 
+         WHERE user_id = ? 
+         AND location_type = 'leave' 
+         AND report_date BETWEEN ? AND ?`,
+        [userId, startDate, endDate]
+      )
+      existingLeaves = existing
+    } else {
+      const [existing] = await pool.execute(
+        `SELECT report_date, leave_type 
+         FROM daily_target_reports 
+         WHERE user_id = ? 
+         AND location_type = 'leave' 
+         AND report_date = ?`,
+        [userId, startDate]
+      )
+      existingLeaves = existing
+    }
+    
+    if (existingLeaves.length > 0) {
+      const dates = existingLeaves.map(l => l.report_date)
+      return res.json({
+        available: false,
+        message: `Leave already applied for date(s): ${dates.join(', ')}`,
+        conflictingDates: dates
+      })
+    }
+    
+    // Check if dates are weekends
+    const validateDateRange = (start, end = start) => {
+      const invalidDates = []
+      const current = new Date(start)
+      const endDateObj = new Date(end)
+      
+      while (current <= endDateObj) {
+        const dayOfWeek = current.getDay()
+        if (dayOfWeek === 0 || dayOfWeek === 6) {
+          invalidDates.push(new Date(current).toISOString().slice(0, 10))
+        }
+        current.setDate(current.getDate() + 1)
+      }
+      
+      return invalidDates
+    }
+    
+    const weekendDates = validateDateRange(startDate, endDate || startDate)
+    if (weekendDates.length > 0) {
+      return res.json({
+        available: false,
+        message: 'Cannot apply for leave on weekends',
+        weekendDates
+      })
+    }
+    
+    res.json({
+      available: true,
+      message: `Leave available for ${daysRequested} day(s)`,
+      daysRequested,
+      requiresApproval: leaveConfig.requiresApproval,
+      leaveTypeName: leaveConfig.name
+    })
+    
+  } catch (error) {
+    console.error('Failed to check leave availability:', error)
+    res.status(500).json({ message: 'Unable to check leave availability' })
+  }
+})
+
+// Get leave history for current user
+router.get('/leave-history', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id
+    const { year, leaveType } = req.query
+    const currentYear = year || new Date().getFullYear()
+    
+    let query = `
+      SELECT id, report_date, leave_type, remark, created_at 
+      FROM daily_target_reports 
+      WHERE user_id = ? 
+      AND location_type = 'leave' 
+      AND YEAR(report_date) = ?
+    `
+    const params = [userId, currentYear]
+    
+    if (leaveType) {
+      query += ' AND leave_type = ?'
+      params.push(leaveType)
+    }
+    
+    query += ' ORDER BY report_date DESC'
+    
+    const [leaves] = await pool.execute(query, params)
+    
+    // Enrich with leave type names
+    const enrichedLeaves = leaves.map(leave => {
+      const typeInfo = LEAVE_TYPES.find(lt => lt.id === leave.leave_type) || {}
+      return {
+        ...leave,
+        leaveTypeName: typeInfo.name || leave.leave_type,
+        leaveTypeDescription: typeInfo.description || ''
+      }
+    })
+    
+    res.json(enrichedLeaves)
+  } catch (error) {
+    console.error('Failed to fetch leave history:', error)
+    res.status(500).json({ message: 'Unable to fetch leave history' })
+  }
+})
+
+// Validate leave date (check if it's a weekend)
+const validateLeaveDate = (dateStr) => {
+  const date = new Date(dateStr)
+  const dayOfWeek = date.getDay() // 0 = Sunday, 6 = Saturday
+  
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    return { 
+      valid: false, 
+      message: 'Cannot apply for leave on weekends (Saturday/Sunday)' 
+    }
+  }
+  
+  return { valid: true }
+}
+
 // ==================== GET ENDPOINTS ====================
 
 // GET all daily targets for the logged-in user
@@ -69,7 +456,7 @@ router.get('/', verifyToken, async (req, res) => {
     const [rows] = await pool.execute(
       `SELECT id, report_date, in_time, out_time, customer_name, customer_person, 
        customer_contact, end_customer_name, end_customer_person, end_customer_contact,
-       project_no, location_type, site_location, location_lat, location_lng,
+       project_no, location_type, leave_type, site_location, location_lat, location_lng,
        mom_report_path, daily_target_planned, daily_target_achieved,
        additional_activity, who_added_activity, daily_pending_target,
        reason_pending_target, problem_faced, problem_resolved,
@@ -98,7 +485,7 @@ router.get('/:id', verifyToken, async (req, res) => {
     const [rows] = await pool.execute(
       `SELECT id, report_date, in_time, out_time, customer_name, customer_person, 
        customer_contact, end_customer_name, end_customer_person, end_customer_contact,
-       project_no, location_type, site_location, location_lat, location_lng,
+       project_no, location_type, leave_type, site_location, location_lat, location_lng,
        mom_report_path, daily_target_planned, daily_target_achieved,
        additional_activity, who_added_activity, daily_pending_target,
        reason_pending_target, problem_faced, problem_resolved,
@@ -130,7 +517,7 @@ router.get('/by-date/:startDate/:endDate', verifyToken, async (req, res) => {
     const [rows] = await pool.execute(
       `SELECT id, report_date, in_time, out_time, customer_name, customer_person, 
        customer_contact, end_customer_name, end_customer_person, end_customer_contact,
-       project_no, location_type, site_location, location_lat, location_lng,
+       project_no, location_type, leave_type, site_location, location_lat, location_lng,
        mom_report_path, daily_target_planned, daily_target_achieved,
        additional_activity, who_added_activity, daily_pending_target,
        reason_pending_target, problem_faced, problem_resolved,
@@ -159,7 +546,7 @@ router.get('/today', verifyToken, async (req, res) => {
     const [rows] = await pool.execute(
       `SELECT id, report_date, in_time, out_time, customer_name, customer_person, 
        customer_contact, end_customer_name, end_customer_person, end_customer_contact,
-       project_no, location_type, site_location, location_lat, location_lng,
+       project_no, location_type, leave_type, site_location, location_lat, location_lng,
        mom_report_path, daily_target_planned, daily_target_achieved,
        additional_activity, who_added_activity, daily_pending_target,
        reason_pending_target, problem_faced, problem_resolved,
@@ -189,6 +576,7 @@ router.get('/today', verifyToken, async (req, res) => {
 router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
   try {
     const userId = req.user.id
+    const userGender = req.user.gender || 'male'
     const {
       reportDate,
       inTime,
@@ -201,8 +589,8 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       endCustomerContact,
       projectNo,
       locationType,
+      leaveType,
       siteLocation,
-      
       locationLat,
       locationLng,
       dailyTargetPlanned,
@@ -222,10 +610,84 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
     } = req.body
 
     // Validate required fields based on location type
-    console.log('Backend validation - locationType:', locationType, 'remark:', remark)
+    console.log('Backend validation - locationType:', locationType, 'leaveType:', leaveType)
+    
+    // Enforce one report per user per day (for all location types including leave)
+    const finalReportDate = reportDate || new Date().toISOString().slice(0, 10)
+    
+    // Check if report already exists for this date
+    const [existing] = await pool.execute(
+      `SELECT id, location_type, leave_type 
+       FROM daily_target_reports 
+       WHERE user_id = ? AND report_date = ? 
+       LIMIT 1`,
+      [userId, finalReportDate]
+    )
+
+    if (existing && existing.length > 0) {
+      const existingReport = existing[0]
+      const existingType = existingReport.location_type === 'leave' 
+        ? `${LEAVE_TYPES.find(lt => lt.id === existingReport.leave_type)?.name || existingReport.leave_type} leave`
+        : `${existingReport.location_type} report`
+      
+      return res.status(409).json({ 
+        message: `${existingType} already exists for ${finalReportDate}. Only one report allowed per day.` 
+      })
+    }
+    
+    // For leave location, validate leave type and date
     if (locationType === 'leave') {
-      console.log('Leave location selected - no validation required')
-      // No validation required for leave location
+      console.log('Leave location selected - validating...')
+      
+      // Validate leave type is selected
+      if (!leaveType) {
+        return res.status(400).json({ message: 'Leave type is required' })
+      }
+      
+      const leaveConfig = LEAVE_TYPES.find(lt => lt.id === leaveType)
+      if (!leaveConfig) {
+        return res.status(400).json({ message: 'Invalid leave type' })
+      }
+      
+      // Check gender restriction
+      if (leaveConfig.genderSpecific && leaveConfig.genderSpecific !== userGender) {
+        return res.status(400).json({ 
+          message: `This leave type is only available for ${leaveConfig.genderSpecific} employees` 
+        })
+      }
+      
+      // Validate leave date is not a weekend
+      if (finalReportDate) {
+        const dateValidation = validateLeaveDate(finalReportDate)
+        if (!dateValidation.valid) {
+          return res.status(400).json({ message: dateValidation.message })
+        }
+      }
+      
+      // Check leave balance for specific type
+      const currentYear = new Date().getFullYear()
+      const reportYear = finalReportDate ? new Date(finalReportDate).getFullYear() : currentYear
+      
+      if (leaveConfig.maxDays > 0) {
+        const [leaveCount] = await pool.execute(
+          `SELECT COUNT(*) as leaveCount 
+           FROM daily_target_reports 
+           WHERE user_id = ? 
+           AND location_type = 'leave' 
+           AND leave_type = ?
+           AND YEAR(report_date) = ?`,
+          [userId, leaveType, reportYear]
+        )
+        
+        const usedLeaves = leaveCount[0]?.leaveCount || 0
+        if (usedLeaves >= leaveConfig.maxDays) {
+          return res.status(400).json({ 
+            message: `No ${leaveConfig.name} leaves remaining for this year. Used: ${usedLeaves}/${leaveConfig.maxDays}` 
+          })
+        }
+      }
+      
+      console.log('Leave validation passed - leave type:', leaveConfig.name)
     } else {
       // For office/site locations, validate all required fields
       if (
@@ -250,8 +712,6 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
     }
 
     // Set default values based on location type
-    const finalReportDate = reportDate || new Date().toISOString().slice(0, 10)
-
     let finalInTime = inTime
     let finalOutTime = outTime
     let finalCustomerName = customerName
@@ -292,17 +752,6 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       })
     }
 
-    // Enforce one daily target per user per day
-    const [existing] = await pool.execute(
-      'SELECT id FROM daily_target_reports WHERE user_id = ? AND report_date = ? LIMIT 1',
-      [userId, finalReportDate]
-    )
-
-    if (existing && existing.length > 0) {
-      // If a report already exists for this user on this date, reject to enforce single daily target
-      return res.status(409).json({ message: 'Daily target for this date already submitted' })
-    }
-
     // Get PDF file path if uploaded
     const momReportPath = req.file ? req.file.path : null
 
@@ -311,13 +760,13 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       `INSERT INTO daily_target_reports
        (report_date, in_time, out_time, customer_name, customer_person, customer_contact,
         end_customer_name, end_customer_person, end_customer_contact,
-        project_no, location_type, site_location, location_lat, location_lng,
+        project_no, location_type, leave_type, site_location, location_lat, location_lng,
         mom_report_path, daily_target_planned, daily_target_achieved,
         additional_activity, who_added_activity, daily_pending_target,
         reason_pending_target, problem_faced, problem_resolved,
         online_support_required, support_engineer_name,
         site_start_date, site_end_date, incharge, remark, user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         finalReportDate,
         finalInTime,
@@ -330,6 +779,7 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
         finalEndCustomerContact,
         finalProjectNo,
         locationType,
+        leaveType || null,
         siteLocation || null,
         locationLat || null,
         locationLng || null,
@@ -355,6 +805,7 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
     res.status(201).json({
       message: 'Daily target report saved successfully',
       id: result.insertId,
+      leaveType: locationType === 'leave' ? leaveType : null
     })
   } catch (error) {
     // Delete uploaded file if there was an error
@@ -372,6 +823,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
   try {
     const { id } = req.params
     const userId = req.user.id
+    const userGender = req.user.gender || 'male'
     
     const {
       reportDate,
@@ -385,6 +837,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
       endCustomerContact,
       projectNo,
       locationType,
+      leaveType,
       siteLocation,
       locationLat,
       locationLng,
@@ -424,10 +877,67 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
     let finalIncharge = incharge
     let finalSiteStartDate = siteStartDate
 
+    // Check if the report belongs to the user
+    const [existing] = await pool.execute(
+      'SELECT id, mom_report_path, location_type, leave_type, report_date FROM daily_target_reports WHERE id = ? AND user_id = ?',
+      [id, userId]
+    )
+    
+    if (existing.length === 0) {
+      return res.status(404).json({ message: 'Report not found or access denied' })
+    }
+
+    // Check if another report already exists for the new date (excluding the current report being edited)
+    const [conflictingReport] = await pool.execute(
+      `SELECT id, location_type, leave_type 
+       FROM daily_target_reports 
+       WHERE user_id = ? 
+       AND report_date = ? 
+       AND id != ? 
+       LIMIT 1`,
+      [userId, finalReportDate, id]
+    )
+
+    if (conflictingReport && conflictingReport.length > 0) {
+      const existingReport = conflictingReport[0]
+      const existingType = existingReport.location_type === 'leave' 
+        ? `${LEAVE_TYPES.find(lt => lt.id === existingReport.leave_type)?.name || existingReport.leave_type} leave`
+        : `${existingReport.location_type} report`
+      
+      return res.status(409).json({ 
+        message: `${existingType} already exists for ${finalReportDate}. Cannot update to this date.` 
+      })
+    }
+
     // Validate required fields based on location type
     if (locationType === 'leave') {
-      console.log('Leave location selected - no validation required')
-      // No validation required for leave location
+      console.log('Leave location selected - validating leave type...')
+      
+      // Validate leave type is selected
+      if (!leaveType) {
+        return res.status(400).json({ message: 'Leave type is required' })
+      }
+      
+      const leaveConfig = LEAVE_TYPES.find(lt => lt.id === leaveType)
+      if (!leaveConfig) {
+        return res.status(400).json({ message: 'Invalid leave type' })
+      }
+      
+      // Check gender restriction
+      if (leaveConfig.genderSpecific && leaveConfig.genderSpecific !== userGender) {
+        return res.status(400).json({ 
+          message: `This leave type is only available for ${leaveConfig.genderSpecific} employees` 
+        })
+      }
+      
+      // For leave edits, check if date is weekend
+      if (finalReportDate) {
+        const dateValidation = validateLeaveDate(finalReportDate)
+        if (!dateValidation.valid) {
+          return res.status(400).json({ message: dateValidation.message })
+        }
+      }
+      
       // Set default values for required database fields
       finalInTime = finalInTime || '00:00'
       finalOutTime = finalOutTime || '00:00'
@@ -473,16 +983,6 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
       })
     }
 
-    // Check if the report belongs to the user
-    const [existing] = await pool.execute(
-      'SELECT id, mom_report_path FROM daily_target_reports WHERE id = ? AND user_id = ?',
-      [id, userId]
-    )
-    
-    if (existing.length === 0) {
-      return res.status(404).json({ message: 'Report not found or access denied' })
-    }
-
     // Get PDF file path if uploaded, or keep existing
     let momReportPath = req.file ? req.file.path : existing[0].mom_report_path
 
@@ -491,7 +991,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
       `UPDATE daily_target_reports SET
        report_date = ?, in_time = ?, out_time = ?, customer_name = ?, customer_person = ?, customer_contact = ?,
        end_customer_name = ?, end_customer_person = ?, end_customer_contact = ?,
-       project_no = ?, location_type = ?, site_location = ?, location_lat = ?, location_lng = ?,
+       project_no = ?, location_type = ?, leave_type = ?, site_location = ?, location_lat = ?, location_lng = ?,
        mom_report_path = ?, daily_target_planned = ?, daily_target_achieved = ?,
        additional_activity = ?, who_added_activity = ?, daily_pending_target = ?,
        reason_pending_target = ?, problem_faced = ?, problem_resolved = ?,
@@ -510,6 +1010,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
         finalEndCustomerContact,
         finalProjectNo,
         locationType,
+        leaveType || null,
         siteLocation || null,
         locationLat || null,
         locationLng || null,
@@ -564,7 +1065,7 @@ router.delete('/:id', verifyToken, async (req, res) => {
     
     // First, get the file path to delete the PDF
     const [rows] = await pool.execute(
-      'SELECT mom_report_path FROM daily_target_reports WHERE id = ? AND user_id = ?',
+      'SELECT mom_report_path, location_type, leave_type FROM daily_target_reports WHERE id = ? AND user_id = ?',
       [id, userId]
     )
     
@@ -588,7 +1089,11 @@ router.delete('/:id', verifyToken, async (req, res) => {
       return res.status(404).json({ message: 'Report not found' })
     }
     
-    res.json({ message: 'Daily target report deleted successfully' })
+    res.json({ 
+      message: 'Daily target report deleted successfully',
+      wasLeave: rows[0].location_type === 'leave',
+      leaveType: rows[0].leave_type
+    })
   } catch (error) {
     console.error('Failed to delete daily target report:', error)
     res.status(500).json({ message: 'Unable to delete daily target report' })

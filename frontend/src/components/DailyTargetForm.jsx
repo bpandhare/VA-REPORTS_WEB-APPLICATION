@@ -3,9 +3,7 @@ import './OnboardingForm.css'
 import { useAuth } from './AuthContext'
 
 const getIndianTime = () => {
-  // Get current local time (assuming user's PC is set to IST)
   const now = new Date()
-  // Format as HH:MM in 24-hour format
   const hours = now.getHours().toString().padStart(2, '0')
   const minutes = now.getMinutes().toString().padStart(2, '0')
   return `${hours}:${minutes}`
@@ -18,7 +16,7 @@ const defaultPayload = () => {
   const today = now.toISOString().slice(0, 10)
 
   return {
-    reportDate: today, // Date for this daily target report (for hourly report linking)
+    reportDate: today,
     inTime: inTime,
     outTime: outTime,
     customerName: '',
@@ -29,6 +27,7 @@ const defaultPayload = () => {
     endCustomerContact: '',
     projectNo: '',
     locationType: '', // 'site', 'office', 'leave'
+    leaveType: '', // Leave type ID
     siteLocation: '',
     locationLat: '',
     locationLng: '',
@@ -51,7 +50,7 @@ const defaultPayload = () => {
 }
 
 function DailyTargetForm() {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
   const [formData, setFormData] = useState(defaultPayload)
   const [submitting, setSubmitting] = useState(false)
   const [alert, setAlert] = useState(null)
@@ -61,22 +60,78 @@ function DailyTargetForm() {
   const [isEditMode, setIsEditMode] = useState(false)
   const [locationName, setLocationName] = useState('')
   const [fetchingLocation, setFetchingLocation] = useState(false)
+  const [leaveBalance, setLeaveBalance] = useState({ total: 24, used: 0, remaining: 24 })
+  const [loadingLeaveBalance, setLoadingLeaveBalance] = useState(false)
+  const [leaveTypes, setLeaveTypes] = useState([])
+  const [leaveBalanceByType, setLeaveBalanceByType] = useState([])
+  const [selectedLeaveType, setSelectedLeaveType] = useState(null)
+  const [leaveAvailability, setLeaveAvailability] = useState(null)
+  const [checkingAvailability, setCheckingAvailability] = useState(false)
+  const [checkingExistingReport, setCheckingExistingReport] = useState(false)
 
   const endpoint = useMemo(
     () => import.meta.env.VITE_API_URL?.replace('/api/activity', '/api/daily-target') ?? 'http://localhost:5000/api/daily-target',
     []
   )
 
+  // Fetch leave types and balances when component mounts or user changes
+  useEffect(() => {
+    const fetchLeaveData = async () => {
+      if (!user || !token) return
+      
+      try {
+        setLoadingLeaveBalance(true)
+        
+        // Fetch leave types
+        const typesResponse = await fetch(`${endpoint}/leave-types`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        
+        if (typesResponse.ok) {
+          const typesData = await typesResponse.json()
+          setLeaveTypes(typesData)
+        }
+        
+        // Fetch leave balance by type
+        const balanceResponse = await fetch(`${endpoint}/leave-balance-by-type`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        
+        if (balanceResponse.ok) {
+          const balanceData = await balanceResponse.json()
+          setLeaveBalanceByType(balanceData.leaveBalance)
+        }
+        
+        // Fetch total leave balance
+        const totalBalanceResponse = await fetch(`${endpoint}/leave-balance`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        
+        if (totalBalanceResponse.ok) {
+          const totalBalanceData = await totalBalanceResponse.json()
+          setLeaveBalance({
+            total: totalBalanceData.totalLeaves || 24,
+            used: totalBalanceData.usedLeaves || 0,
+            remaining: totalBalanceData.remainingLeaves || 24
+          })
+        }
+      } catch (error) {
+        console.error('Error fetching leave data:', error)
+      } finally {
+        setLoadingLeaveBalance(false)
+      }
+    }
+    
+    fetchLeaveData()
+  }, [user, token, endpoint])
 
   // Get user's location when site location is selected
   useEffect(() => {
     try {
       if (formData.locationType === 'site') {
-        // Don't auto-fetch, let user click the button
         setLocationAccess(false)
         setLocationError('')
       } else if (formData.locationType === 'leave') {
-        // Clear work-related fields for leave location
         setLocationAccess(false)
         setLocationError('')
         setFormData((prev) => ({
@@ -110,7 +165,6 @@ function DailyTargetForm() {
           remark: ''
         }))
 
-        // Clear any form validation state when switching to leave
         if (typeof document !== 'undefined') {
           setTimeout(() => {
             const form = document.querySelector('.vh-form')
@@ -118,7 +172,6 @@ function DailyTargetForm() {
               const inputs = form.querySelectorAll('input, textarea, select')
               inputs.forEach(input => {
                 input.setCustomValidity('')
-                // Force validation reset
                 input.checkValidity()
               })
               form.checkValidity()
@@ -128,7 +181,6 @@ function DailyTargetForm() {
 
         setLocationName('')
       } else {
-        // For office location, clear site-specific fields
         setLocationAccess(false)
         setLocationError('')
         setFormData((prev) => ({ ...prev, siteLocation: '', locationLat: '', locationLng: '', momReport: null }))
@@ -141,16 +193,89 @@ function DailyTargetForm() {
     }
   }, [formData.locationType])
 
-  // Reverse geocode coordinates to get readable address with better accuracy
+  // Reset leave type when switching from leave to other location types
+  useEffect(() => {
+    if (formData.locationType !== 'leave' && formData.leaveType) {
+      setFormData(prev => ({ ...prev, leaveType: '' }))
+      setSelectedLeaveType(null)
+      setLeaveAvailability(null)
+    }
+  }, [formData.locationType])
+
+  // Check if a report already exists for the selected date
+  const checkExistingReport = async (date, excludeId = null) => {
+    if (!date || !token) return null
+    
+    try {
+      setCheckingExistingReport(true)
+      const response = await fetch(`${endpoint}/check-report-date?date=${date}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        
+        // If we're editing and the existing report is the one we're editing, it's okay
+        if (excludeId && data.id && parseInt(data.id) === parseInt(excludeId)) {
+          return null
+        }
+        
+        return data.exists ? data : null
+      }
+      return null
+    } catch (error) {
+      console.error('Error checking existing report:', error)
+      return null
+    } finally {
+      setCheckingExistingReport(false)
+    }
+  }
+
+  // Check if leave date is valid (not a weekend and not already taken as leave)
+  const validateLeaveDate = async (date) => {
+    if (!date) return { valid: true }
+    
+    const leaveDate = new Date(date)
+    const dayOfWeek = leaveDate.getDay()
+    
+    // Check if it's a weekend (Saturday=6, Sunday=0)
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      return { 
+        valid: false, 
+        message: 'Cannot apply for leave on weekends (Saturday/Sunday)' 
+      }
+    }
+    
+    // Check if leave already exists for this date (only for non-edit mode)
+    if (!isEditMode && user && token) {
+      try {
+        const response = await fetch(`${endpoint}/check-leave?date=${date}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          if (data.isLeaveTaken) {
+            return { 
+              valid: false, 
+              message: `You have already applied for ${data.leaveType || 'leave'} on this date` 
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error checking leave:', error)
+      }
+    }
+    
+    return { valid: true }
+  }
+
   const reverseGeocode = async (lat, lng) => {
     try {
       setFetchingLocation(true)
-      
-      // Try multiple geocoding services for better accuracy
       let bestAddress = null
       let addresses = []
       
-      // Method 1: Try Google Maps Geocoding API first (most accurate for Indian addresses)
       const googleApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
       if (googleApiKey) {
         try {
@@ -161,14 +286,12 @@ function DailyTargetForm() {
           if (response.ok) {
             const data = await response.json()
             if (data && data.status === 'OK' && data.results && data.results.length > 0) {
-              // Try to find the most specific result
               let specificResult = data.results.find(r => 
                 r.types.includes('street_address') || 
                 r.types.includes('premise') || 
                 r.types.includes('subpremise')
               )
               
-              // If not found, try neighborhood or sublocality (for places like "M Phulenagar")
               if (!specificResult) {
                 specificResult = data.results.find(r => 
                   r.types.includes('neighborhood') || 
@@ -177,18 +300,15 @@ function DailyTargetForm() {
                 )
               }
               
-              // Fallback to locality
               if (!specificResult) {
                 specificResult = data.results.find(r => r.types.includes('locality'))
               }
               
-              // Final fallback to first result
               if (!specificResult) {
                 specificResult = data.results[0]
               }
               
               if (specificResult && specificResult.formatted_address) {
-                // Google Maps API result is most accurate, use it immediately
                 bestAddress = specificResult.formatted_address
                 setLocationName(bestAddress)
                 return bestAddress
@@ -200,11 +320,9 @@ function DailyTargetForm() {
         }
       }
       
-      // Method 2: Try OpenStreetMap Nominatim with multiple zoom levels and different parameters
-      const zoomLevels = [18, 16, 14, 12] // Try most detailed first
+      const zoomLevels = [18, 16, 14, 12]
       for (const zoom of zoomLevels) {
         try {
-          // Try with different parameters
           const urls = [
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=${zoom}&addressdetails=1&extratags=1&namedetails=1&accept-language=en`,
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=${zoom}&addressdetails=1&extratags=1&accept-language=en-IN`,
@@ -221,52 +339,40 @@ function DailyTargetForm() {
             if (response.ok) {
               const data = await response.json()
               if (data) {
-                // Try to extract the most specific address
                 if (data.address) {
                   const addr = data.address
                   let addressParts = []
                   
-              // Prioritize most specific location identifiers for Indian addresses
-              // Order matters - most specific first
-              
-              // 1. Locality/Neighbourhood (most specific - like "M Phulenagar")
-              if (addr.locality) addressParts.push(addr.locality)
-              else if (addr.neighbourhood) addressParts.push(addr.neighbourhood)
-              else if (addr.suburb) addressParts.push(addr.suburb)
-              else if (addr.quarter) addressParts.push(addr.quarter)
-              else if (addr.residential) addressParts.push(addr.residential)
-              else if (addr.hamlet) addressParts.push(addr.hamlet)
-              
-              // 2. Park/Place name (like "Jijamata Park")
-              if (addr.leisure) addressParts.push(addr.leisure)
-              if (addr.amenity) addressParts.push(addr.amenity)
-              if (addr.place) addressParts.push(addr.place)
-              
-              // 3. Road/Street
-              if (addr.road) addressParts.push(addr.road)
-              else if (addr.street) addressParts.push(addr.street)
-              else if (addr.pedestrian) addressParts.push(addr.pedestrian)
-              else if (addr.footway) addressParts.push(addr.footway)
-              else if (addr.path) addressParts.push(addr.path)
-              
-              // 4. City/Town (like "Chinchwad")
-              if (addr.city) addressParts.push(addr.city)
-              else if (addr.town) addressParts.push(addr.town)
-              else if (addr.village) addressParts.push(addr.village)
-              else if (addr.municipality) addressParts.push(addr.municipality)
-              
-              // 5. Larger area (like "Pimpri-Chinchwad")
-              if (addr.city_district) addressParts.push(addr.city_district)
-              
-              // 6. District/County
-              if (addr.district) addressParts.push(addr.district)
-              else if (addr.county) addressParts.push(addr.county)
-              
-              // 7. Postcode
-              if (addr.postcode) addressParts.push(addr.postcode)
-              
-              // 8. State
-              if (addr.state) addressParts.push(addr.state)
+                  if (addr.locality) addressParts.push(addr.locality)
+                  else if (addr.neighbourhood) addressParts.push(addr.neighbourhood)
+                  else if (addr.suburb) addressParts.push(addr.suburb)
+                  else if (addr.quarter) addressParts.push(addr.quarter)
+                  else if (addr.residential) addressParts.push(addr.residential)
+                  else if (addr.hamlet) addressParts.push(addr.hamlet)
+                  
+                  if (addr.leisure) addressParts.push(addr.leisure)
+                  if (addr.amenity) addressParts.push(addr.amenity)
+                  if (addr.place) addressParts.push(addr.place)
+                  
+                  if (addr.road) addressParts.push(addr.road)
+                  else if (addr.street) addressParts.push(addr.street)
+                  else if (addr.pedestrian) addressParts.push(addr.pedestrian)
+                  else if (addr.footway) addressParts.push(addr.footway)
+                  else if (addr.path) addressParts.push(addr.path)
+                  
+                  if (addr.city) addressParts.push(addr.city)
+                  else if (addr.town) addressParts.push(addr.town)
+                  else if (addr.village) addressParts.push(addr.village)
+                  else if (addr.municipality) addressParts.push(addr.municipality)
+                  
+                  if (addr.city_district) addressParts.push(addr.city_district)
+                  
+                  if (addr.district) addressParts.push(addr.district)
+                  else if (addr.county) addressParts.push(addr.county)
+                  
+                  if (addr.postcode) addressParts.push(addr.postcode)
+                  
+                  if (addr.state) addressParts.push(addr.state)
                   
                   if (addressParts.length > 0) {
                     const constructedAddress = addressParts.join(', ')
@@ -274,7 +380,6 @@ function DailyTargetForm() {
                   }
                 }
                 
-                // Also collect display_name as alternative
                 if (data.display_name) {
                   addresses.push(data.display_name)
                 }
@@ -287,7 +392,6 @@ function DailyTargetForm() {
         }
       }
       
-      // Method 3: Try MapBox if available (optional)
       const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN
       if (mapboxToken && !bestAddress) {
         try {
@@ -309,26 +413,21 @@ function DailyTargetForm() {
         }
       }
       
-      // Find the best address - prioritize addresses that contain more specific terms
       if (addresses.length > 0) {
-        // Score addresses based on specificity (prefer addresses with more components)
         const scoredAddresses = addresses.map(addr => ({
           address: addr,
           score: addr.split(',').length + (addr.match(/park|nagar|chinchwad|pimpri/i) ? 10 : 0)
         }))
         
-        // Sort by score (highest first)
         scoredAddresses.sort((a, b) => b.score - a.score)
         bestAddress = scoredAddresses[0].address
       }
       
-      // If we got an address, use it
       if (bestAddress) {
         setLocationName(bestAddress)
         return bestAddress
       }
       
-      // Final fallback: coordinates
       const formattedCoords = `${lat.toFixed(6)}, ${lng.toFixed(6)}`
       setLocationName(formattedCoords)
       return formattedCoords
@@ -357,20 +456,17 @@ function DailyTargetForm() {
           const lat = position.coords.latitude
           const lng = position.coords.longitude
           
-          // Store coordinates first
           setFormData((prev) => ({
             ...prev,
             locationLat: lat.toString(),
             locationLng: lng.toString(),
-            siteLocation: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, // Set coordinates as fallback
+            siteLocation: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
           }))
           
           setLocationAccess(true)
           
-          // Get readable address (this will update siteLocation if successful)
           const address = await reverseGeocode(lat, lng)
           
-          // Update with the address if we got one
           if (address && address !== `${lat.toFixed(6)}, ${lng.toFixed(6)}`) {
             setFormData((prev) => ({
               ...prev,
@@ -411,23 +507,33 @@ function DailyTargetForm() {
     )
   }
 
-  const handleChange = (event) => {
+  const handleChange = async (event) => {
     const { name, value, type, files } = event.target
 
-    // File handling unchanged
     if (type === 'file') {
       setFormData((prev) => ({ ...prev, [name]: files[0] || null }))
       return
     }
 
-    // Always store contact numbers as digits-only
+    if (name === 'leaveType') {
+      setFormData((prev) => ({ ...prev, [name]: value }))
+      
+      // Find selected leave type details
+      const typeDetails = leaveTypes.find(lt => lt.id === value)
+      setSelectedLeaveType(typeDetails)
+      
+      // Reset availability check
+      setLeaveAvailability(null)
+      
+      return
+    }
+
     if (name === 'customerContact' || name === 'endCustomerContact') {
       const digits = (value ?? '').toString().replace(/\D/g, '')
       setFormData((prev) => ({ ...prev, [name]: digits }))
       return
     }
 
-    // If online support flag changes, clear engineer name when it's "No"
     if (name === 'onlineSupportRequired') {
       const v = value
       setFormData((prev) => ({
@@ -436,6 +542,39 @@ function DailyTargetForm() {
         supportEngineerName: v === 'Yes' ? prev.supportEngineerName : '',
       }))
       return
+    }
+
+    if (name === 'reportDate') {
+      // Check if report already exists for this date
+      if (value) {
+        const existingReport = await checkExistingReport(value, isEditMode ? submittedData?.id : null)
+        
+        if (existingReport) {
+          const reportType = existingReport.locationType === 'leave' 
+            ? `leave (${existingReport.leaveType || 'leave'})` 
+            : `${existingReport.locationType} report`
+          
+          setAlert({ 
+            type: 'error', 
+            message: `You already have a ${reportType} for ${value}. Please edit the existing report instead.` 
+          })
+        } else if (alert?.type === 'error' && alert.message.includes('already have a')) {
+          // Clear the error alert if date changed
+          setAlert(null)
+        }
+      }
+      
+      // Validate leave date when location type is leave and report date changes
+      if (formData.locationType === 'leave' && value) {
+        const validation = await validateLeaveDate(value)
+        if (!validation.valid) {
+          setAlert({ type: 'error', message: validation.message })
+          return
+        }
+        
+        // Reset availability check when date changes
+        setLeaveAvailability(null)
+      }
     }
 
     setFormData((prev) => ({ ...prev, [name]: value }))
@@ -451,18 +590,100 @@ function DailyTargetForm() {
     setFormData((prev) => ({ ...prev, outTime }))
   }
 
+  // Check leave availability
+  const checkLeaveAvailability = async () => {
+    if (!formData.leaveType || !formData.reportDate) {
+      setAlert({ type: 'error', message: 'Please select leave type and date first' })
+      return
+    }
+    
+    setCheckingAvailability(true)
+    try {
+      const response = await fetch(
+        `${endpoint}/check-leave-availability?leaveType=${formData.leaveType}&startDate=${formData.reportDate}`,
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      )
+      
+      if (response.ok) {
+        const data = await response.json()
+        setLeaveAvailability(data)
+        
+        if (!data.available) {
+          setAlert({ type: 'warning', message: data.message })
+        } else {
+          setAlert({ 
+            type: 'success', 
+            message: `${data.message}. ${data.requiresApproval ? 'Requires approval.' : 'No approval required.'}` 
+          })
+        }
+      }
+    } catch (error) {
+      console.error('Error checking leave availability:', error)
+      setAlert({ type: 'error', message: 'Failed to check leave availability' })
+    } finally {
+      setCheckingAvailability(false)
+    }
+  }
+
   const handleSubmit = async () => {
     console.log('=== FORM SUBMISSION STARTED ===')
     console.log('Location type:', formData.locationType)
+    console.log('Leave type:', formData.leaveType)
     console.log('Form data:', formData)
-    console.log('Remark field:', formData.remark)
-    console.log('Remark trimmed:', formData.remark?.trim())
-    console.log('Remark exists:', !!(formData.remark?.trim()))
 
     setSubmitting(true)
     setAlert(null)
 
-    // Validate PDF upload for site location (skip for edits with existing location data)
+    // Check if report already exists for this date (for all location types)
+    const existingReport = await checkExistingReport(formData.reportDate, isEditMode ? submittedData?.id : null)
+    
+    if (existingReport && (!isEditMode || (isEditMode && existingReport.id !== submittedData?.id))) {
+      const reportType = existingReport.locationType === 'leave' 
+        ? `leave (${existingReport.leaveType || 'leave'})` 
+        : `${existingReport.locationType} report`
+      
+      setAlert({ 
+        type: 'error', 
+        message: `You already have a ${reportType} for ${formData.reportDate}. Please edit the existing report instead.` 
+      })
+      setSubmitting(false)
+      return
+    }
+
+    // Check leave balance when applying for leave
+    if (formData.locationType === 'leave') {
+      if (!formData.leaveType) {
+        setAlert({ type: 'error', message: 'Please select a leave type' })
+        setSubmitting(false)
+        return
+      }
+      
+      const selectedType = leaveTypes.find(lt => lt.id === formData.leaveType)
+      if (!selectedType?.available) {
+        setAlert({ type: 'error', message: selectedType?.reason || 'This leave type is not available for you' })
+        setSubmitting(false)
+        return
+      }
+
+      // Validate leave date
+      const validation = await validateLeaveDate(formData.reportDate)
+      if (!validation.valid) {
+        setAlert({ type: 'error', message: validation.message })
+        setSubmitting(false)
+        return
+      }
+
+      // Check if availability was checked and is available
+      if (!leaveAvailability?.available && leaveAvailability !== null) {
+        setAlert({ type: 'error', message: 'Please check leave availability first or select different dates' })
+        setSubmitting(false)
+        return
+      }
+    }
+
+    // Validate PDF upload for site location
     if (formData.locationType === 'site' && !locationAccess && !(isEditMode && formData.locationLat && formData.locationLng)) {
       setAlert({ type: 'error', message: 'Please allow location access to upload MOM report' })
       setSubmitting(false)
@@ -472,7 +693,6 @@ function DailyTargetForm() {
     // For leave location, no fields are required (remark is optional)
     if (formData.locationType === 'leave') {
       console.log('Leave location selected - no validation required')
-      // No validation needed for leave location
     } else {
       // For office/site locations, require all work-related fields
       const requiredFields = [
@@ -497,7 +717,6 @@ function DailyTargetForm() {
     try {
       const formDataToSend = new FormData()
 
-      // Add all form fields
       Object.keys(formData).forEach((key) => {
         if (key === 'momReport' && formData.momReport) {
           formDataToSend.append('momReport', formData.momReport)
@@ -522,7 +741,7 @@ function DailyTargetForm() {
 
       const responseData = await response.json()
 
-      // Store submitted data to show on page
+      // Store submitted data
       const submittedFormData = {
         ...formData,
         id: isEditMode ? submittedData.id : responseData.id,
@@ -533,13 +752,18 @@ function DailyTargetForm() {
       setSubmittedData(submittedFormData)
       setIsEditMode(false)
       
-      setAlert({ type: 'success', message: isEditMode ? 'Report updated successfully!' : 'Daily target report saved successfully! You can now view and edit it below.' })
+      setAlert({ 
+        type: 'success', 
+        message: isEditMode ? 'Report updated successfully!' : 'Daily target report saved successfully! You can now view and edit it below.' 
+      })
       
-      // Reset form for new entry
+      // Reset form
       const newFormData = defaultPayload()
       setFormData(newFormData)
       setLocationAccess(false)
       setLocationError('')
+      setSelectedLeaveType(null)
+      setLeaveAvailability(null)
 
       // Reset file input
       setTimeout(() => {
@@ -565,7 +789,57 @@ function DailyTargetForm() {
           <h2>Record your daily targets</h2>
           <p>
             Track your in/out times, customer information, site activities, and daily targets.
+            <br /><strong>Note:</strong> Only one report allowed per day (including leave).
           </p>
+          
+          {/* Leave Balance Display */}
+          {user && !loadingLeaveBalance && (
+            <div style={{ 
+              marginTop: '1rem', 
+              padding: '0.75rem', 
+              background: '#f8f9fa', 
+              borderRadius: '8px',
+              border: '1px solid #dee2e6'
+            }}>
+              <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '0.5rem'
+              }}>
+                <div>
+                  <strong>Annual Leave Balance</strong>
+                  <div style={{ fontSize: '0.9rem', color: '#6c757d', marginTop: '0.25rem' }}>
+                    Financial Year: {new Date().getFullYear()}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#198754' }}>
+                    {leaveBalance.remaining} / {leaveBalance.total}
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: '#6c757d' }}>
+                    Used: {leaveBalance.used} leaves
+                  </div>
+                </div>
+              </div>
+              <div style={{ 
+                height: '8px', 
+                background: '#e9ecef', 
+                borderRadius: '4px',
+                marginTop: '0.5rem',
+                overflow: 'hidden'
+              }}>
+                <div style={{ 
+                  width: `${(leaveBalance.used / leaveBalance.total) * 100}%`,
+                  height: '100%',
+                  background: leaveBalance.remaining > 12 ? '#28a745' : 
+                            leaveBalance.remaining > 6 ? '#ffc107' : '#dc3545',
+                  borderRadius: '4px',
+                  transition: 'width 0.3s ease'
+                }}></div>
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
@@ -591,15 +865,12 @@ function DailyTargetForm() {
               <button
                 type="button"
                 onClick={() => {
-                  // Create a copy of submitted data for editing
                   const editData = { ...submittedData }
-                  // Remove the momReportName as we'll need to re-upload if changed
                   delete editData.momReportName
                   delete editData.id
-
                   delete editData.submittedAt
                   delete editData.locationName
-                  // Ensure reportDate is set (use existing or current date)
+                  
                   if (!editData.reportDate) {
                     editData.reportDate = new Date().toISOString().slice(0, 10)
                   }
@@ -608,10 +879,8 @@ function DailyTargetForm() {
                   if (editData.locationType === 'site' && editData.locationLat && editData.locationLng) {
                     setLocationAccess(true)
                     setLocationError('')
-                    // Restore location name from submitted data or use siteLocation
                     const restoredLocationName = submittedData.locationName || editData.siteLocation || ''
                     setLocationName(restoredLocationName)
-                    // If we have coordinates but no readable address, try to fetch it
                     if (editData.locationLat && editData.locationLng && !restoredLocationName.includes('Location:')) {
                       const lat = parseFloat(editData.locationLat)
                       const lng = parseFloat(editData.locationLng)
@@ -627,8 +896,11 @@ function DailyTargetForm() {
                       }
                     }
                   }
+                  if (editData.locationType === 'leave' && editData.leaveType) {
+                    const typeDetails = leaveTypes.find(lt => lt.id === editData.leaveType)
+                    setSelectedLeaveType(typeDetails)
+                  }
                 }}
-                
                 style={{
                   padding: '0.5rem 1rem',
                   background: '#2ad1ff',
@@ -662,163 +934,49 @@ function DailyTargetForm() {
             </div>
           </div>
           
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(2, 1fr)',
-            gap: '1rem',
-            fontSize: '0.9rem',
-            color: '#4a5972'
-          }}>
-            <div><strong>Location Type:</strong> {submittedData.locationType ? submittedData.locationType.charAt(0).toUpperCase() + submittedData.locationType.slice(1) : 'N/A'}</div>
-            <div></div>
-
-            {submittedData.locationType !== 'leave' && (
-              <>
-                <div><strong>In Time:</strong> {submittedData.inTime || 'N/A'}</div>
-                <div><strong>Out Time:</strong> {submittedData.outTime || 'N/A'}</div>
-
-                <div className="vh-span-2" style={{ gridColumn: 'span 2', borderTop: '1px solid #d5e0f2', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
-                  <strong>Customer Information:</strong>
-                </div>
-                <div><strong>Customer Name:</strong> {submittedData.customerName || 'N/A'}</div>
-                <div><strong>Customer Person:</strong> {submittedData.customerPerson || 'N/A'}</div>
-                <div><strong>Customer Contact:</strong> {submittedData.customerContact || 'N/A'}</div>
-              </>
+          {/* Submitted data display */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
+            <div>
+              <strong>Report Date:</strong> {submittedData.reportDate}
+            </div>
+            <div>
+              <strong>Location Type:</strong> {submittedData.locationType}
+            </div>
+            {submittedData.locationType === 'leave' && (
+              <div>
+                <strong>Leave Type:</strong> {leaveTypes.find(lt => lt.id === submittedData.leaveType)?.name || submittedData.leaveType}
+              </div>
             )}
-
-            {submittedData.locationType !== 'leave' && (
-              <>
-                <div className="vh-span-2" style={{ gridColumn: 'span 2', borderTop: '1px solid #d5e0f2', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
-                  <strong>End Customer Information:</strong>
-                </div>
-                <div><strong>End Customer Name:</strong> {submittedData.endCustomerName || 'N/A'}</div>
-                <div><strong>End Customer Person:</strong> {submittedData.endCustomerPerson || 'N/A'}</div>
-                <div><strong>End Customer Contact:</strong> {submittedData.endCustomerContact || 'N/A'}</div>
-
-                <div className="vh-span-2" style={{ gridColumn: 'span 2', borderTop: '1px solid #d5e0f2', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
-                  <strong>Project & Location:</strong>
-                </div>
-                <div><strong>Project No./Name:</strong> {submittedData.projectNo || 'N/A'}</div>
-              </>
+            {submittedData.inTime && (
+              <div>
+                <strong>In Time:</strong> {submittedData.inTime}
+              </div>
             )}
-            {submittedData.locationType === 'site' && (
-              <>
-                <div className="vh-span-2" style={{ gridColumn: 'span 2' }}>
-                  <strong>Site Location:</strong> {submittedData.locationName || submittedData.siteLocation || 'N/A'}
-                </div>
-                {submittedData.locationLat && submittedData.locationLng && (
-                  <div className="vh-span-2" style={{ gridColumn: 'span 2', fontSize: '0.85rem', color: '#8892aa' }}>
-                    Coordinates: {submittedData.locationLat}, {submittedData.locationLng}
-                  </div>
-                )}
-              </>
+            {submittedData.outTime && (
+              <div>
+                <strong>Out Time:</strong> {submittedData.outTime}
+            </div>
             )}
-
-            {submittedData.locationType !== 'leave' && (
-              <>
-                {submittedData.momReportName && (
-                  <div className="vh-span-2" style={{ gridColumn: 'span 2' }}>
-                    <strong>MOM Report:</strong> {submittedData.momReportName}
-                  </div>
-                )}
-
-                <div className="vh-span-2" style={{ gridColumn: 'span 2', borderTop: '1px solid #d5e0f2', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
-                  <strong>Daily Targets:</strong>
-                </div>
-                <div className="vh-span-2" style={{ gridColumn: 'span 2' }}>
-                  <strong>Daily Target Planned by Site Engineer:</strong>
-                  <p style={{ margin: '0.5rem 0 0', whiteSpace: 'pre-wrap', background: 'white', padding: '0.75rem', borderRadius: '8px' }}>
-                    {submittedData.dailyTargetPlanned || 'N/A'}
-                  </p>
-                </div>
-                <div className="vh-span-2" style={{ gridColumn: 'span 2' }}>
-                  <strong>Daily Target Achieved by Engineer:</strong>
-                  <p style={{ margin: '0.5rem 0 0', whiteSpace: 'pre-wrap', background: 'white', padding: '0.75rem', borderRadius: '8px' }}>
-                    {submittedData.dailyTargetAchieved || 'N/A'}
-                  </p>
-                </div>
-                {submittedData.additionalActivity && (
-                  <div className="vh-span-2" style={{ gridColumn: 'span 2' }}>
-                    <strong>Additional Activity Added by Customer/End Customer:</strong>
-                    <p style={{ margin: '0.5rem 0 0', whiteSpace: 'pre-wrap', background: 'white', padding: '0.75rem', borderRadius: '8px' }}>
-                      {submittedData.additionalActivity}
-                    </p>
-                  </div>
-                )}
-                {submittedData.whoAddedActivity && (
-                  <div><strong>Who Added This Extra Activity:</strong> {submittedData.whoAddedActivity}</div>
-                )}
-                {submittedData.dailyPendingTarget && (
-                  <div className="vh-span-2" style={{ gridColumn: 'span 2' }}>
-                    <strong>Daily Pending Target:</strong>
-                    <p style={{ margin: '0.5rem 0 0', whiteSpace: 'pre-wrap', background: 'white', padding: '0.75rem', borderRadius: '8px' }}>
-                      {submittedData.dailyPendingTarget}
-                    </p>
-                  </div>
-                )}
-                {submittedData.reasonPendingTarget && (
-                  <div className="vh-span-2" style={{ gridColumn: 'span 2' }}>
-                    <strong>Reason for Daily Pending Target:</strong>
-                    <p style={{ margin: '0.5rem 0 0', whiteSpace: 'pre-wrap', background: 'white', padding: '0.75rem', borderRadius: '8px' }}>
-                      {submittedData.reasonPendingTarget}
-                    </p>
-                  </div>
-                )}
-              </>
+            {submittedData.customerName && submittedData.customerName !== 'N/A' && (
+              <div>
+                <strong>Customer:</strong> {submittedData.customerName}
+              </div>
             )}
-
-            {submittedData.locationType !== 'leave' && (
-              <>
-                <div className="vh-span-2" style={{ gridColumn: 'span 2', borderTop: '1px solid #d5e0f2', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
-                  <strong>Problems & Support:</strong>
-                </div>
-                {submittedData.problemFaced && (
-                  <div className="vh-span-2" style={{ gridColumn: 'span 2' }}>
-                    <strong>Problem Faced by Engineer:</strong>
-                    <p style={{ margin: '0.5rem 0 0', whiteSpace: 'pre-wrap', background: 'white', padding: '0.75rem', borderRadius: '8px' }}>
-                      {submittedData.problemFaced}
-                    </p>
-                  </div>
-                )}
-                {submittedData.problemResolved && (
-                  <div className="vh-span-2" style={{ gridColumn: 'span 2' }}>
-                    <strong>Problem Resolved or Not and How:</strong>
-                    <p style={{ margin: '0.5rem 0 0', whiteSpace: 'pre-wrap', background: 'white', padding: '0.75rem', borderRadius: '8px' }}>
-                      {submittedData.problemResolved}
-                    </p>
-                  </div>
-                )}
-                {submittedData.onlineSupportRequired && (
-                  <div>
-                    <strong>Online Support Required:</strong> {submittedData.onlineSupportRequired}
-                  </div>
-                )}
-                {submittedData.supportEngineerName && (
-                  <div><strong>Engineer Name Who Gives Online Support:</strong> {submittedData.supportEngineerName}</div>
-                )}
-
-                <div className="vh-span-2" style={{ gridColumn: 'span 2', borderTop: '1px solid #d5e0f2', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
-                  <strong>Site Dates & Personnel:</strong>
-                </div>
-                <div><strong>Site Start Date:</strong> {submittedData.siteStartDate || 'N/A'}</div>
-                {submittedData.siteEndDate && <div><strong>Site End Date:</strong> {submittedData.siteEndDate}</div>}
-                <div><strong>Incharge:</strong> {submittedData.incharge || 'N/A'}</div>
-              </>
-            )}
-
-            {submittedData.remark && (
-              <div className="vh-span-2" style={{ gridColumn: 'span 2', borderTop: '1px solid #d5e0f2', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
-                <strong>Remark{submittedData.locationType === 'leave' ? ' (Leave Reason)' : ''}:</strong>
-                <p style={{ margin: '0.5rem 0 0', whiteSpace: 'pre-wrap', background: submittedData.locationType === 'leave' ? '#fff3cd' : 'white', padding: '0.75rem', borderRadius: '8px', border: submittedData.locationType === 'leave' ? '1px solid #ffc107' : 'none' }}>
-                  {submittedData.remark}
-                </p>
+            {submittedData.submittedAt && (
+              <div>
+                <strong>Submitted At:</strong> {new Date(submittedData.submittedAt).toLocaleString()}
               </div>
             )}
           </div>
+          {submittedData.remark && (
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid #2ad1ff' }}>
+              <strong>Remark:</strong> {submittedData.remark}
+            </div>
+          )}
         </div>
       )}
 
-      <div className="vh-form" onSubmit={handleSubmit}>
+      <div className="vh-form">
         <div className="vh-grid">
           <label>
             <span>Report Date *</span>
@@ -829,7 +987,9 @@ function DailyTargetForm() {
               onChange={handleChange}
             />
             <small style={{ color: '#666', display: 'block', marginTop: '0.25rem' }}>
-              Date for this daily target report (used for hourly report linking)
+              {formData.locationType === 'leave' ? 
+                'Leave date (cannot be on weekends)' : 
+                'Date for this daily target report (only one report allowed per day)'}
             </small>
           </label>
 
@@ -845,6 +1005,11 @@ function DailyTargetForm() {
               <option value="office">Office</option>
               <option value="leave">Leave</option>
             </select>
+            {formData.locationType === 'leave' && (
+              <small style={{ color: '#dc3545', display: 'block', marginTop: '0.25rem' }}>
+                ⚠️ Applying for leave will deduct from your leave balance
+              </small>
+            )}
           </label>
 
           {formData.locationType !== 'leave' && (
@@ -905,80 +1070,137 @@ function DailyTargetForm() {
                 </div>
               </label>
 
+              {/* Customer Information */}
               <label className="vh-span-2">
-                <span>Customer Name</span>
+                <span>Customer Name *</span>
                 <input
                   type="text"
                   name="customerName"
-                  placeholder="Enter customer name"
                   value={formData.customerName}
                   onChange={handleChange}
+                  placeholder="Enter customer name"
+                  required={formData.locationType !== 'leave'}
                 />
               </label>
 
-              <label className="vh-span-2">
-                <span>Customer Person</span>
+              <label>
+                <span>Customer Person *</span>
                 <input
                   type="text"
                   name="customerPerson"
-                  placeholder="Enter customer contact person name"
                   value={formData.customerPerson}
                   onChange={handleChange}
+                  placeholder="Contact person"
+                  required={formData.locationType !== 'leave'}
                 />
               </label>
 
-              <label className="vh-span-2">
-                <span>Customer Contact No.</span>
+              <label>
+                <span>Customer Contact *</span>
                 <input
                   type="tel"
                   name="customerContact"
-                  placeholder="Enter customer contact number"
                   value={formData.customerContact}
                   onChange={handleChange}
+                  placeholder="10-digit mobile"
+                  maxLength="10"
+                  required={formData.locationType !== 'leave'}
                 />
               </label>
 
               <label className="vh-span-2">
-                <span>End Customer Name</span>
+                <span>End Customer Name *</span>
                 <input
                   type="text"
                   name="endCustomerName"
-                  placeholder="Enter end customer name"
                   value={formData.endCustomerName}
                   onChange={handleChange}
+                  placeholder="Enter end customer name"
+                  required={formData.locationType !== 'leave'}
                 />
               </label>
 
-              <label className="vh-span-2">
-                <span>End Customer Person</span>
+              <label>
+                <span>End Customer Person *</span>
                 <input
                   type="text"
                   name="endCustomerPerson"
-                  placeholder="Enter end customer contact person name"
                   value={formData.endCustomerPerson}
                   onChange={handleChange}
+                  placeholder="Contact person"
+                  required={formData.locationType !== 'leave'}
                 />
               </label>
 
-              <label className="vh-span-2">
-                <span>End Customer Contact No.</span>
+              <label>
+                <span>End Customer Contact *</span>
                 <input
                   type="tel"
                   name="endCustomerContact"
-                  placeholder="Enter end customer contact number"
                   value={formData.endCustomerContact}
                   onChange={handleChange}
+                  placeholder="10-digit mobile"
+                  maxLength="10"
+                  required={formData.locationType !== 'leave'}
                 />
               </label>
 
               <label className="vh-span-2">
-                <span>Project No. / Project Name</span>
+                <span>Project Number *</span>
                 <input
                   type="text"
                   name="projectNo"
-                  placeholder="Eg. VH-Metro Phase 2 / VH-OPS-0215"
                   value={formData.projectNo}
                   onChange={handleChange}
+                  placeholder="Enter project number"
+                  required={formData.locationType !== 'leave'}
+                />
+              </label>
+
+              <label className="vh-span-2">
+                <span>Daily Target Planned *</span>
+                <textarea
+                  name="dailyTargetPlanned"
+                  value={formData.dailyTargetPlanned}
+                  onChange={handleChange}
+                  placeholder="Describe planned daily targets"
+                  rows="3"
+                  required={formData.locationType !== 'leave'}
+                />
+              </label>
+
+              <label className="vh-span-2">
+                <span>Daily Target Achieved *</span>
+                <textarea
+                  name="dailyTargetAchieved"
+                  value={formData.dailyTargetAchieved}
+                  onChange={handleChange}
+                  placeholder="Describe achieved daily targets"
+                  rows="3"
+                  required={formData.locationType !== 'leave'}
+                />
+              </label>
+
+              <label>
+                <span>Incharge *</span>
+                <input
+                  type="text"
+                  name="incharge"
+                  value={formData.incharge}
+                  onChange={handleChange}
+                  placeholder="Supervisor/manager name"
+                  required={formData.locationType !== 'leave'}
+                />
+              </label>
+
+              <label>
+                <span>Site Start Date</span>
+                <input
+                  type="date"
+                  name="siteStartDate"
+                  value={formData.siteStartDate}
+                  onChange={handleChange}
+                  required={formData.locationType === 'site'}
                 />
               </label>
             </>
@@ -1018,34 +1240,19 @@ function DailyTargetForm() {
                     {fetchingLocation ? '⏳ Detecting...' : locationAccess ? '✓ Location Set' : 'Get Location'}
                   </button>
                 </div>
-                {fetchingLocation && (
-                  <small style={{ color: '#2ad1ff', marginTop: '0.25rem', display: 'block' }}>
-                    🔄 Fetching location name...
-                  </small>
-                )}
                 {locationError && (
-                  <small style={{ color: '#ff7a7a', marginTop: '0.25rem', display: 'block' }}>
-                    ⚠️ {locationError}
+                  <small style={{ color: '#dc3545', display: 'block', marginTop: '0.25rem' }}>
+                    {locationError}
                   </small>
                 )}
-                {fetchingLocation && (
-                  <small style={{ color: '#2ad1ff', marginTop: '0.25rem', display: 'block' }}>
-                    🔄 Detecting your location and fetching address...
+                {fetchingLocation && !locationError && (
+                  <small style={{ color: '#6c757d', display: 'block', marginTop: '0.25rem' }}>
+                    Detecting your location...
                   </small>
                 )}
-                {locationError && (
-                  <small style={{ color: '#ff7a7a', marginTop: '0.25rem', display: 'block' }}>
-                    ⚠️ {locationError}
-                  </small>
-                )}
-                {locationAccess && !fetchingLocation && formData.siteLocation && (
-                  <small style={{ color: '#06c167', marginTop: '0.25rem', display: 'block' }}>
-                    ✓ Location automatically detected: {formData.siteLocation}
-                    {formData.locationLat && formData.locationLng && (
-                      <span style={{ display: 'block', fontSize: '0.85rem', color: '#8892aa', marginTop: '0.25rem' }}>
-                        📍 GPS Coordinates: {formData.locationLat}, {formData.locationLng}
-                      </span>
-                    )}
+                {locationAccess && (
+                  <small style={{ color: '#28a745', display: 'block', marginTop: '0.25rem' }}>
+                    ✓ Location captured: {locationName || 'Address fetched successfully'}
                   </small>
                 )}
               </label>
@@ -1060,59 +1267,141 @@ function DailyTargetForm() {
                     onChange={handleChange}
                     style={{ padding: '0.5rem' }}
                   />
-                  {formData.momReport && (
-                    <small style={{ color: '#06c167', marginTop: '0.25rem', display: 'block' }}>
-                      Selected: {formData.momReport.name}
-                    </small>
-                  )}
                 </label>
               )}
             </>
           )}
 
-          {formData.locationType !== 'leave' && (
+          {/* Leave Type Selection */}
+          {formData.locationType === 'leave' && (
             <>
               <label className="vh-span-2">
-                <span>Daily Target Planned by Site Engineer</span>
-                <textarea
-                  name="dailyTargetPlanned"
-                  rows={3}
-                  value={formData.dailyTargetPlanned}
+                <span>Leave Type *</span>
+                <select
+                  name="leaveType"
+                  value={formData.leaveType}
                   onChange={handleChange}
-                  placeholder="Describe the daily target planned..."
-                />
+                  required={formData.locationType === 'leave'}
+                >
+                  <option value="">Select leave type</option>
+                  {leaveTypes.map(type => (
+                    <option 
+                      key={type.id} 
+                      value={type.id}
+                      disabled={!type.available}
+                      title={!type.available ? type.reason : type.description}
+                    >
+                      {type.name} {type.maxDays > 0 ? `(${type.maxDays} days/year)` : ''}
+                      {type.requiresApproval ? ' [Approval]' : ''}
+                    </option>
+                  ))}
+                </select>
               </label>
+              
+              {selectedLeaveType && (
+                <div className="vh-span-2" style={{
+                  padding: '1rem',
+                  background: '#fff3cd',
+                  border: '1px solid #ffc107',
+                  borderRadius: '8px',
+                  marginBottom: '1rem'
+                }}>
+                  <div style={{ marginBottom: '0.5rem' }}>
+                    <strong style={{ color: '#856404' }}>{selectedLeaveType.name}</strong>
+                    <div style={{ color: '#856404', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                      {selectedLeaveType.description}
+                    </div>
+                    <div style={{ color: '#856404', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                      <strong>Max Days:</strong> {selectedLeaveType.maxDays > 0 ? `${selectedLeaveType.maxDays} days/year` : 'Unlimited'} | 
+                      <strong> Approval:</strong> {selectedLeaveType.requiresApproval ? 'Required' : 'Not Required'}
+                    </div>
+                    
+                    {/* Show balance for selected leave type */}
+                    {formData.leaveType && leaveBalanceByType.length > 0 && (
+                      <div style={{ color: '#856404', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                        <strong>Your Balance:</strong> {leaveBalanceByType
+                          .find(b => b.typeId === formData.leaveType)?.remainingDays || 0} days remaining
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <strong style={{ color: '#856404' }}>Leave Application</strong>
+                      <div style={{ color: '#856404', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                        Date: {formData.reportDate || 'Not selected'}
+                      </div>
+                    </div>
+                    
+                    <button
+                      type="button"
+                      onClick={checkLeaveAvailability}
+                      disabled={!formData.leaveType || !formData.reportDate || checkingAvailability}
+                      style={{
+                        padding: '0.5rem 1rem',
+                        background: '#28a745',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        opacity: (!formData.leaveType || !formData.reportDate) ? 0.5 : 1
+                      }}
+                    >
+                      {checkingAvailability ? 'Checking...' : 'Check Availability'}
+                    </button>
+                  </div>
+                  
+                  {/* Show availability result */}
+                  {leaveAvailability && (
+                    <div style={{
+                      marginTop: '1rem',
+                      padding: '0.75rem',
+                      background: leaveAvailability.available ? '#d4edda' : '#f8d7da',
+                      border: `1px solid ${leaveAvailability.available ? '#c3e6cb' : '#f5c6cb'}`,
+                      borderRadius: '4px'
+                    }}>
+                      <div style={{ 
+                        color: leaveAvailability.available ? '#155724' : '#721c24',
+                        fontSize: '0.9rem'
+                      }}>
+                        <strong>{leaveAvailability.available ? '✓ Available' : '✗ Not Available'}</strong>
+                        <div>{leaveAvailability.message}</div>
+                        {leaveAvailability.requiresApproval && leaveAvailability.available && (
+                          <div style={{ marginTop: '0.25rem', fontStyle: 'italic' }}>
+                            Note: This leave type requires manager approval
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
 
+          {/* Additional fields for all location types */}
+          {(formData.locationType === 'office' || formData.locationType === 'site') && (
+            <>
               <label className="vh-span-2">
-                <span>Daily Target Achieved by Engineer</span>
-                <textarea
-                  name="dailyTargetAchieved"
-                  rows={3}
-                  value={formData.dailyTargetAchieved}
-                  onChange={handleChange}
-                  placeholder="Describe what was achieved..."
-                />
-              </label>
-
-              <label className="vh-span-2">
-                <span>Additional Activity Added by Customer/End Customer</span>
+                <span>Additional Activity (if any)</span>
                 <textarea
                   name="additionalActivity"
-                  rows={3}
                   value={formData.additionalActivity}
                   onChange={handleChange}
-                  placeholder="Describe additional activities..."
+                  placeholder="Describe any additional activities"
+                  rows="2"
                 />
               </label>
 
-              <label className="vh-span-2">
-                <span>Who Added This Extra Activity</span>
+              <label>
+                <span>Who Added Activity</span>
                 <input
                   type="text"
                   name="whoAddedActivity"
-                  placeholder="Enter name of person who added the activity"
                   value={formData.whoAddedActivity}
                   onChange={handleChange}
+                  placeholder="Name of person who added activity"
                 />
               </label>
 
@@ -1120,68 +1409,71 @@ function DailyTargetForm() {
                 <span>Daily Pending Target</span>
                 <textarea
                   name="dailyPendingTarget"
-                  rows={3}
                   value={formData.dailyPendingTarget}
                   onChange={handleChange}
-                  placeholder="Describe pending targets..."
+                  placeholder="Describe pending targets for next day"
+                  rows="2"
                 />
               </label>
 
               <label className="vh-span-2">
-                <span>Reason for Daily Pending Target</span>
+                <span>Reason for Pending Target</span>
                 <textarea
                   name="reasonPendingTarget"
-                  rows={3}
                   value={formData.reasonPendingTarget}
                   onChange={handleChange}
-                  placeholder="Explain the reason for pending targets..."
+                  placeholder="Explain why targets are pending"
+                  rows="2"
                 />
               </label>
-            </>
-          )}
 
-          {formData.locationType !== 'leave' && (
-            <>
               <label className="vh-span-2">
+                <span>Problem Faced (if any)</span>
+                <textarea
+                  name="problemFaced"
+                  value={formData.problemFaced}
+                  onChange={handleChange}
+                  placeholder="Describe any problems faced"
+                  rows="2"
+                />
+              </label>
+
+              <label className="vh-span-2">
+                <span>Problem Resolved (if any)</span>
+                <textarea
+                  name="problemResolved"
+                  value={formData.problemResolved}
+                  onChange={handleChange}
+                  placeholder="Describe how problems were resolved"
+                  rows="2"
+                />
+              </label>
+
+              <label>
                 <span>Online Support Required</span>
                 <select
                   name="onlineSupportRequired"
-                  value={formData.onlineSupportRequired || ''}
+                  value={formData.onlineSupportRequired}
                   onChange={handleChange}
                 >
-                  <option value="">Select option</option>
+                  <option value="">Select</option>
                   <option value="Yes">Yes</option>
                   <option value="No">No</option>
                 </select>
               </label>
 
               {formData.onlineSupportRequired === 'Yes' && (
-                <label className="vh-span-2">
-                  <span>Engineer Name Who Gives Online Support *</span>
+                <label>
+                  <span>Support Engineer Name</span>
                   <input
                     type="text"
                     name="supportEngineerName"
-                    placeholder="Enter engineer name providing support"
-                    value={formData.supportEngineerName || ''}
+                    value={formData.supportEngineerName}
                     onChange={handleChange}
-                    required
+                    placeholder="Name of support engineer"
                   />
                 </label>
               )}
-            </>
-          )}
-
-          {formData.locationType === 'site' && (
-            <>
-              <label>
-                <span>Site Start Date</span>
-                <input
-                  type="date"
-                  name="siteStartDate"
-                  value={formData.siteStartDate}
-                  onChange={handleChange}
-                />
-              </label>
 
               <label>
                 <span>Site End Date</span>
@@ -1195,35 +1487,39 @@ function DailyTargetForm() {
             </>
           )}
 
-          {formData.locationType !== 'leave' && (
-            <label className="vh-span-2">
-              <span>Incharge</span>
-              <input
-                type="text"
-                name="incharge"
-                placeholder="Enter incharge name"
-                value={formData.incharge}
-                onChange={handleChange}
-              />
-            </label>
-          )}
-
+          {/* Remark field for all location types */}
           <label className="vh-span-2">
             <span>Remark</span>
             <textarea
               name="remark"
-              rows={3}
               value={formData.remark}
               onChange={handleChange}
-              placeholder={formData.locationType === 'leave' ? "Optional: Provide a reason for leave..." : "Additional remarks..."}
+              placeholder="Additional remarks or comments"
+              rows="2"
             />
+            {formData.locationType === 'leave' && (
+              <small style={{ color: '#6c757d', display: 'block', marginTop: '0.25rem' }}>
+                Optional: Add reason for leave or any additional information
+              </small>
+            )}
           </label>
         </div>
 
         <div className="vh-form-actions">
-          <button type="button" onClick={handleSubmit} disabled={submitting || (formData.locationType === 'site' && !locationAccess && !(isEditMode && formData.locationLat && formData.locationLng))}>
-            {submitting ? 'Saving…' : isEditMode ? 'Update Report' : 'Submit Report'}
+          <button 
+            type="button" 
+            onClick={handleSubmit} 
+            disabled={submitting || checkingExistingReport ||
+              (formData.locationType === 'site' && !locationAccess && !(isEditMode && formData.locationLat && formData.locationLng)) || 
+              (formData.locationType === 'leave' && (!formData.leaveType || leaveAvailability?.available === false))
+            }
+          >
+            {submitting ? 'Saving…' : checkingExistingReport ? 'Checking...' :
+              formData.locationType === 'leave' ? 
+                `Apply ${formData.leaveType ? leaveTypes.find(lt => lt.id === formData.leaveType)?.name : 'Leave'}` :
+              isEditMode ? 'Update Report' : 'Submit Report'}
           </button>
+          
           {isEditMode && (
             <button
               type="button"
@@ -1232,6 +1528,8 @@ function DailyTargetForm() {
                 setFormData(defaultPayload())
                 setLocationAccess(false)
                 setLocationError('')
+                setSelectedLeaveType(null)
+                setLeaveAvailability(null)
               }}
               style={{
                 padding: '0.75rem 1.5rem',
@@ -1246,6 +1544,7 @@ function DailyTargetForm() {
               Cancel Edit
             </button>
           )}
+          
           <button
             type="button"
             className="ghost"
@@ -1256,13 +1555,14 @@ function DailyTargetForm() {
               setLocationError('')
               setSubmittedData(null)
               setIsEditMode(false)
-              // Reset file input
+              setSelectedLeaveType(null)
+              setLeaveAvailability(null)
               const fileInput = document.querySelector('input[name="momReport"]')
               if (fileInput) {
                 fileInput.value = ''
               }
             }}
-            disabled={submitting}
+            disabled={submitting || checkingExistingReport}
           >
             Reset form
           </button>

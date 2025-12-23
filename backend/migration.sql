@@ -1,11 +1,29 @@
--- Migration script to add employee_id, dob, and role columns to users table
--- Run this if your users table is missing these columns
+-- Complete Migration Script for Activity Monitoring System
+-- Run this script to update your database schema
 
 USE vickhardth_ops;
 
--- Add employee_id column if it doesn't exist
+-- 1. Add missing columns to users table
+-- Add name column if it doesn't exist
 SET @dbname = DATABASE();
 SET @tablename = 'users';
+SET @columnname = 'name';
+SET @preparedStatement = (SELECT IF(
+  (
+    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE
+      (TABLE_SCHEMA = @dbname)
+      AND (TABLE_NAME = @tablename)
+      AND (COLUMN_NAME = @columnname)
+  ) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(100) NULL')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- Add employee_id column if it doesn't exist
 SET @columnname = 'employee_id';
 SET @preparedStatement = (SELECT IF(
   (
@@ -50,7 +68,7 @@ SET @preparedStatement = (SELECT IF(
       AND (COLUMN_NAME = @columnname)
   ) > 0,
   'SELECT 1',
-  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(80)')
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(80) DEFAULT "Engineer"')
 ));
 PREPARE alterIfNotExists FROM @preparedStatement;
 EXECUTE alterIfNotExists;
@@ -73,40 +91,8 @@ PREPARE alterIfNotExists FROM @preparedStatement;
 EXECUTE alterIfNotExists;
 DEALLOCATE PREPARE alterIfNotExists;
 
--- Add foreign key constraint for manager_id (only if manager_id column was just added)
-SET @fk_exists = (
-  SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
-  WHERE CONSTRAINT_SCHEMA = @dbname
-    AND TABLE_NAME = @tablename
-    AND CONSTRAINT_NAME = 'fk_manager'
-    AND CONSTRAINT_TYPE = 'FOREIGN KEY'
-);
-
-IF @fk_exists = 0 THEN
-  SET @sql = CONCAT(
-    'ALTER TABLE ', @tablename, ' ',
-    'ADD CONSTRAINT fk_manager ',
-    'FOREIGN KEY (manager_id) REFERENCES ', @tablename, '(id) ',
-    'ON DELETE SET NULL'
-  );
-  PREPARE stmt FROM @sql;
-  EXECUTE stmt;
-  DEALLOCATE PREPARE stmt;
-  SELECT 'Foreign key constraint added for manager_id' AS message;
-END IF;
-
--- Update existing users to have employee_id (if they don't have one)
-UPDATE users 
-SET employee_id = CONCAT('EMP', LPAD(id, 3, '0'))
-WHERE employee_id IS NULL OR employee_id = '';
-
-SELECT CONCAT('Updated ', ROW_COUNT(), ' users with employee IDs') AS update_message;
-
--- Add report_date column to daily_target_reports table
-SET @tablename = 'daily_target_reports';
-
--- Add report_date column
-SET @columnname = 'report_date';
+-- Add is_active column if it doesn't exist
+SET @columnname = 'is_active';
 SET @preparedStatement = (SELECT IF(
   (
     SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
@@ -116,18 +102,123 @@ SET @preparedStatement = (SELECT IF(
       AND (COLUMN_NAME = @columnname)
   ) > 0,
   'SELECT 1',
-  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' DATE NOT NULL DEFAULT CURDATE()')
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' BOOLEAN DEFAULT TRUE')
 ));
 PREPARE alterIfNotExists FROM @preparedStatement;
 EXECUTE alterIfNotExists;
 DEALLOCATE PREPARE alterIfNotExists;
 
--- Display final status
+-- Add phone column if it doesn't exist (ensure it's unique)
+SET @columnname = 'phone';
+SET @preparedStatement = (SELECT IF(
+  (
+    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE
+      (TABLE_SCHEMA = @dbname)
+      AND (TABLE_NAME = @tablename)
+      AND (COLUMN_NAME = @columnname)
+  ) > 0,
+  'SELECT 1',
+  CONCAT('ALTER TABLE ', @tablename, ' ADD COLUMN ', @columnname, ' VARCHAR(15) UNIQUE')
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+-- 2. Update existing records
+-- Set name = username for existing users where name is NULL
+UPDATE users SET name = username WHERE name IS NULL OR name = '';
+
+-- Update existing users to have employee_id (if they don't have one)
+UPDATE users 
+SET employee_id = CONCAT('E', LPAD(id, 3, '0'))
+WHERE (employee_id IS NULL OR employee_id = '') AND name IS NOT NULL;
+
+-- Set default role for existing users
+UPDATE users SET role = 'Engineer' WHERE role IS NULL OR role = '';
+
+-- 3. Create activities table if it doesn't exist
+CREATE TABLE IF NOT EXISTS activities (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  date DATE NOT NULL,
+  time TIME NOT NULL,
+  engineer_name VARCHAR(100) NOT NULL,
+  engineer_id INT,
+  project VARCHAR(255) DEFAULT 'N/A',
+  location VARCHAR(255) DEFAULT 'N/A',
+  activity_target TEXT,
+  problem TEXT,
+  status ENUM('present', 'leave', 'absent') DEFAULT 'present',
+  leave_reason TEXT,
+  start_time TIME,
+  end_time TIME,
+  activity_type ENUM('site_work', 'meeting', 'planning', 'reporting', 'training', 'leave', 'other') DEFAULT 'site_work',
+  logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (engineer_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 4. Create indexes for performance (only if they don't exist)
+CREATE INDEX IF NOT EXISTS idx_activities_date ON activities(date);
+CREATE INDEX IF NOT EXISTS idx_activities_engineer_date ON activities(engineer_id, date);
+CREATE INDEX IF NOT EXISTS idx_activities_status_date ON activities(status, date);
+
+-- 5. Fix the problematic index on daily_target_reports
+DROP INDEX IF EXISTS idx_leave_type ON daily_target_reports;
+CREATE INDEX IF NOT EXISTS idx_leave_type ON daily_target_reports(location_type, leave_type);
+
+-- 6. Add foreign key constraint for manager_id (only if it doesn't exist)
+SET @fk_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = @dbname
+    AND TABLE_NAME = @tablename
+    AND CONSTRAINT_NAME = 'fk_manager'
+    AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+);
+
+IF @fk_exists = 0 THEN
+  ALTER TABLE users 
+  ADD CONSTRAINT fk_manager 
+  FOREIGN KEY (manager_id) REFERENCES users(id) 
+  ON DELETE SET NULL;
+END IF;
+
+-- 7. Add unique constraint on phone (if not exists)
+SET @index_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = @dbname
+    AND TABLE_NAME = @tablename
+    AND INDEX_NAME = 'idx_phone_unique'
+);
+
+IF @index_exists = 0 THEN
+  CREATE UNIQUE INDEX idx_phone_unique ON users(phone);
+END IF;
+
+-- 8. Display migration results
 SELECT 'Migration completed successfully!' AS result;
+
 SELECT 
-  'Users table now has:' AS table_info,
+  'Users table status:' AS table_info,
   COUNT(*) AS total_users,
   SUM(CASE WHEN employee_id IS NOT NULL THEN 1 ELSE 0 END) AS users_with_employee_id,
   SUM(CASE WHEN role IS NOT NULL THEN 1 ELSE 0 END) AS users_with_role,
-  SUM(CASE WHEN dob IS NOT NULL THEN 1 ELSE 0 END) AS users_with_dob
+  SUM(CASE WHEN dob IS NOT NULL THEN 1 ELSE 0 END) AS users_with_dob,
+  SUM(CASE WHEN name IS NOT NULL THEN 1 ELSE 0 END) AS users_with_name,
+  SUM(CASE WHEN phone IS NOT NULL THEN 1 ELSE 0 END) AS users_with_phone
 FROM users;
+
+-- Check if activities table exists
+SELECT 
+  'Activities table:' AS table_info,
+  IF(EXISTS(SELECT * FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'activities'), 
+     'Created successfully', 
+     'NOT created') AS status;
+
+-- Show tables in database
+SELECT TABLE_NAME, TABLE_ROWS as 'Rows', CREATE_TIME 
+FROM INFORMATION_SCHEMA.TABLES 
+WHERE TABLE_SCHEMA = @dbname 
+ORDER BY TABLE_NAME;

@@ -32,7 +32,26 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (manager_id) REFERENCES users(id) ON DELETE SET NULL
 );
+-- Add phone column to users table if it doesn't exist
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS phone VARCHAR(15) UNIQUE;
 
+-- Or if you're creating the table fresh:
+/*
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    employee_id VARCHAR(6) UNIQUE,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    dob DATE NOT NULL,
+    phone VARCHAR(15) UNIQUE NOT NULL,
+    role VARCHAR(50) NOT NULL,
+    manager_id INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status ENUM('active', 'inactive') DEFAULT 'active',
+    FOREIGN KEY (manager_id) REFERENCES users(id) ON DELETE SET NULL
+);
+*/
 CREATE TABLE IF NOT EXISTS hourly_reports (
     id INT AUTO_INCREMENT PRIMARY KEY,
     report_date DATE NOT NULL,
@@ -52,6 +71,7 @@ CREATE TABLE IF NOT EXISTS hourly_reports (
     project_incharge_remark TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
 
 CREATE TABLE IF NOT EXISTS daily_target_reports (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -87,6 +107,12 @@ CREATE TABLE IF NOT EXISTS daily_target_reports (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Add leave_type column if it doesn't exist
+ALTER TABLE daily_target_reports 
+ADD COLUMN IF NOT EXISTS leave_type VARCHAR(50) DEFAULT NULL;
+
+-- Add index for better performance on leave queries
+CREATE INDEX IF NOT EXISTS idx_leave_type ON daily_target_reports(location_type, leave_type, report_date);
 -- Add user_id columns with error handling for older MySQL
 DELIMITER $$
 
@@ -164,6 +190,7 @@ BEGIN
         SELECT CONCAT('Foreign key ', constraintName, ' already exists') AS result;
     END IF;
 END$$
+
 
 DELIMITER ;
 
@@ -248,3 +275,60 @@ CREATE TABLE users (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (manager_id) REFERENCES users(id) ON DELETE SET NULL
 );
+USE vickhardth_ops;
+
+-- Add missing columns
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS full_name VARCHAR(100) DEFAULT NULL AFTER username,
+ADD COLUMN IF NOT EXISTS email VARCHAR(100) UNIQUE DEFAULT NULL AFTER phone,
+ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE AFTER role;
+
+-- Verify table structure
+DESCRIBE users;
+-- 1. Create activities table
+CREATE TABLE activities (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  date DATE NOT NULL,
+  time TIME NOT NULL,
+  engineer_name VARCHAR(100) NOT NULL,
+  engineer_id INT,
+  project VARCHAR(255) DEFAULT 'N/A',
+  location VARCHAR(255) DEFAULT 'N/A',
+  activity_target TEXT,
+  problem TEXT,
+  status ENUM('present', 'leave', 'absent') DEFAULT 'present',
+  leave_reason TEXT,
+  start_time TIME,
+  end_time TIME,
+  activity_type ENUM('site_work', 'meeting', 'planning', 'reporting', 'training', 'leave', 'other') DEFAULT 'site_work',
+  logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (engineer_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_date (date),
+  INDEX idx_engineer_date (engineer_id, date),
+  INDEX idx_status_date (status, date)
+);
+
+-- 2. Add role column to users table if not exists
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'Engineer',
+ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
+ADD COLUMN IF NOT EXISTS phone VARCHAR(15) UNIQUE;
+
+-- 3. Create activity_stats view for quick reporting
+CREATE OR REPLACE VIEW activity_stats AS
+SELECT 
+  DATE(created_at) as stat_date,
+  COUNT(*) as total_activities,
+  COUNT(DISTINCT engineer_id) as active_employees,
+  SUM(CASE WHEN status = 'leave' THEN 1 ELSE 0 END) as on_leave,
+  SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absent_count,
+  GROUP_CONCAT(DISTINCT 
+    CASE WHEN status = 'absent' THEN engineer_name END 
+    SEPARATOR ', ') as absentees
+FROM activities
+GROUP BY DATE(created_at);
+
+-- 4. Update users table to ensure phone uniqueness
+CREATE UNIQUE INDEX IF NOT EXISTS idx_phone_unique ON users(phone);
