@@ -332,3 +332,9 @@ GROUP BY DATE(created_at);
 
 -- 4. Update users table to ensure phone uniqueness
 CREATE UNIQUE INDEX IF NOT EXISTS idx_phone_unique ON users(phone);
+
+-- Add full_name column to users table
+ALTER TABLE users ADD COLUMN full_name VARCHAR(100) DEFAULT NULL AFTER username;
+
+-- Update existing users to set full_name from username
+UPDATE users SET full_name = username WHERE full_name IS NULL;

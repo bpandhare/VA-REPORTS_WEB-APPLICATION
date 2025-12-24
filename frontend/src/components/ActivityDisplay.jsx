@@ -1,131 +1,290 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useAuth } from './AuthContext'
 import './OnboardingForm.css'
 
 export default function ActivityDisplay() {
   const { token, user } = useAuth()
   const [activities, setActivities] = useState([])
-  const [summary, setSummary] = useState(null)
-  const [subordinates, setSubordinates] = useState([])
-  const [employees, setEmployees] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [page, setPage] = useState(1)
-  const [viewMode, setViewMode] = useState('table') // 'cards' or 'table'
-  const [absentees, setAbsentees] = useState([])
-  const [myAbsent, setMyAbsent] = useState(null)
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
+  const [dateSummary, setDateSummary] = useState(null)
+  const [attendanceData, setAttendanceData] = useState(null)
+  const [availableDates, setAvailableDates] = useState([])
+  const [activeTab, setActiveTab] = useState('summary')
+  
+  const hasFetchedInitial = useRef(false)
+  
+  // Get base URL from environment
+  const API_BASE = useMemo(() => {
+    const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+    return envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl
+  }, [])
 
-  const endpoint = useMemo(
-    () => import.meta.env.VITE_API_URL?.replace('/api/activity', '/api/employee-activity') ?? 'http://localhost:5000/api/employee-activity',
-    []
-  )
+  // Define endpoints correctly
+  const endpoints = useMemo(() => ({
+    // Activity endpoints (from activity.js)
+    activities: `${API_BASE}/api/activity/activities`,
+    stats: `${API_BASE}/api/activity/stats`,
+    dateSummary: `${API_BASE}/api/activity/date-summary`,
+    availableDates: `${API_BASE}/api/activity/available-dates`,
+    createActivity: `${API_BASE}/api/activity/activity`,
+    todaySummary: `${API_BASE}/api/activity/today-summary`,
+    attendance: `${API_BASE}/api/activity/attendance`,
+    
+    // Auth endpoints (from auth.js)
+    profile: `${API_BASE}/api/auth/profile`,
+    employeeActivities: `${API_BASE}/api/auth/activities`,
+    employeeSummary: `${API_BASE}/api/auth/summary`
+  }), [API_BASE])
 
+  // Debug: Log endpoints
   useEffect(() => {
-    if (!user || !token) return
-    fetchActivities()
-    fetchSummary()
-    fetchAbsentees()
+    console.log('🔧 API Endpoints:', {
+      base: API_BASE,
+      dateSummary: endpoints.dateSummary,
+      attendance: endpoints.attendance
+    })
+  }, [endpoints, API_BASE])
 
-    if (user.role && user.role.toLowerCase().includes('senior')) {
-      fetchSubordinates()
-    }
+  // Initial data fetch
+  useEffect(() => {
+    if (!user || !token || hasFetchedInitial.current) return;
+    
+    console.log('🚀 Initial load starting...');
+    hasFetchedInitial.current = true;
+    
+    const fetchInitialData = async () => {
+      setLoading(true);
+      setError(null);
+      
+      try {
+        // Fetch available dates
+        await fetchAvailableDates();
+        
+        // Fetch data for selected date
+        await Promise.all([
+          fetchDateSummary(selectedDate),
+          fetchAttendanceData(selectedDate),
+          fetchRecentActivities()
+        ]);
+        
+      } catch (err) {
+        console.error('❌ Initial load failed:', err);
+        setError('Failed to load initial data. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchInitialData();
+  }, [user, token, selectedDate]);
 
-    if (user.role && user.role.toLowerCase().includes('group')) {
-      fetchEmployees()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, user, token])
-
-  const fetchAbsentees = async () => {
+  // Fetch date summary
+  const fetchDateSummary = async (date) => {
+    if (!token) return;
+    
     try {
-      if (!token) return
-      const date = new Date().toISOString().slice(0, 10)
-      const res = await fetch(`${endpoint}/absentees?date=${date}`, { headers: { Authorization: `Bearer ${token}` } })
-      if (!res.ok) return
-      const data = await res.json()
-      // Manager-like response: { date, absentees: [...] }
-      if (data.absentees) {
-        setAbsentees(data.absentees || [])
-        setMyAbsent(null)
-      } else if (typeof data.absent !== 'undefined') {
-        setMyAbsent(Boolean(data.absent))
-        setAbsentees([])
+      console.log(`📅 Fetching date summary for: ${date}`);
+      
+      const response = await fetch(`${endpoints.dateSummary}?date=${date}`, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          console.log(`📭 No date summary found for ${date}`);
+          setDateSummary(null);
+          return;
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success === false) {
+        console.warn(`⚠️ API returned error: ${data.message}`);
+        setDateSummary(null);
+      } else {
+        setDateSummary(data);
+        console.log(`✅ Date summary fetched for ${date}:`, {
+          activities: data.activities?.length || 0,
+          summary: data.summary
+        });
       }
     } catch (err) {
-      console.error('Failed to fetch absentees', err)
+      console.error('❌ Error fetching date summary:', err);
+      setDateSummary(null);
     }
-  }
+  };
 
-  const fetchActivities = async () => {
+  // Fetch attendance data
+  const fetchAttendanceData = async (date) => {
+    if (!token) {
+      console.error('❌ No token available');
+      return;
+    }
+    
     try {
-      setLoading(true)
-      setError(null)
-      if (!token) return
-
-      const url = `${endpoint}/activities?page=${page}&limit=10`
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      })
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.message || `HTTP ${res.status}`)
+      console.log(`👥 Fetching attendance for: ${date} from ${endpoints.attendance}`);
+      
+      const response = await fetch(`${endpoints.attendance}?date=${date}`, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log(`📊 Attendance response status: ${response.status}`);
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          console.log(`📭 No attendance data found for ${date}`);
+          setAttendanceData(null);
+          return;
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-
-      const data = await res.json()
-      setActivities(data.activities || [])
+      
+      const data = await response.json();
+      console.log(`📊 Attendance data received:`, data);
+      
+      if (data.success === false) {
+        console.warn(`⚠️ API returned error: ${data.message}`);
+        setAttendanceData(null);
+      } else {
+        setAttendanceData(data);
+        console.log(`✅ Attendance data fetched for ${date}`);
+      }
     } catch (err) {
-      console.error('Error fetching activities:', err)
-      setError(err.message || 'Failed to load activities')
-    } finally {
-      setLoading(false)
+      console.error('❌ Error fetching attendance:', err);
+      setAttendanceData(null);
+      setError('Unable to fetch attendance data. Please check if reports have been submitted for this date.');
     }
-  }
+  };
 
-  const fetchSummary = async () => {
+  // Fetch available dates
+  const fetchAvailableDates = async () => {
+    if (!token) return;
+    
     try {
-      if (!token) return
-      const res = await fetch(`${endpoint}/summary`, { headers: { Authorization: `Bearer ${token}` } })
-      if (!res.ok) return
-      const data = await res.json()
-      setSummary(data.summary || null)
-    } catch (err) {
-      console.error('Failed to fetch summary', err)
+      console.log(`📅 Fetching available dates from ${endpoints.availableDates}`);
+      
+      const response = await fetch(endpoints.availableDates, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log(`📅 Available dates response status: ${response.status}`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`📅 Available dates data:`, data);
+        setAvailableDates(data.dates || []);
+        console.log(`✅ Found ${data.dates?.length || 0} available dates`);
+      } else {
+        console.warn(`⚠️ Failed to fetch available dates: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('Failed to fetch available dates:', error);
     }
-  }
+  };
 
-  const fetchSubordinates = async () => {
+  // Fetch recent activities
+  const fetchRecentActivities = async () => {
+    if (!token) return;
+    
     try {
-      if (!token) return
-      const res = await fetch(`${endpoint}/subordinates`, { headers: { Authorization: `Bearer ${token}` } })
-      if (!res.ok) return
-      const data = await res.json()
-      setSubordinates(data.subordinates || [])
-    } catch (err) {
-      console.error('Failed to fetch subordinates', err)
+      console.log(`📝 Fetching recent activities from ${endpoints.activities}`);
+      
+      const response = await fetch(`${endpoints.activities}?limit=20&page=1`, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log(`📝 Activities response status: ${response.status}`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`📝 Activities data received:`, data);
+        setActivities(data.activities || []);
+        console.log(`✅ Loaded ${data.activities?.length || 0} activities`);
+      }
+    } catch (error) {
+      console.error('Failed to fetch recent activities:', error);
     }
-  }
+  };
 
-  const fetchEmployees = async () => {
-    try {
-      if (!token) return
-      const res = await fetch(`${endpoint}/employees`, { headers: { Authorization: `Bearer ${token}` } })
-      if (!res.ok) return
-      const data = await res.json()
-      setEmployees(data.employees || [])
-    } catch (err) {
-      console.error('Failed to fetch employees', err)
-    }
-  }
+  // Handle date change
+  const handleDateChange = (date) => {
+    console.log(`📅 Date changed to: ${date}`);
+    setSelectedDate(date);
+    setLoading(true);
+    
+    // Fetch new data for selected date
+    Promise.all([
+      fetchDateSummary(date),
+      fetchAttendanceData(date)
+    ]).finally(() => {
+      setLoading(false);
+    });
+  };
 
+  // Handle refresh
+  const handleRefresh = () => {
+    console.log('🔄 Refreshing data...');
+    setLoading(true);
+    
+    Promise.all([
+      fetchDateSummary(selectedDate),
+      fetchAttendanceData(selectedDate),
+      fetchAvailableDates(),
+      fetchRecentActivities()
+    ]).finally(() => {
+      setLoading(false);
+    });
+  };
+
+  // Format functions
   const formatDate = (d) => {
-    if (!d) return 'N/A'
+    if (!d) return 'N/A';
     try {
-      return new Date(d).toLocaleDateString('en-IN')
+      return new Date(d).toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+      });
     } catch {
-      return d
+      return d;
     }
-  }
+  };
+
+  const formatTime = (t) => {
+    if (!t) return '';
+    if (t.includes(':')) {
+      const parts = t.split(':');
+      if (parts.length >= 2) {
+        return `${parts[0]}:${parts[1]}`;
+      }
+    }
+    return t;
+  };
+
+  const getDayName = (dateStr) => {
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('en-IN', { weekday: 'short' });
+    } catch {
+      return '';
+    }
+  };
 
   if (!user) {
     return (
@@ -134,34 +293,45 @@ export default function ActivityDisplay() {
           <p>Please log in to view activities</p>
         </div>
       </section>
-    )
+    );
   }
 
   return (
     <section className="vh-form-shell">
       <header className="vh-form-header">
         <div>
-          <p className="vh-form-label">Activity Display</p>
+          <p className="vh-form-label">Activity Dashboard</p>
           <h2>
             {user?.role === 'Manager' || user?.role === 'Team Leader' ? 'Monitor All Employee Activities' : 'Your Activities'}
           </h2>
-          {summary && (
-            <p>
-              <strong>Total Activities:</strong> {summary.totalActivities}
-              {(user?.role === 'Manager' || user?.role === 'Team Leader') && summary.activeEmployees && (
-                <span style={{ marginLeft: '1rem' }}>
-                  <strong>Active Employees:</strong> {summary.activeEmployees}
-                </span>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+              <div style={{ background: '#e8f4ff', padding: '0.5rem 1rem', borderRadius: '8px' }}>
+                <strong>Selected Date:</strong> {formatDate(selectedDate)}
+              </div>
+              {dateSummary && (
+                <div style={{ background: '#e8f4ff', padding: '0.5rem 1rem', borderRadius: '8px' }}>
+                  <strong>Activities:</strong> {dateSummary.summary?.totalActivities || 0}
+                </div>
               )}
-            </p>
-          )}
-
-          <div style={{ marginTop: '0.5rem' }}>
+            </div>
             <button
-              onClick={() => setViewMode('table')}
-              style={{ padding: '0.4rem 0.6rem', background: viewMode === 'table' ? '#2ad1ff' : '#eee', color: viewMode === 'table' ? '#fff' : '#333', border: 'none', borderRadius: '6px' }}
+              onClick={handleRefresh}
+              disabled={loading}
+              style={{
+                padding: '0.5rem 1rem',
+                background: loading ? '#ccc' : '#2ad1ff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
             >
-              Table View
+              {loading ? '🔄 Loading...' : '↻ Refresh'}
             </button>
           </div>
         </div>
@@ -170,139 +340,574 @@ export default function ActivityDisplay() {
       {error && (
         <div className="vh-alert error" style={{ marginBottom: '1rem' }}>
           <p>⚠️ {error}</p>
+          <button 
+            onClick={() => setError(null)}
+            style={{ 
+              background: 'transparent', 
+              border: 'none', 
+              color: 'inherit', 
+              marginLeft: '1rem',
+              cursor: 'pointer'
+            }}
+          >
+            ×
+          </button>
         </div>
       )}
 
-      {user?.role && user.role.toLowerCase().includes('senior') && subordinates.length > 0 && (
-        <div style={{ background: '#f0f9ff', border: '1px solid #2ad1ff', borderRadius: '12px', padding: '1rem', marginBottom: '1.5rem' }}>
-          <h3 style={{ margin: '0 0 1rem 0', color: '#092544' }}>Your Team (Junior Assistants)</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
-            {subordinates.map((emp) => (
-              <div key={emp.id} style={{ background: 'white', border: '1px solid #d5e0f2', borderRadius: '8px', padding: '0.75rem', textAlign: 'center' }}>
-                <p style={{ margin: '0 0 0.5rem 0', fontWeight: 'bold', color: '#092544' }}>{emp.username}</p>
-                <p style={{ margin: '0', fontSize: '0.85rem', color: '#666' }}>{emp.role}</p>
-              </div>
-            ))}
+      {/* Date Selector */}
+      <div style={{ 
+        marginBottom: '2rem', 
+        background: 'white', 
+        borderRadius: '12px', 
+        padding: '1.5rem', 
+        boxShadow: '0 2px 8px rgba(0,0,0,0.1)' 
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h3 style={{ color: '#092544', margin: 0 }}>Select Date</h3>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              onClick={() => {
+                const yesterday = new Date(selectedDate);
+                yesterday.setDate(yesterday.getDate() - 1);
+                handleDateChange(yesterday.toISOString().split('T')[0]);
+              }}
+              style={{
+                padding: '0.5rem',
+                background: '#f0f0f0',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer'
+              }}
+            >
+              ← Yesterday
+            </button>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => handleDateChange(e.target.value)}
+              style={{
+                padding: '0.5rem',
+                border: '1px solid #e0e0e0',
+                borderRadius: '6px',
+                fontSize: '1rem'
+              }}
+            />
+            <button
+              onClick={() => {
+                const tomorrow = new Date(selectedDate);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                handleDateChange(tomorrow.toISOString().split('T')[0]);
+              }}
+              style={{
+                padding: '0.5rem',
+                background: '#f0f0f0',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer'
+              }}
+            >
+              Tomorrow →
+            </button>
           </div>
         </div>
-      )}
 
-      {user?.role && user.role.toLowerCase().includes('group') && employees.length > 0 && (
-        <div style={{ background: '#f9f0ff', border: '1px solid #d084d0', borderRadius: '12px', padding: '1rem', marginBottom: '1.5rem' }}>
-          <h3 style={{ margin: '0 0 1rem 0', color: '#6b2d5f' }}>Organization Structure</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
-            {employees.map((emp) => (
-              <div key={emp.id} style={{ background: 'white', border: `2px solid ${emp.role === 'Senior Assistant' ? '#ff9800' : emp.role === 'Junior Assistant' ? '#2196f3' : '#4caf50'}`, borderRadius: '8px', padding: '0.75rem' }}>
-                <p style={{ margin: '0 0 0.5rem 0', fontWeight: 'bold', color: '#092544' }}>{emp.username}</p>
-                <p style={{ margin: '0', fontSize: '0.85rem', color: '#666' }}>{emp.role}</p>
-              </div>
-            ))}
-          </div>
+        {/* Tab Navigation */}
+        <div style={{ 
+          display: 'flex', 
+          borderBottom: '1px solid #e0e0e0',
+          marginBottom: '1.5rem'
+        }}>
+          <button
+            onClick={() => setActiveTab('summary')}
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: activeTab === 'summary' ? '#2ad1ff' : 'transparent',
+              color: activeTab === 'summary' ? 'white' : '#666',
+              border: 'none',
+              borderBottom: activeTab === 'summary' ? '2px solid #2ad1ff' : 'none',
+              cursor: 'pointer',
+              fontWeight: activeTab === 'summary' ? 'bold' : 'normal'
+            }}
+          >
+            📊 Summary
+          </button>
+          <button
+            onClick={() => setActiveTab('attendance')}
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: activeTab === 'attendance' ? '#2ad1ff' : 'transparent',
+              color: activeTab === 'attendance' ? 'white' : '#666',
+              border: 'none',
+              borderBottom: activeTab === 'attendance' ? '2px solid #2ad1ff' : 'none',
+              cursor: 'pointer',
+              fontWeight: activeTab === 'attendance' ? 'bold' : 'normal'
+            }}
+          >
+            👥 Attendance
+          </button>
+          <button
+            onClick={() => setActiveTab('activities')}
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: activeTab === 'activities' ? '#2ad1ff' : 'transparent',
+              color: activeTab === 'activities' ? 'white' : '#666',
+              border: 'none',
+              borderBottom: activeTab === 'activities' ? '2px solid #2ad1ff' : 'none',
+              cursor: 'pointer',
+              fontWeight: activeTab === 'activities' ? 'bold' : 'normal'
+            }}
+          >
+            📝 Activities
+          </button>
         </div>
-      )}
 
-      <div style={{ marginTop: '1.5rem' }}>
-        <h3 style={{ color: '#092544', marginBottom: '1rem' }}>Activities</h3>
+        {/* Loading State */}
+        {loading && (
+          <div style={{ 
+            textAlign: 'center', 
+            padding: '3rem',
+            color: '#666'
+          }}>
+            <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>⏳</div>
+            <p>Loading data for {formatDate(selectedDate)}...</p>
+          </div>
+        )}
 
-        {loading ? (
-          <p style={{ textAlign: 'center', color: '#666' }}>⏳ Loading activities...</p>
-        ) : activities.length === 0 ? (
-          <p style={{ textAlign: 'center', color: '#999' }}>No activities found. Activities will appear once daily/hourly reports are submitted.</p>
-        ) : (
-          <>
-            {/* Table mode: show separate Daily and Hourly tables, plus absentees when available */}
-            <div style={{ marginBottom: '1rem' }}>
-              {absentees && absentees.length > 0 && (
-                <div style={{ background: '#fff4f4', border: '1px solid #ffb4b4', padding: '0.75rem', borderRadius: '8px', marginBottom: '0.75rem' }}>
-                  <strong>Absentees ({absentees.length}):</strong>
-                  <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    {absentees.map((a) => (
-                      <span key={a.id} style={{ padding: '0.25rem 0.5rem', background: '#fff', border: '1px solid #ffdede', borderRadius: '6px' }}>{a.username} <small style={{ color: '#666', marginLeft: '0.25rem' }}>{a.role}</small></span>
-                    ))}
+        {/* Summary Tab */}
+        {!loading && activeTab === 'summary' && (
+          <div>
+            {dateSummary ? (
+              <>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                  gap: '1rem',
+                  marginBottom: '2rem'
+                }}>
+                  <div style={{ background: '#e8f4ff', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>Total Activities</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#092544' }}>
+                      {dateSummary.summary?.totalActivities || 0}
+                    </div>
+                  </div>
+                  <div style={{ background: '#e8f4ff', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>Total Employees</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#092544' }}>
+                      {dateSummary.summary?.totalEmployees || 0}
+                    </div>
+                  </div>
+                  <div style={{ background: '#e8f5e9', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>Present</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#4CAF50' }}>
+                      {dateSummary.summary?.presentCount || 0}
+                    </div>
+                  </div>
+                  <div style={{ background: '#ffebee', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>Absent</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#F44336' }}>
+                      {dateSummary.summary?.absentCount || 0}
+                    </div>
+                  </div>
+                  <div style={{ background: '#fff3e0', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>On Leave</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#FF9800' }}>
+                      {dateSummary.summary?.leaveCount || 0}
+                    </div>
                   </div>
                 </div>
-              )}
 
-              {myAbsent !== null && (
-                <div style={{ background: myAbsent ? '#fff4f4' : '#f4fff6', border: myAbsent ? '1px solid #ffb4b4' : '1px solid #bdecbc', padding: '0.5rem', borderRadius: '6px', marginBottom: '0.5rem' }}>
-                  {myAbsent ? <strong>You have not submitted today's daily target (Absent)</strong> : <strong>You have submitted today's daily target</strong>}
+                {/* Daily Reports */}
+                {dateSummary.dailyReports && dateSummary.dailyReports.length > 0 && (
+                  <div style={{ marginBottom: '2rem' }}>
+                    <h4 style={{ color: '#092544', marginBottom: '1rem' }}>📅 Daily Reports</h4>
+                    <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid #e8eef4' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ background: '#f3f6f9' }}>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Engineer</th>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Project</th>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Activity</th>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Time</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dateSummary.dailyReports.slice(0, 10).map((report, index) => (
+                            <tr key={index}>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                                <div style={{ fontWeight: 'bold' }}>{report.engineerName || 'Unknown'}</div>
+                                {report.engineerId && <small style={{ color: '#666' }}>ID: {report.engineerId}</small>}
+                              </td>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>{report.projectName || 'N/A'}</td>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                                {report.activityTarget?.substring(0, 80) || 'No activity'}
+                              </td>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                                {report.startTime && report.endTime 
+                                  ? `${formatTime(report.startTime)} - ${formatTime(report.endTime)}`
+                                  : 'N/A'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Hourly Reports */}
+                {dateSummary.hourlyReports && dateSummary.hourlyReports.length > 0 && (
+                  <div style={{ marginBottom: '2rem' }}>
+                    <h4 style={{ color: '#092544', marginBottom: '1rem' }}>⏰ Hourly Reports</h4>
+                    <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid #e8eef4' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ background: '#f3f6f9' }}>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Engineer</th>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Project</th>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Activity</th>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Time</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dateSummary.hourlyReports.slice(0, 10).map((report, index) => (
+                            <tr key={index}>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                                <div style={{ fontWeight: 'bold' }}>{report.engineerName || 'Unknown'}</div>
+                                {report.engineerId && <small style={{ color: '#666' }}>ID: {report.engineerId}</small>}
+                              </td>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>{report.projectName || 'N/A'}</td>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                                {report.activityTarget?.substring(0, 80) || 'No activity'}
+                              </td>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                                {report.time ? formatTime(report.time) : 'N/A'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ 
+                textAlign: 'center', 
+                padding: '3rem',
+                color: '#999'
+              }}>
+                <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>📭</div>
+                <p>No data found for {formatDate(selectedDate)}</p>
+                <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                  Try selecting a different date or check if reports have been submitted.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Attendance Tab */}
+        {!loading && activeTab === 'attendance' && (
+          <div>
+            {attendanceData ? (
+              <>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                  gap: '1rem',
+                  marginBottom: '2rem'
+                }}>
+                  <div style={{ background: '#e8f4ff', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>Total</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#092544' }}>
+                      {attendanceData.summary?.total || 0}
+                    </div>
+                  </div>
+                  <div style={{ background: '#e8f5e9', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>Present</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#4CAF50' }}>
+                      {attendanceData.summary?.present || 0}
+                    </div>
+                  </div>
+                  <div style={{ background: '#ffebee', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>Absent</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#F44336' }}>
+                      {attendanceData.summary?.absent || 0}
+                    </div>
+                  </div>
+                  <div style={{ background: '#fff3e0', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>On Leave</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#FF9800' }}>
+                      {attendanceData.summary?.leave || 0}
+                    </div>
+                  </div>
                 </div>
-              )}
-            </div>
 
-            {/* Daily Reports Table */}
-            <div style={{ marginBottom: '1rem' }}>
-              <h4 style={{ margin: '0 0 0.5rem 0' }}>Daily Reports</h4>
-              <div style={{ overflowX: 'auto', marginBottom: '0.75rem' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', background: 'white' }}>
+                {/* Present Employees */}
+                {attendanceData.presentEmployees && attendanceData.presentEmployees.length > 0 && (
+                  <div style={{ marginBottom: '2rem' }}>
+                    <h4 style={{ color: '#4CAF50', marginBottom: '1rem' }}>✅ Present Employees ({attendanceData.presentEmployees.length})</h4>
+                    <div style={{ 
+                      display: 'flex', 
+                      flexWrap: 'wrap', 
+                      gap: '0.5rem',
+                      padding: '1rem',
+                      background: '#f1f8e9',
+                      borderRadius: '8px'
+                    }}>
+                      {attendanceData.presentEmployees.map((emp, index) => (
+                        <span key={index} style={{
+                          padding: '0.5rem 1rem',
+                          background: '#4CAF50',
+                          color: 'white',
+                          borderRadius: '20px',
+                          fontSize: '0.9rem'
+                        }}>
+                          {emp}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Absent Employees */}
+                {attendanceData.absentEmployees && attendanceData.absentEmployees.length > 0 && (
+                  <div style={{ marginBottom: '2rem' }}>
+                    <h4 style={{ color: '#F44336', marginBottom: '1rem' }}>❌ Absent Employees ({attendanceData.absentEmployees.length})</h4>
+                    <div style={{ 
+                      display: 'flex', 
+                      flexWrap: 'wrap', 
+                      gap: '0.5rem',
+                      padding: '1rem',
+                      background: '#ffebee',
+                      borderRadius: '8px'
+                    }}>
+                      {attendanceData.absentEmployees.map((emp, index) => (
+                        <span key={index} style={{
+                          padding: '0.5rem 1rem',
+                          background: '#F44336',
+                          color: 'white',
+                          borderRadius: '20px',
+                          fontSize: '0.9rem'
+                        }}>
+                          {emp}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Leave Employees */}
+                {attendanceData.leaveEmployees && attendanceData.leaveEmployees.length > 0 && (
+                  <div style={{ marginBottom: '2rem' }}>
+                    <h4 style={{ color: '#FF9800', marginBottom: '1rem' }}>🌴 On Leave ({attendanceData.leaveEmployees.length})</h4>
+                    <div style={{ 
+                      display: 'flex', 
+                      flexWrap: 'wrap', 
+                      gap: '0.5rem',
+                      padding: '1rem',
+                      background: '#fff3e0',
+                      borderRadius: '8px'
+                    }}>
+                      {attendanceData.leaveEmployees.map((emp, index) => (
+                        <span key={index} style={{
+                          padding: '0.5rem 1rem',
+                          background: '#FF9800',
+                          color: 'white',
+                          borderRadius: '20px',
+                          fontSize: '0.9rem'
+                        }}>
+                          {emp}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Detailed Attendance Table */}
+                {attendanceData.activities && attendanceData.activities.length > 0 && (
+                  <div style={{ marginBottom: '2rem' }}>
+                    <h4 style={{ color: '#092544', marginBottom: '1rem' }}>📋 Detailed Attendance</h4>
+                    <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid #e8eef4' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ background: '#f3f6f9' }}>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Engineer</th>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Status</th>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Project</th>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Activity</th>
+                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Time</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {attendanceData.activities.slice(0, 15).map((activity, index) => (
+                            <tr key={index}>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                                <div style={{ fontWeight: 'bold' }}>{activity.engineerName || 'Unknown'}</div>
+                                {activity.engineerId && <small style={{ color: '#666' }}>ID: {activity.engineerId}</small>}
+                              </td>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                                <span style={{
+                                  padding: '0.25rem 0.5rem',
+                                  borderRadius: '4px',
+                                  fontSize: '0.8rem',
+                                  background: 
+                                    activity.status === 'present' ? '#e8f5e9' :
+                                    activity.status === 'leave' ? '#fff3e0' :
+                                    activity.status === 'absent' ? '#ffebee' : '#f5f5f5',
+                                  color:
+                                    activity.status === 'present' ? '#2e7d32' :
+                                    activity.status === 'leave' ? '#f57c00' :
+                                    activity.status === 'absent' ? '#c62828' : '#757575',
+                                  fontWeight: 'bold'
+                                }}>
+                                  {activity.status?.toUpperCase() || 'UNKNOWN'}
+                                </span>
+                                {activity.status === 'leave' && activity.leaveReason && (
+                                  <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
+                                    Reason: {activity.leaveReason}
+                                  </div>
+                                )}
+                                {activity.status === 'absent' && activity.problem && (
+                                  <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
+                                    Reason: {activity.problem}
+                                  </div>
+                                )}
+                              </td>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                                {activity.project || 'N/A'}
+                              </td>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                                {activity.activityTarget?.substring(0, 60) || 'No activity'}
+                              </td>
+                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                                {activity.startTime && activity.endTime 
+                                  ? `${formatTime(activity.startTime)} - ${formatTime(activity.endTime)}`
+                                  : 'N/A'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ 
+                textAlign: 'center', 
+                padding: '3rem',
+                color: '#999'
+              }}>
+                <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>👥</div>
+                <p>No attendance data found for {formatDate(selectedDate)}</p>
+                <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                  Attendance records may not have been submitted for this date.
+                </p>
+                <button
+                  onClick={() => fetchAttendanceData(selectedDate)}
+                  style={{
+                    marginTop: '1rem',
+                    padding: '0.5rem 1rem',
+                    background: '#2ad1ff',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Try Again
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Activities Tab */}
+        {!loading && activeTab === 'activities' && (
+          <div>
+            {activities.length > 0 ? (
+              <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid #e8eef4' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#f3f6f9' }}>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Engineer</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Date</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Time</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Project</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Location</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Activity / Target</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Problem</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Logged At</th>
+                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Engineer</th>
+                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Date</th>
+                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Project</th>
+                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Activity</th>
+                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Status</th>
+                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Time</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {activities.filter(a => a.reportType === 'daily').map((a) => (
-                      <tr key={`daily-${a.id}`}>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{a.username || 'N/A'}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{formatDate(a.reportDate)}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{(a.inTime || '') + (a.outTime ? ` - ${a.outTime}` : '')}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{a.projectNo || 'N/A'}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{a.locationType || '-'}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{String(a.dailyTargetAchieved || '').substring(0,120)}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{String(a.problemFaced || '').substring(0,120)}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{formatDate(a.createdAt)}</td>
+                    {activities.slice(0, 20).map((a, index) => (
+                      <tr key={index}>
+                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                          <div style={{ fontWeight: 'bold' }}>{a.engineerName || a.username || 'N/A'}</div>
+                          {a.engineerId && <small style={{ color: '#666' }}>ID: {a.engineerId}</small>}
+                        </td>
+                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>{formatDate(a.date || a.reportDate)}</td>
+                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>{a.project || a.projectName || 'N/A'}</td>
+                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                          {a.activityTarget?.substring(0, 60) || a.dailyTargetAchieved?.substring(0, 60) || 'No activity'}
+                        </td>
+                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                          <span style={{
+                            padding: '0.25rem 0.5rem',
+                            borderRadius: '4px',
+                            fontSize: '0.8rem',
+                            background: 
+                              a.status === 'present' ? '#e8f5e9' :
+                              a.status === 'leave' ? '#fff3e0' :
+                              a.status === 'absent' ? '#ffebee' : '#f5f5f5',
+                            color:
+                              a.status === 'present' ? '#2e7d32' :
+                              a.status === 'leave' ? '#f57c00' :
+                              a.status === 'absent' ? '#c62828' : '#757575',
+                            fontWeight: 'bold'
+                          }}>
+                            {a.status?.toUpperCase() || 'UNKNOWN'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
+                          {a.startTime && a.endTime 
+                            ? `${formatTime(a.startTime)} - ${formatTime(a.endTime)}`
+                            : formatTime(a.time) || 'N/A'}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                {activities.length > 20 && (
+                  <div style={{ 
+                    textAlign: 'center', 
+                    padding: '1rem',
+                    background: '#f8f9fa',
+                    borderTop: '1px solid #e8eef4'
+                  }}>
+                    <p style={{ color: '#666', fontSize: '0.9rem' }}>
+                      Showing 20 of {activities.length} activities
+                    </p>
+                  </div>
+                )}
               </div>
-            </div>
-
-            {/* Hourly Reports Table */}
-            <div style={{ marginBottom: '1rem' }}>
-              <h4 style={{ margin: '0 0 0.5rem 0' }}>Hourly Reports</h4>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', background: 'white' }}>
-                  <thead>
-                    <tr style={{ background: '#f3f6f9' }}>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Engineer</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Date</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Activity</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Project</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Problem</th>
-                      <th style={{ padding: '0.6rem', border: '1px solid #e8eef4' }}>Logged At</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activities.filter(a => a.reportType === 'hourly').map((a) => (
-                      <tr key={`hourly-${a.id}`}>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{a.username || 'N/A'}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{formatDate(a.reportDate)}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{String(a.dailyTargetAchieved || '').substring(0,120)}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{a.projectNo || 'N/A'}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{String(a.problemFaced || '').substring(0,120)}</td>
-                        <td style={{ padding: '0.6rem', border: '1px solid #eef3f7' }}>{formatDate(a.createdAt)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            ) : (
+              <div style={{ 
+                textAlign: 'center', 
+                padding: '3rem',
+                color: '#999'
+              }}>
+                <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>📝</div>
+                <p>No activities found</p>
+                <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
+                  Try refreshing or selecting a different date.
+                </p>
               </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', marginTop: '1rem' }}>
-              <button onClick={() => setPage((p) => Math.max(1, p - 1))} style={{ padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px solid #e0e0e0', background: '#fff' }}>Prev</button>
-              <button onClick={() => setPage((p) => p + 1)} style={{ padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px solid #e0e0e0', background: '#fff' }}>Next</button>
-            </div>
-          </>
+            )}
+          </div>
         )}
       </div>
     </section>
-  )
+  );
 }

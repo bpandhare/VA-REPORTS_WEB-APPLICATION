@@ -50,67 +50,430 @@ const validatePhone = (phone) => {
   return null // No error
 }
 
-// Get user profile endpoint
-router.get('/profile', async (req, res) => {
+// Authentication middleware (simplified version)
+const authenticateToken = (req, res, next) => {
   try {
-    // Get token from authorization header
     const authHeader = req.header('Authorization');
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ message: 'No token provided' });
+      return res.status(401).json({ 
+        success: false,
+        message: 'No token provided' 
+      });
     }
 
     const token = authHeader.replace('Bearer ', '');
     
     if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
+      return res.status(401).json({ 
+        success: false,
+        message: 'No token provided' 
+      });
     }
 
     // Verify token
     const decoded = jwt.verify(token, JWT_SECRET);
     
+    // Add user info to request
+    req.user = decoded;
+    
+    next();
+  } catch (error) {
+    console.error('Authentication failed:', error);
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Token expired. Please login again.' 
+      });
+    }
+    
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid token' 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to authenticate' 
+    });
+  }
+};
+
+// ================= PROFILE ENDPOINTS =================
+
+// Get user profile endpoint - FIXED
+router.get('/profile', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    console.log('🔍 [PROFILE] Fetching profile for user ID:', userId);
+    
     const [rows] = await pool.execute(
       'SELECT id, employee_id, username, role, dob, phone FROM users WHERE id = ?',
-      [decoded.id]
+      [userId]
     );
     
     if (rows.length === 0) {
-      return res.status(404).json({ message: 'User not found' });
+      console.log('❌ [PROFILE] User not found for ID:', userId);
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
     }
 
     const user = rows[0];
     
+    console.log('✅ [PROFILE] Found user:', user.username);
+    
+    // Return data in format expected by frontend
     res.json({
       id: user.id,
       employeeId: user.employee_id,
       username: user.username,
-      name: user.username, // Use username as name
+      name: user.username, // Use username since full_name doesn't exist
       role: user.role,
       dob: user.dob,
-      phone: user.phone
+      phone: user.phone,
+      fullName: user.username // Fallback to username
     });
   } catch (error) {
-    console.error('Failed to fetch profile:', error);
-    
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Token expired' });
-    }
-    
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ message: 'Invalid token' });
-    }
-    
-    res.status(500).json({ message: 'Unable to fetch profile', error: error.message });
+    console.error('❌ [PROFILE] Failed:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to fetch profile', 
+      error: error.message 
+    });
   }
 });
+
+// ================= EMPLOYEE DATA ENDPOINTS =================
+
+// Get employee names mapping - FIXED (remove full_name references)
+router.get('/employee-names', authenticateToken, async (req, res) => {
+  try {
+    console.log('🔍 [EMPLOYEE-NAMES] Fetching employee names');
+    
+    // Get all employees with their usernames
+    const [employees] = await pool.execute(`
+      SELECT 
+        username,
+        employee_id as employeeId,
+        role,
+        phone
+      FROM users 
+      WHERE username IS NOT NULL
+      ORDER BY username
+    `);
+    
+    const employeeNames = employees.map(emp => ({
+      username: emp.username,
+      fullName: emp.username, // Use username as fullName
+      employeeId: emp.employeeId,
+      role: emp.role,
+      phone: emp.phone
+    }));
+    
+    console.log(`✅ [EMPLOYEE-NAMES] Found ${employeeNames.length} employees`);
+    
+    res.json({
+      success: true,
+      employeeNames: employeeNames
+    });
+  } catch (error) {
+    console.error('❌ [EMPLOYEE-NAMES] Failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch employee names' 
+    });
+  }
+});
+
+// Get employee details - FIXED
+router.get('/employee/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`🔍 [EMPLOYEE-DETAILS] Fetching details for: ${id}`);
+    
+    // Try to find by employeeId first, then by username
+    let query = `
+      SELECT 
+        id,
+        username,
+        employee_id as employeeId,
+        role,
+        phone,
+        dob,
+        created_at as createdAt
+      FROM users 
+      WHERE employee_id = ? OR username = ?
+    `;
+    
+    const [employees] = await pool.execute(query, [id, id]);
+    
+    if (employees.length === 0) {
+      console.log(`❌ [EMPLOYEE-DETAILS] Employee not found: ${id}`);
+      return res.status(404).json({
+        success: false,
+        message: 'Employee not found'
+      });
+    }
+    
+    const employee = employees[0];
+    
+    // Get employee's recent activities
+    const [activities] = await pool.execute(`
+      SELECT 
+        id,
+        engineer_name as engineerName,
+        engineer_id as engineerId,
+        activity_target as activityTarget,
+        problem,
+        status,
+        DATE_FORMAT(date, '%Y-%m-%d') as reportDate,
+        TIME_FORMAT(start_time, '%H:%i:%s') as startTime,
+        TIME_FORMAT(end_time, '%H:%i:%s') as endTime,
+        project as projectName,
+        activity_type as activityType,
+        DATE_FORMAT(logged_at, '%Y-%m-%d %H:%i:%s') as loggedAt
+      FROM activities 
+      WHERE engineer_id = ? OR engineer_name = ?
+      ORDER BY logged_at DESC
+      LIMIT 10
+    `, [employee.employeeId || id, employee.username || id]);
+    
+    const response = {
+      success: true,
+      username: employee.username,
+      displayName: employee.username, // Use username as displayName
+      fullName: employee.username, // Use username as fullName
+      employeeId: employee.employeeId,
+      role: employee.role,
+      phone: employee.phone,
+      dob: employee.dob,
+      recentActivities: activities,
+      lastActivity: activities.length > 0 ? activities[0] : null
+    };
+    
+    console.log(`✅ [EMPLOYEE-DETAILS] Found employee: ${employee.username}`);
+    
+    res.json(response);
+  } catch (error) {
+    console.error('❌ [EMPLOYEE-DETAILS] Failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch employee details' 
+    });
+  }
+});
+
+// ================= ACTIVITIES ENDPOINTS =================
+
+// Get activities with employee names - FIXED
+router.get('/activities', authenticateToken, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    
+    console.log(`📋 [ACTIVITIES] Fetching page ${page}, limit ${limit}`);
+
+    // Get total count
+    const [countResult] = await pool.execute(`
+      SELECT COUNT(*) as total FROM activities
+    `);
+    const total = countResult[0].total;
+    
+    // Get activities with employee details - FIXED (remove full_name reference)
+    const [activities] = await pool.execute(`
+      SELECT 
+        a.id,
+        a.engineer_name as username,
+        a.engineer_id as engineerId,
+        a.activity_target as activityTarget,
+        a.problem as problemDescription,
+        a.status,
+        DATE_FORMAT(a.date, '%Y-%m-%d') as reportDate,
+        TIME_FORMAT(a.start_time, '%H:%i:%s') as inTime,
+        TIME_FORMAT(a.end_time, '%H:%i:%s') as outTime,
+        a.project as projectName,
+        a.activity_type as activityType,
+        DATE_FORMAT(a.logged_at, '%Y-%m-%d %H:%i:%s') as loggedAt,
+        a.logged_at as createdAt,
+        u.username as fullName, -- Use username instead of full_name
+        u.role,
+        u.employee_id as userEmployeeId
+      FROM activities a
+      LEFT JOIN users u ON a.engineer_id = u.employee_id OR a.engineer_name = u.username
+      ORDER BY a.logged_at DESC
+      LIMIT ? OFFSET ?
+    `, [limit, skip]);
+    
+    // Add displayName to each activity
+    const activitiesWithDisplayNames = activities.map(activity => ({
+      ...activity,
+      displayName: activity.fullName || activity.username || 'Unknown'
+    }));
+    
+    console.log(`✅ [ACTIVITIES] Fetched ${activitiesWithDisplayNames.length} activities`);
+    
+    res.json({
+      success: true,
+      activities: activitiesWithDisplayNames,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      total: total
+    });
+  } catch (error) {
+    console.error('❌ [ACTIVITIES] Failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch activities' 
+    });
+  }
+});
+
+// Get activities summary
+router.get('/summary', authenticateToken, async (req, res) => {
+  try {
+    console.log('📊 [SUMMARY] Fetching activity summary');
+    
+    // Get total activities count
+    const [totalCount] = await pool.execute(`
+      SELECT COUNT(*) as total FROM activities
+    `);
+    
+    // Get active employees (those with activities in last 7 days)
+    const [activeEmployees] = await pool.execute(`
+      SELECT COUNT(DISTINCT engineer_id) as activeCount
+      FROM activities 
+      WHERE date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        AND engineer_id IS NOT NULL
+    `);
+    
+    // Get today's activities count
+    const [todayCount] = await pool.execute(`
+      SELECT COUNT(*) as todayTotal 
+      FROM activities 
+      WHERE DATE(date) = CURDATE()
+    `);
+    
+    // Get today's attendance summary
+    const today = new Date().toISOString().split('T')[0];
+    const [attendanceStats] = await pool.execute(`
+      SELECT 
+        COUNT(DISTINCT engineer_id) as totalEmployees,
+        SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as presentCount,
+        SUM(CASE WHEN status = 'leave' THEN 1 ELSE 0 END) as leaveCount,
+        SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absentCount
+      FROM activities 
+      WHERE DATE(date) = DATE(?)
+    `, [today]);
+    
+    res.json({
+      success: true,
+      summary: {
+        totalActivities: totalCount[0].total,
+        activeEmployees: activeEmployees[0].activeCount,
+        todayActivities: todayCount[0].todayTotal,
+        totalEmployees: attendanceStats[0]?.totalEmployees || 0,
+        presentCount: attendanceStats[0]?.presentCount || 0,
+        leaveCount: attendanceStats[0]?.leaveCount || 0,
+        absentCount: attendanceStats[0]?.absentCount || 0
+      }
+    });
+  } catch (error) {
+    console.error('❌ [SUMMARY] Failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch summary' 
+    });
+  }
+});
+
+// Get subordinates (for senior roles) - FIXED
+router.get('/subordinates', authenticateToken, async (req, res) => {
+  try {
+    console.log('👥 [SUBORDINATES] Fetching subordinates');
+    
+    // This is a simplified example - adjust based on your hierarchy logic
+    const [subordinates] = await pool.execute(`
+      SELECT 
+        username,
+        employee_id as employeeId,
+        role,
+        phone
+      FROM users 
+      WHERE role NOT LIKE '%manager%' 
+        AND role NOT LIKE '%team leader%'
+        AND role NOT LIKE '%senior%'
+        AND username IS NOT NULL
+      ORDER BY username
+    `);
+    
+    const subordinatesWithNames = subordinates.map(sub => ({
+      ...sub,
+      fullName: sub.username // Use username as fullName
+    }));
+    
+    res.json({
+      success: true,
+      subordinates: subordinatesWithNames
+    });
+  } catch (error) {
+    console.error('❌ [SUBORDINATES] Failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch subordinates' 
+    });
+  }
+});
+
+// Get all employees (for group managers) - FIXED
+router.get('/employees', authenticateToken, async (req, res) => {
+  try {
+    console.log('👥 [EMPLOYEES] Fetching all employees');
+    
+    const [employees] = await pool.execute(`
+      SELECT 
+        username,
+        employee_id as employeeId,
+        role,
+        phone,
+        dob
+      FROM users 
+      WHERE username IS NOT NULL
+      ORDER BY username
+    `);
+    
+    const employeesWithNames = employees.map(emp => ({
+      ...emp,
+      fullName: emp.username // Use username as fullName
+    }));
+    
+    res.json({
+      success: true,
+      employees: employeesWithNames
+    });
+  } catch (error) {
+    console.error('❌ [EMPLOYEES] Failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch employees' 
+    });
+  }
+});
+
+// ================= AUTH ENDPOINTS =================
 
 router.post('/register', async (req, res) => {
   try {
     console.log('📥 [REGISTER] Request received:', req.body)
     
-    // FIX: Accept both employeeId and employee_id (frontend sends employee_id)
     const employeeId = req.body.employee_id || req.body.employeeId
-    const { username, password, dob, phone, role, full_name } = req.body
+    const { username, password, dob, phone, role } = req.body // Remove full_name
 
     console.log('🔍 [REGISTER] Parsed fields:', {
       employeeId,
@@ -118,27 +481,32 @@ router.post('/register', async (req, res) => {
       passwordLength: password ? password.length : 0,
       dob,
       phone,
-      role,
-      full_name
+      role
     })
 
     // For Managers: employeeId is optional
     // For other roles: employeeId is required
-    const isManager = role && role.toLowerCase().includes('manager')
+    const isManagerRole = role && role.toLowerCase().includes('manager')
     
-    console.log('👤 [REGISTER] Role:', role, 'Is Manager:', isManager)
+    console.log('👤 [REGISTER] Role:', role, 'Is Manager:', isManagerRole)
     
-    if (!isManager) {
+    if (!isManagerRole) {
       // Validate Employee ID format (E001 format) for non-managers
       if (!employeeId || employeeId.trim() === '') {
         console.log('❌ [REGISTER] Employee ID missing for non-manager')
-        return res.status(400).json({ message: 'Employee ID is required for non-manager roles' })
+        return res.status(400).json({ 
+          success: false,
+          message: 'Employee ID is required for non-manager roles' 
+        })
       }
       
       const employeeIdError = validateEmployeeId(employeeId)
       if (employeeIdError) {
         console.log('❌ [REGISTER] Employee ID validation failed:', employeeIdError)
-        return res.status(400).json({ message: employeeIdError })
+        return res.status(400).json({ 
+          success: false,
+          message: employeeIdError 
+        })
       }
     }
 
@@ -147,7 +515,10 @@ router.post('/register', async (req, res) => {
     for (const field of requiredFields) {
       if (!req.body[field] || req.body[field].trim() === '') {
         console.log('❌ [REGISTER] Missing required field:', field)
-        return res.status(400).json({ message: `${field} is required` })
+        return res.status(400).json({ 
+          success: false,
+          message: `${field} is required` 
+        })
       }
     }
 
@@ -156,16 +527,20 @@ router.post('/register', async (req, res) => {
     const dobDate = new Date(dob)
     if (Number.isNaN(dobDate.getTime())) {
       console.log('❌ [REGISTER] Invalid DOB format:', dob)
-      return res.status(400).json({ message: 'Invalid date of birth format. Use YYYY-MM-DD' })
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid date of birth format. Use YYYY-MM-DD' 
+      })
     }
 
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     if (dobDate >= today) {
       console.log('❌ [REGISTER] DOB is in future:', dob)
-      return res
-        .status(400)
-        .json({ message: 'Date of birth must be before today (no future dates)' })
+      return res.status(400).json({ 
+        success: false,
+        message: 'Date of birth must be before today (no future dates)' 
+      })
     }
 
     // Validate phone number
@@ -173,7 +548,10 @@ router.post('/register', async (req, res) => {
     const phoneError = validatePhone(phone)
     if (phoneError) {
       console.log('❌ [REGISTER] Phone validation failed:', phoneError)
-      return res.status(400).json({ message: phoneError })
+      return res.status(400).json({ 
+        success: false,
+        message: phoneError 
+      })
     }
 
     // Clean phone number (remove any non-digit characters)
@@ -187,11 +565,14 @@ router.post('/register', async (req, res) => {
     )
     if (existingPhone.length > 0) {
       console.log('❌ [REGISTER] Phone number already exists:', cleanPhone)
-      return res.status(409).json({ message: 'Phone number already registered' })
+      return res.status(409).json({ 
+        success: false,
+        message: 'Phone number already registered' 
+      })
     }
 
     // For non-managers: Check if Employee ID already exists
-    if (!isManager && employeeId) {
+    if (!isManagerRole && employeeId) {
       console.log('🔍 [REGISTER] Checking if Employee ID exists:', employeeId)
       const [existingEmployeeId] = await pool.execute(
         'SELECT id FROM users WHERE employee_id = ?',
@@ -199,7 +580,10 @@ router.post('/register', async (req, res) => {
       )
       if (existingEmployeeId.length > 0) {
         console.log('❌ [REGISTER] Employee ID already exists:', employeeId)
-        return res.status(409).json({ message: 'Employee ID already exists' })
+        return res.status(409).json({ 
+          success: false,
+          message: 'Employee ID already exists' 
+        })
       }
     }
 
@@ -211,17 +595,16 @@ router.post('/register', async (req, res) => {
     )
     if (existingUsername.length > 0) {
       console.log('❌ [REGISTER] Username already exists:', username)
-      return res.status(409).json({ message: 'Username already exists' })
+      return res.status(409).json({ 
+        success: false,
+        message: 'Username already exists' 
+      })
     }
 
     const passwordHash = await bcrypt.hash(password, 10)
     
-    // FIX: Use appropriate columns based on your database schema
-    // Your database has: employee_id, username, password_hash, dob, phone, role, manager_id, created_at
-    // It does NOT have: full_name, gender (unless you added them)
-    
     let query, params
-    if (isManager) {
+    if (isManagerRole) {
       // For managers, employee_id is NULL
       query = 'INSERT INTO users (employee_id, username, password_hash, dob, phone, role) VALUES (?, ?, ?, ?, ?, ?)'
       params = [null, username, passwordHash, dob, cleanPhone, role]
@@ -240,34 +623,29 @@ router.post('/register', async (req, res) => {
     
     // Create JWT payload
     const jwtPayload = { 
-      id: userId, 
+      id: userId,
       username, 
       role,
-      phone: cleanPhone
-    }
-    
-    // Only add employeeId to JWT if it exists (non-managers)
-    if (!isManager && employeeId) {
-      jwtPayload.employeeId = employeeId.toUpperCase()
+      phone: cleanPhone,
+      employeeId: !isManagerRole ? employeeId.toUpperCase() : null,
+      fullName: username // Use username as fullName
     }
     
     const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: TOKEN_TTL_SECONDS })
 
     const responseData = {
+      success: true,
       token,
-      id: userId,
-      username,
-      name: full_name || username, // Use full_name if provided, otherwise username
-      role,
-      phone: cleanPhone,
+      user: {
+        id: userId,
+        username,
+        name: username, // Use username as name
+        role,
+        phone: cleanPhone,
+        employeeId: !isManagerRole ? employeeId.toUpperCase() : null,
+        fullName: username // Use username as fullName
+      },
       message: 'Registration successful'
-    }
-    
-    // Only add employeeId to response if it exists (non-managers)
-    if (!isManager && employeeId) {
-      responseData.employeeId = employeeId.toUpperCase()
-    } else {
-      responseData.employeeId = null
     }
     
     console.log('✅ [REGISTER] Registration successful for:', username, 'Role:', role)
@@ -284,15 +662,27 @@ router.post('/register', async (req, res) => {
     // More specific error messages
     if (error.code === 'ER_DUP_ENTRY') {
       if (error.message.includes('employee_id')) {
-        return res.status(409).json({ message: 'Employee ID already exists' })
+        return res.status(409).json({ 
+          success: false,
+          message: 'Employee ID already exists' 
+        })
       } else if (error.message.includes('username')) {
-        return res.status(409).json({ message: 'Username already exists' })
+        return res.status(409).json({ 
+          success: false,
+          message: 'Username already exists' 
+        })
       } else if (error.message.includes('phone')) {
-        return res.status(409).json({ message: 'Phone number already registered' })
+        return res.status(409).json({ 
+          success: false,
+          message: 'Phone number already registered' 
+        })
       }
     }
     
-    res.status(500).json({ message: 'Unable to register user. Error: ' + error.message })
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to register user. Error: ' + error.message 
+    })
   }
 })
 
@@ -300,21 +690,20 @@ router.post('/login', async (req, res) => {
   try {
     console.log('📥 [LOGIN] Request received:', req.body)
     
-    // FIX: Accept both employeeId and employee_id
-    const employeeId = req.body.employee_id || req.body.employeeId
-    const { username, password, role } = req.body
+    const { username, password } = req.body
 
     console.log('🔍 [LOGIN] Parsed fields:', {
-      employeeId,
       username,
-      passwordLength: password ? password.length : 0,
-      role
+      passwordLength: password ? password.length : 0
     })
 
     // Basic validation
     if (!username || !password) {
       console.log('❌ [LOGIN] Missing username or password')
-      return res.status(400).json({ message: 'Username and password are required' })
+      return res.status(400).json({ 
+        success: false,
+        message: 'Username and password are required' 
+      })
     }
 
     // Find user by username (both managers and non-managers)
@@ -325,7 +714,10 @@ router.post('/login', async (req, res) => {
 
     if (rows.length === 0) {
       console.log('❌ [LOGIN] User not found:', username)
-      return res.status(401).json({ message: 'Invalid credentials' })
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid credentials' 
+      })
     }
 
     const user = rows[0]
@@ -341,7 +733,10 @@ router.post('/login', async (req, res) => {
     const ok = await bcrypt.compare(password, user.password_hash)
     if (!ok) {
       console.log('❌ [LOGIN] Invalid password for user:', username)
-      return res.status(401).json({ message: 'Invalid credentials' })
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid credentials' 
+      })
     }
 
     // Create token
@@ -351,20 +746,25 @@ router.post('/login', async (req, res) => {
         employeeId: user.employee_id,
         username: user.username,
         role: user.role,
-        phone: user.phone
+        phone: user.phone,
+        fullName: user.username // Use username as fullName
       },
       JWT_SECRET,
       { expiresIn: TOKEN_TTL_SECONDS }
     )
 
     const responseData = {
+      success: true,
       token,
-      id: user.id,
-      employeeId: user.employee_id,
-      username: user.username,
-      name: user.username, // Use username as name
-      role: user.role,
-      phone: user.phone,
+      user: {
+        id: user.id,
+        employeeId: user.employee_id,
+        username: user.username,
+        name: user.username, // Use username as name
+        role: user.role,
+        phone: user.phone,
+        fullName: user.username // Use username as fullName
+      },
       message: 'Login successful'
     }
     
@@ -379,152 +779,32 @@ router.post('/login', async (req, res) => {
   } catch (error) {
     console.error('❌ [LOGIN] Failed to login:', error)
     console.error('❌ [LOGIN] Error stack:', error.stack)
-    res.status(500).json({ message: 'Unable to login. Error: ' + error.message })
-  }
-})
-
-// Update check-employee-id endpoint
-router.get('/check-employee-id/:employeeId', async (req, res) => {
-  try {
-    console.log('🔍 [CHECK-EMPLOYEE-ID] Checking:', req.params.employeeId)
-    const { employeeId } = req.params
-    
-    // Special case: If employeeId is "MANAGER", it's not a valid Employee ID format
-    if (employeeId.toUpperCase() === 'MANAGER') {
-      console.log('⚠️ [CHECK-EMPLOYEE-ID] MANAGER keyword used')
-      return res.json({
-        valid: false,
-        available: false,
-        message: 'MANAGER is not a valid Employee ID format'
-      })
-    }
-    
-    // Validate the format
-    const employeeIdError = validateEmployeeId(employeeId)
-    if (employeeIdError) {
-      console.log('❌ [CHECK-EMPLOYEE-ID] Validation failed:', employeeIdError)
-      return res.status(400).json({ 
-        valid: false,
-        message: employeeIdError 
-      })
-    }
-    
-    // Check if it exists
-    console.log('🔍 [CHECK-EMPLOYEE-ID] Checking database for:', employeeId)
-    const [rows] = await pool.execute(
-      'SELECT id FROM users WHERE employee_id = ?',
-      [employeeId.toUpperCase()]
-    )
-    
-    const available = rows.length === 0
-    console.log(`✅ [CHECK-EMPLOYEE-ID] Employee ID ${employeeId} is ${available ? 'available' : 'taken'}`)
-    
-    res.json({
-      valid: true,
-      available: available,
-      message: available 
-        ? 'Employee ID is available' 
-        : 'Employee ID already taken'
-    })
-  } catch (error) {
-    console.error('❌ [CHECK-EMPLOYEE-ID] Failed:', error)
     res.status(500).json({ 
-      valid: false,
-      message: 'Unable to check employee ID' 
+      success: false,
+      message: 'Unable to login. Error: ' + error.message 
     })
   }
-})
+});
 
-// Check if phone number already exists
-router.get('/check-phone/:phone', async (req, res) => {
-  try {
-    console.log('🔍 [CHECK-PHONE] Checking:', req.params.phone)
-    const { phone } = req.params
-    
-    // Clean phone number (remove any non-digit characters)
-    const cleanPhone = phone.replace(/\D/g, '')
-    
-    // Validate phone number
-    const phoneError = validatePhone(cleanPhone)
-    if (phoneError) {
-      console.log('❌ [CHECK-PHONE] Validation failed:', phoneError)
-      return res.status(400).json({ 
-        valid: false,
-        message: phoneError 
-      })
-    }
-    
-    // Check if it exists
-    console.log('🔍 [CHECK-PHONE] Checking database for:', cleanPhone)
-    const [rows] = await pool.execute(
-      'SELECT id FROM users WHERE phone = ?',
-      [cleanPhone]
-    )
-    
-    const available = rows.length === 0
-    console.log(`✅ [CHECK-PHONE] Phone number ${cleanPhone} is ${available ? 'available' : 'taken'}`)
-    
-    res.json({
-      valid: true,
-      available: available,
-      message: available 
-        ? 'Phone number is available' 
-        : 'Phone number already registered'
-    })
-  } catch (error) {
-    console.error('❌ [CHECK-PHONE] Failed:', error)
-    res.status(500).json({ 
-      valid: false,
-      message: 'Unable to check phone number' 
-    })
-  }
-})
-
-// Get user by Employee ID
-router.get('/employee/:employeeId', async (req, res) => {
-  try {
-    const { employeeId } = req.params
-    
-    // Skip validation for "MANAGER" special case
-    if (employeeId.toUpperCase() !== 'MANAGER') {
-      // Validate the format first
-      const employeeIdError = validateEmployeeId(employeeId)
-      if (employeeIdError) {
-        return res.status(400).json({ message: employeeIdError })
-      }
-    }
-    
-    const [rows] = await pool.execute(
-      'SELECT id, employee_id, username, role, dob, phone FROM users WHERE employee_id = ? OR (employee_id IS NULL AND username = ?)',
-      [employeeId.toUpperCase(), employeeId]
-    )
-    
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'Employee not found' })
-    }
-    
-    const user = rows[0]
-    res.json({
-      id: user.id,
-      employeeId: user.employee_id,
-      username: user.username,
-      name: user.username, // Use username as name
-      role: user.role,
-      dob: user.dob,
-      phone: user.phone
-    })
-  } catch (error) {
-    console.error('Failed to fetch employee', error)
-    res.status(500).json({ message: 'Unable to fetch employee details' })
-  }
-})
-
-// Health check endpoint for auth routes
+// Health check endpoint
 router.get('/health', (req, res) => {
   res.json({ 
+    success: true,
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    service: 'authentication-service'
+    service: 'authentication-service',
+    endpoints: [
+      '/profile', 
+      '/register', 
+      '/login',
+      '/employee-names',
+      '/employee/:id',
+      '/activities',
+      '/summary',
+      '/subordinates',
+      '/employees',
+      '/attendance'
+    ]
   })
 })
 

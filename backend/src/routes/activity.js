@@ -1,10 +1,56 @@
 import { Router } from 'express'
 import pool from '../db.js'
+import jwt from 'jsonwebtoken'
 
 const router = Router()
+const JWT_SECRET = process.env.JWT_SECRET ?? 'vickhardth-site-pulse-secret'
 
-// GET - Get all activities with filters (NEW endpoint for activity monitoring)
-router.get('/activities', async (req, res) => {
+// Middleware to verify token and check user role
+const verifyTokenAndRole = (requiredRole = null) => {
+  return (req, res, next) => {
+    const authHeader = req.headers.authorization
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Missing or invalid token' 
+      })
+    }
+
+    const token = authHeader.slice(7)
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET)
+      req.user = decoded
+      
+      // Check role if required
+      if (requiredRole && req.user.role !== requiredRole) {
+        return res.status(403).json({ 
+          success: false,
+          message: `Access denied. ${requiredRole} role required.` 
+        })
+      }
+      
+      next()
+    } catch (error) {
+      res.status(401).json({ 
+        success: false,
+        message: 'Invalid token' 
+      })
+    }
+  }
+}
+
+// Helper function to check if user is manager
+const isManager = (user) => {
+  return user?.role === 'Manager' || user?.role === 'Admin' || user?.role === 'admin'
+}
+
+// Helper function to check if user is team leader or manager
+const isTeamLeaderOrManager = (user) => {
+  return user?.role === 'Manager' || user?.role === 'Team Leader' || user?.role === 'TeamLeader' || user?.role === 'Admin' || user?.role === 'admin'
+}
+
+// GET - Get all activities with filters (UPDATED WITH ROLE-BASED ACCESS)
+router.get('/activities', verifyTokenAndRole(), async (req, res) => {
   try {
     const { 
       date, 
@@ -16,52 +62,83 @@ router.get('/activities', async (req, res) => {
       limit = 50 
     } = req.query;
 
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const isUserManager = isManager(req.user);
+    const isUserTeamLeaderOrManager = isTeamLeaderOrManager(req.user);
+
+    console.log(`👤 User ${userId} (${userRole}) accessing activities. Manager: ${isUserManager}, TeamLeader/Manager: ${isUserTeamLeaderOrManager}`);
+
     let baseQuery = `
       SELECT 
-        id,
-        DATE_FORMAT(date, '%Y-%m-%d') as date,
-        TIME_FORMAT(time, '%H:%i:%s') as time,
-        engineer_name,
-        engineer_id,
-        project,
-        location,
-        activity_target,
-        problem,
-        status,
-        leave_reason,
-        TIME_FORMAT(start_time, '%H:%i:%s') as start_time,
-        TIME_FORMAT(end_time, '%H:%i:%s') as end_time,
-        activity_type,
-        DATE_FORMAT(logged_at, '%Y-%m-%d %H:%i:%s') as logged_at
-      FROM activities
+        a.id,
+        DATE_FORMAT(a.date, '%Y-%m-%d') as date,
+        TIME_FORMAT(a.time, '%H:%i:%s') as time,
+        COALESCE(u.username, a.engineer_name) as engineer_name,
+        COALESCE(u.employee_id, a.engineer_id) as engineer_id,
+        a.project,
+        a.location,
+        a.activity_target,
+        a.problem,
+        a.status,
+        a.leave_reason,
+        TIME_FORMAT(a.start_time, '%H:%i:%s') as start_time,
+        TIME_FORMAT(a.end_time, '%H:%i:%s') as end_time,
+        a.activity_type,
+        DATE_FORMAT(a.logged_at, '%Y-%m-%d %H:%i:%s') as logged_at
+      FROM activities a
+      LEFT JOIN users u ON (a.engineer_id = u.employee_id OR a.engineer_name = u.username)
       WHERE 1=1
     `;
     
     const params = [];
 
+    // ROLE-BASED FILTER: Regular employees only see their own activities
+    // Managers and Team Leaders see all activities
+    if (!isUserTeamLeaderOrManager) {
+      // Regular employee - only see their own activities
+      // Get current user's employee_id and username
+      const [currentUser] = await pool.execute(
+        'SELECT employee_id, username FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (currentUser.length > 0) {
+        const userEmpId = currentUser[0].employee_id;
+        const username = currentUser[0].username;
+        
+        baseQuery += ` AND (a.engineer_id = ? OR a.engineer_name = ? OR u.id = ?)`;
+        params.push(userEmpId, username, userId);
+        console.log(`🔒 Regular employee filter: empId=${userEmpId}, username=${username}`);
+      }
+    }
+
     // Date filter
     if (date) {
-      baseQuery += ` AND DATE(date) = DATE(?)`;
+      baseQuery += ` AND DATE(a.date) = DATE(?)`;
       params.push(date);
     }
 
     // Date range filter
     if (startDate && endDate) {
-      baseQuery += ` AND DATE(date) BETWEEN DATE(?) AND DATE(?)`;
+      baseQuery += ` AND DATE(a.date) BETWEEN DATE(?) AND DATE(?)`;
       params.push(startDate, endDate);
     }
 
-    // Engineer filter
-    if (engineerId) {
-      baseQuery += ` AND engineer_id = ?`;
-      params.push(engineerId);
+    // Engineer filter (only for managers/team leaders)
+    if (engineerId && isUserTeamLeaderOrManager) {
+      baseQuery += ` AND (a.engineer_id = ? OR u.employee_id = ?)`;
+      params.push(engineerId, engineerId);
     }
 
     // Status filter
     if (status) {
-      baseQuery += ` AND status = ?`;
+      baseQuery += ` AND a.status = ?`;
       params.push(status);
     }
+
+    console.log('Executing activities query with role-based access');
+    console.log('User role:', userRole, 'Is Manager/Team Leader:', isUserTeamLeaderOrManager);
 
     // Count total records
     const countQuery = `SELECT COUNT(*) as total FROM (${baseQuery}) as subquery`;
@@ -69,40 +146,64 @@ router.get('/activities', async (req, res) => {
     const total = countResult[0]?.total || 0;
 
     // Add ordering and pagination
-    baseQuery += ` ORDER BY date DESC, logged_at DESC`;
+    baseQuery += ` ORDER BY a.date DESC, a.logged_at DESC`;
     
     const offset = (page - 1) * limit;
     const finalQuery = `${baseQuery} LIMIT ? OFFSET ?`;
     const finalParams = [...params, parseInt(limit), offset];
 
-    console.log('Executing activities query:', finalQuery);
-    console.log('With params:', finalParams);
-
     const [activities] = await pool.execute(finalQuery, finalParams);
 
-    // Get today's stats
+    // Get today's stats (with role-based access)
     const today = new Date().toISOString().split('T')[0];
-    const [stats] = await pool.execute(`
+    
+    let statsQuery = `
       SELECT 
         COUNT(DISTINCT engineer_id) as active_employees,
         SUM(CASE WHEN status = 'leave' THEN 1 ELSE 0 END) as on_leave,
         SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absent_count
       FROM activities 
       WHERE DATE(date) = DATE(?)
-    `, [today]);
+    `;
+    
+    let statsParams = [today];
+    
+    // Apply role-based filter for stats
+    if (!isUserTeamLeaderOrManager) {
+      const [currentUser] = await pool.execute(
+        'SELECT employee_id, username FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (currentUser.length > 0) {
+        const userEmpId = currentUser[0].employee_id;
+        const username = currentUser[0].username;
+        
+        statsQuery += ` AND (engineer_id = ? OR engineer_name = ?)`;
+        statsParams.push(userEmpId, username);
+      }
+    }
+    
+    const [stats] = await pool.execute(statsQuery, statsParams);
 
-    // Get absentees list
-    const [absentees] = await pool.execute(`
-      SELECT 
-        engineer_name,
-        engineer_id,
-        problem as reason
-      FROM activities 
-      WHERE status = 'absent' 
-        AND DATE(date) = DATE(?)
-    `, [today]);
+    // Get absentees list (only for managers/team leaders)
+    let absentees = [];
+    if (isUserTeamLeaderOrManager) {
+      const [absenteesResult] = await pool.execute(`
+        SELECT 
+          COALESCE(u.username, a.engineer_name) as engineer_name,
+          COALESCE(u.employee_id, a.engineer_id) as engineer_id,
+          a.problem as reason
+        FROM activities a
+        LEFT JOIN users u ON (a.engineer_id = u.employee_id OR a.engineer_name = u.username)
+        WHERE a.status = 'absent' 
+          AND DATE(a.date) = DATE(?)
+      `, [today]);
+      absentees = absenteesResult;
+    }
 
     res.json({
+      success: true,
       activities: activities.map(act => ({
         id: act.id,
         date: act.date,
@@ -129,20 +230,307 @@ router.get('/activities', async (req, res) => {
         reason: a.reason
       })),
       page: parseInt(page),
-      totalPages: Math.ceil(total / limit)
+      totalPages: Math.ceil(total / limit),
+      userRole: userRole,
+      accessLevel: isUserTeamLeaderOrManager ? 'full' : 'restricted'
     });
   } catch (error) {
     console.error('Failed to fetch activities:', error);
-    res.status(500).json({ message: 'Unable to fetch activities', error: error.message });
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to fetch activities', 
+      error: error.message 
+    });
   }
 });
 
-// GET - Get activity stats
-router.get('/stats', async (req, res) => {
+// NEW ENDPOINT: Get date-wise activities summary (UPDATED WITH ROLE-BASED ACCESS)
+router.get('/date-summary', verifyTokenAndRole(), async (req, res) => {
+  try {
+    const { date } = req.query;
+    
+    if (!date) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Date parameter is required' 
+      });
+    }
+
+    const userId = req.user.id;
+    const isUserTeamLeaderOrManager = isTeamLeaderOrManager(req.user);
+
+    console.log(`📊 [DATE-SUMMARY] Fetching summary for date: ${date} by user ${userId} (${req.user.role})`);
+
+    // Base query for activities with role-based filtering
+    let activitiesQuery = `
+      SELECT 
+        a.id,
+        DATE_FORMAT(a.date, '%Y-%m-%d') as date,
+        TIME_FORMAT(a.time, '%H:%i:%s') as time,
+        COALESCE(u.username, a.engineer_name) as engineer_name,
+        COALESCE(u.employee_id, a.engineer_id) as engineer_id,
+        a.project,
+        a.location,
+        a.activity_target,
+        a.problem,
+        a.status,
+        a.leave_reason,
+        TIME_FORMAT(a.start_time, '%H:%i:%s') as start_time,
+        TIME_FORMAT(a.end_time, '%H:%i:%s') as end_time,
+        a.activity_type,
+        DATE_FORMAT(a.logged_at, '%Y-%m-%d %H:%i:%s') as logged_at
+      FROM activities a
+      LEFT JOIN users u ON (a.engineer_id = u.employee_id OR a.engineer_name = u.username)
+      WHERE DATE(a.date) = DATE(?)
+    `;
+    
+    let activitiesParams = [date];
+
+    // Base query for daily reports with role-based filtering
+    let dailyReportsQuery = `
+      SELECT 
+        d.id,
+        DATE_FORMAT(d.report_date, '%Y-%m-%d') as date,
+        TIME_FORMAT(d.in_time, '%H:%i:%s') as start_time,
+        TIME_FORMAT(d.out_time, '%H:%i:%s') as end_time,
+        COALESCE(u.username, d.incharge) as engineer_name,
+        u.employee_id as engineer_id,
+        d.end_customer_name as project,
+        'daily_report' as activity_type,
+        d.daily_target_achieved as activity_target,
+        d.problem_faced as problem,
+        'present' as status,
+        d.location_type,
+        DATE_FORMAT(d.created_at, '%Y-%m-%d %H:%i:%s') as logged_at
+      FROM daily_target_reports d
+      LEFT JOIN users u ON (d.user_id = u.id OR d.incharge = u.username)
+      WHERE DATE(d.report_date) = DATE(?)
+        AND (d.incharge IS NOT NULL AND d.incharge != '')
+    `;
+    
+    let dailyReportsParams = [date];
+
+    // Apply role-based filter for regular employees
+    if (!isUserTeamLeaderOrManager) {
+      // Get current user's info
+      const [currentUser] = await pool.execute(
+        'SELECT employee_id, username FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (currentUser.length > 0) {
+        const userEmpId = currentUser[0].employee_id;
+        const username = currentUser[0].username;
+        
+        // Filter activities
+        activitiesQuery += ` AND (a.engineer_id = ? OR a.engineer_name = ? OR u.id = ?)`;
+        activitiesParams.push(userEmpId, username, userId);
+        
+        // Filter daily reports
+        dailyReportsQuery += ` AND (d.user_id = ? OR d.incharge = ?)`;
+        dailyReportsParams.push(userId, username);
+        
+        console.log(`🔒 Regular employee filter applied: empId=${userEmpId}, username=${username}`);
+      }
+    }
+
+    activitiesQuery += ` ORDER BY a.logged_at DESC`;
+    dailyReportsQuery += ` ORDER BY d.created_at DESC`;
+
+    const [activities] = await pool.execute(activitiesQuery, activitiesParams);
+    const [dailyReports] = await pool.execute(dailyReportsQuery, dailyReportsParams);
+
+    // Combine activities and daily reports
+    const allRecords = [...activities, ...dailyReports];
+
+    // Get stats for the date (with role-based access)
+    let activitiesStatsQuery = `
+      SELECT 
+        COUNT(*) as total_activities,
+        COUNT(DISTINCT engineer_id) as total_employees_activities,
+        SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present_count,
+        SUM(CASE WHEN status = 'leave' THEN 1 ELSE 0 END) as leave_count,
+        SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absent_count
+      FROM activities 
+      WHERE DATE(date) = DATE(?)
+    `;
+    
+    let activitiesStatsParams = [date];
+
+    let dailyReportsStatsQuery = `
+      SELECT 
+        COUNT(*) as total_daily_reports,
+        COUNT(DISTINCT user_id) as total_employees_daily_reports
+      FROM daily_target_reports 
+      WHERE DATE(report_date) = DATE(?)
+        AND incharge IS NOT NULL
+        AND incharge != ''
+    `;
+    
+    let dailyReportsStatsParams = [date];
+
+    // Apply role-based filter for stats
+    if (!isUserTeamLeaderOrManager) {
+      const [currentUser] = await pool.execute(
+        'SELECT employee_id, username FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (currentUser.length > 0) {
+        const userEmpId = currentUser[0].employee_id;
+        const username = currentUser[0].username;
+        
+        activitiesStatsQuery += ` AND (engineer_id = ? OR engineer_name = ?)`;
+        activitiesStatsParams.push(userEmpId, username);
+        
+        dailyReportsStatsQuery += ` AND (user_id = ? OR incharge = ?)`;
+        dailyReportsStatsParams.push(userId, username);
+      }
+    }
+
+    const [activitiesStats] = await pool.execute(activitiesStatsQuery, activitiesStatsParams);
+    const [dailyReportsStats] = await pool.execute(dailyReportsStatsQuery, dailyReportsStatsParams);
+
+    // Combine stats
+    const totalActivities = (activitiesStats[0]?.total_activities || 0) + (dailyReportsStats[0]?.total_daily_reports || 0);
+    const totalEmployees = new Set([
+      ...(activities.map(a => a.engineer_id || a.engineer_name)),
+      ...(dailyReports.map(d => d.engineer_name))
+    ]).size;
+
+    const presentCount = (activitiesStats[0]?.present_count || 0) + (dailyReportsStats[0]?.total_daily_reports || 0);
+    const leaveCount = activitiesStats[0]?.leave_count || 0;
+    const absentCount = activitiesStats[0]?.absent_count || 0;
+
+    // Separate daily and hourly reports
+    const dailyReportsList = allRecords
+      .filter(act => act.activity_type === 'daily' || act.activity_type === 'site_work' || act.activity_type === 'daily_report')
+      .map(act => ({
+        engineerName: act.engineer_name,
+        engineerId: act.engineer_id,
+        projectName: act.project,
+        activityTarget: act.activity_target,
+        startTime: act.start_time,
+        endTime: act.end_time,
+        source: act.activity_type === 'daily_report' ? 'daily_report' : 'activity'
+      }));
+
+    const hourlyReports = allRecords
+      .filter(act => act.activity_type === 'hourly')
+      .map(act => ({
+        engineerName: act.engineer_name,
+        engineerId: act.engineer_id,
+        projectName: act.project,
+        activityTarget: act.activity_target,
+        time: act.time,
+        source: 'activity'
+      }));
+
+    res.json({
+      success: true,
+      date,
+      summary: {
+        totalActivities,
+        totalEmployees,
+        presentCount,
+        leaveCount,
+        absentCount,
+        activityRecords: activities.length,
+        dailyReportRecords: dailyReports.length
+      },
+      activities: allRecords.map(act => ({
+        id: act.id,
+        date: act.date,
+        time: act.time,
+        engineerName: act.engineer_name,
+        engineerId: act.engineer_id,
+        project: act.project,
+        activityTarget: act.activity_target,
+        status: act.status,
+        startTime: act.start_time,
+        endTime: act.end_time,
+        activityType: act.activity_type,
+        loggedAt: act.logged_at,
+        source: act.activity_type === 'daily_report' ? 'daily_report' : 'activity'
+      })),
+      dailyReports: dailyReportsList,
+      hourlyReports,
+      counts: {
+        activities: activities.length,
+        dailyReports: dailyReports.length,
+        total: allRecords.length
+      },
+      userRole: req.user.role,
+      accessLevel: isUserTeamLeaderOrManager ? 'full' : 'restricted'
+    });
+  } catch (error) {
+    console.error('❌ [DATE-SUMMARY] Failed:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to fetch date summary', 
+      error: error.message 
+    });
+  }
+});
+
+// NEW ENDPOINT: Get available dates with activities (UPDATED WITH ROLE-BASED ACCESS)
+router.get('/available-dates', verifyTokenAndRole(), async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const isUserTeamLeaderOrManager = isTeamLeaderOrManager(req.user);
+    
+    let query = `
+      SELECT DISTINCT DATE(date) as date
+      FROM activities
+      WHERE date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+    `;
+    
+    const params = [];
+    
+    // Apply role-based filter
+    if (!isUserTeamLeaderOrManager) {
+      // Get current user's info
+      const [currentUser] = await pool.execute(
+        'SELECT employee_id, username FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (currentUser.length > 0) {
+        const userEmpId = currentUser[0].employee_id;
+        const username = currentUser[0].username;
+        
+        query += ` AND (engineer_id = ? OR engineer_name = ?)`;
+        params.push(userEmpId, username);
+      }
+    }
+    
+    query += ` ORDER BY date DESC LIMIT 30`;
+    
+    const [dates] = await pool.execute(query, params);
+
+    res.json({
+      success: true,
+      dates: dates.map(d => d.date),
+      userRole: req.user.role,
+      accessLevel: isUserTeamLeaderOrManager ? 'full' : 'restricted'
+    });
+  } catch (error) {
+    console.error('❌ [AVAILABLE-DATES] Failed:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to fetch available dates' 
+    });
+  }
+});
+
+// GET - Get activity stats (UPDATED WITH ROLE-BASED ACCESS)
+router.get('/stats', verifyTokenAndRole(), async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
+    const userId = req.user.id;
+    const isUserTeamLeaderOrManager = isTeamLeaderOrManager(req.user);
     
-    const [stats] = await pool.execute(`
+    let statsQuery = `
       SELECT 
         COUNT(*) as total_activities,
         COUNT(DISTINCT engineer_id) as active_employees,
@@ -151,114 +539,464 @@ router.get('/stats', async (req, res) => {
         SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absent_count
       FROM activities 
       WHERE DATE(date) = DATE(?)
-    `, [today]);
-
-    const [absentees] = await pool.execute(`
+    `;
+    
+    let statsParams = [today];
+    
+    let absenteesQuery = `
       SELECT 
-        engineer_name,
-        engineer_id,
-        problem as reason
-      FROM activities 
-      WHERE status = 'absent' 
-        AND DATE(date) = DATE(?)
-    `, [today]);
+        COALESCE(u.username, a.engineer_name) as engineer_name,
+        COALESCE(u.employee_id, a.engineer_id) as engineer_id,
+        a.problem as reason
+      FROM activities a
+      LEFT JOIN users u ON (a.engineer_id = u.employee_id OR a.engineer_name = u.username)
+      WHERE a.status = 'absent' 
+        AND DATE(a.date) = DATE(?)
+    `;
+    
+    let absenteesParams = [today];
+    
+    // Apply role-based filter
+    if (!isUserTeamLeaderOrManager) {
+      // Get current user's info
+      const [currentUser] = await pool.execute(
+        'SELECT employee_id, username FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (currentUser.length > 0) {
+        const userEmpId = currentUser[0].employee_id;
+        const username = currentUser[0].username;
+        
+        statsQuery += ` AND (engineer_id = ? OR engineer_name = ?)`;
+        statsParams.push(userEmpId, username);
+        
+        absenteesQuery += ` AND (a.engineer_id = ? OR a.engineer_name = ?)`;
+        absenteesParams.push(userEmpId, username);
+      }
+    }
+    
+    const [stats] = await pool.execute(statsQuery, statsParams);
+    const [absentees] = await pool.execute(absenteesQuery, absenteesParams);
 
     res.json({
+      success: true,
       totalActivities: stats[0]?.total_activities || 0,
       activeEmployees: stats[0]?.active_employees || 0,
       presentCount: stats[0]?.present_count || 0,
       leaveCount: stats[0]?.leave_count || 0,
       absentCount: stats[0]?.absent_count || 0,
-      absentees: absentees
+      absentees: absentees,
+      userRole: req.user.role,
+      accessLevel: isUserTeamLeaderOrManager ? 'full' : 'restricted'
     });
   } catch (error) {
     console.error('Failed to fetch stats:', error);
-    res.status(500).json({ message: 'Unable to fetch stats', error: error.message });
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to fetch stats', 
+      error: error.message 
+    });
   }
 });
 
-// POST - Create new activity (NEW endpoint for activity monitoring)
-router.post('/activity', async (req, res) => {
+// GET - Get attendance data for specific date (UPDATED WITH ROLE-BASED ACCESS)
+router.get('/attendance', verifyTokenAndRole(), async (req, res) => {
   try {
-    const requiredFields = ['date', 'time', 'engineerName', 'project', 'activityTarget', 'status'];
+    const { date } = req.query;
+    const userId = req.user.id;
+    const isUserTeamLeaderOrManager = isTeamLeaderOrManager(req.user);
     
-    for (const field of requiredFields) {
-      if (!req.body[field]) {
-        return res.status(422).json({ message: `${field} is required` });
-      }
+    if (!date) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Date parameter is required' 
+      });
     }
 
-    // If status is 'leave', set default values
-    const isLeave = req.body.status === 'leave';
+    console.log(`👥 [ATTENDANCE] Fetching for date: ${date} by user ${userId} (${req.user.role})`);
+
+    // Get employees with activities (with role-based filtering)
+    let activitiesQuery = `
+      SELECT 
+        COALESCE(u.username, a.engineer_name) as engineer_name,
+        COALESCE(u.employee_id, a.engineer_id) as engineer_id,
+        a.status,
+        a.project,
+        a.activity_target,
+        TIME_FORMAT(a.start_time, '%H:%i') as start_time,
+        TIME_FORMAT(a.end_time, '%H:%i') as end_time,
+        a.leave_reason,
+        a.problem
+      FROM activities a
+      LEFT JOIN users u ON (a.engineer_id = u.employee_id OR a.engineer_name = u.username)
+      WHERE DATE(a.date) = DATE(?)
+        AND (a.engineer_name IS NOT NULL AND a.engineer_name != '')
+    `;
     
-    const payload = {
-      date: req.body.date,
-      time: req.body.time,
-      engineer_name: req.body.engineerName,
-      engineer_id: req.body.engineerId || null,
-      project: isLeave ? 'N/A' : req.body.project,
-      location: isLeave ? 'N/A' : (req.body.location || 'site'),
-      activity_target: req.body.activityTarget,
-      problem: req.body.problem || '',
-      status: req.body.status,
-      leave_reason: req.body.leaveReason || '',
-      start_time: isLeave ? '00:00:00' : (req.body.startTime || '09:00:00'),
-      end_time: isLeave ? '00:00:00' : (req.body.endTime || '18:00:00'),
-      activity_type: req.body.activityType || 'site_work'
-    };
+    let activitiesParams = [date];
+    
+    // Get employees with daily target reports (with role-based filtering)
+    let dailyReportsQuery = `
+      SELECT 
+        COALESCE(u.username, d.incharge) as engineer_name,
+        u.employee_id as engineer_id,
+        'present' as status,
+        d.end_customer_name as project,
+        d.daily_target_achieved as activity_target,
+        TIME_FORMAT(d.in_time, '%H:%i') as start_time,
+        TIME_FORMAT(d.out_time, '%H:%i') as end_time,
+        NULL as leave_reason,
+        d.problem_faced as problem
+      FROM daily_target_reports d
+      LEFT JOIN users u ON (d.user_id = u.id OR d.incharge = u.username)
+      WHERE DATE(d.report_date) = DATE(?)
+        AND (d.incharge IS NOT NULL AND d.incharge != '')
+    `;
+    
+    let dailyReportsParams = [date];
+    
+    // Apply role-based filter
+    if (!isUserTeamLeaderOrManager) {
+      // Get current user's info
+      const [currentUser] = await pool.execute(
+        'SELECT employee_id, username FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (currentUser.length > 0) {
+        const userEmpId = currentUser[0].employee_id;
+        const username = currentUser[0].username;
+        
+        activitiesQuery += ` AND (a.engineer_id = ? OR a.engineer_name = ? OR u.id = ?)`;
+        activitiesParams.push(userEmpId, username, userId);
+        
+        dailyReportsQuery += ` AND (d.user_id = ? OR d.incharge = ?)`;
+        dailyReportsParams.push(userId, username);
+        
+        console.log(`🔒 Regular employee filter applied: empId=${userEmpId}, username=${username}`);
+      }
+    }
+    
+    activitiesQuery += ` ORDER BY engineer_name`;
+    dailyReportsQuery += ` ORDER BY engineer_name`;
 
-    console.log('Inserting activity:', payload);
+    const [activities] = await pool.execute(activitiesQuery, activitiesParams);
+    const [dailyReports] = await pool.execute(dailyReportsQuery, dailyReportsParams);
 
-    const [result] = await pool.execute(`
-      INSERT INTO activities (
-        date, time, engineer_name, engineer_id, project, location,
-        activity_target, problem, status, leave_reason, start_time,
-        end_time, activity_type, logged_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-    `, [
-      payload.date,
-      payload.time,
-      payload.engineer_name,
-      payload.engineer_id,
-      payload.project,
-      payload.location,
-      payload.activity_target,
-      payload.problem,
-      payload.status,
-      payload.leave_reason,
-      payload.start_time,
-      payload.end_time,
-      payload.activity_type
-    ]);
+    // Combine both datasets
+    const allEmployees = [...activities, ...dailyReports];
+    
+    console.log(`📊 Found ${activities.length} activity records and ${dailyReports.length} daily report records for ${date}`);
 
-    res.status(201).json({ 
-      message: 'Activity logged successfully',
-      activityId: result.insertId 
+    // Calculate attendance stats
+    const presentEmployees = [];
+    const absentEmployees = [];
+    const leaveEmployees = [];
+    
+    // Process activities
+    activities.forEach(emp => {
+      if (emp.status === 'present') {
+        presentEmployees.push(emp.engineer_name);
+      } else if (emp.status === 'absent') {
+        absentEmployees.push(emp.engineer_name);
+      } else if (emp.status === 'leave') {
+        leaveEmployees.push(emp.engineer_name);
+      }
+    });
+    
+    // Process daily reports (all are present)
+    dailyReports.forEach(emp => {
+      presentEmployees.push(emp.engineer_name);
+    });
+    
+    // Get unique employees
+    const uniquePresent = [...new Set(presentEmployees)];
+    const uniqueAbsent = [...new Set(absentEmployees)];
+    const uniqueLeave = [...new Set(leaveEmployees)];
+    
+    // Calculate totals
+    const totalEmployees = new Set([
+      ...activities.map(a => a.engineer_name),
+      ...dailyReports.map(d => d.engineer_name)
+    ]).size;
+
+    res.json({
+      success: true,
+      date,
+      summary: {
+        total: allEmployees.length,
+        totalEmployees,
+        present: uniquePresent.length,
+        absent: uniqueAbsent.length,
+        leave: uniqueLeave.length
+      },
+      presentEmployees: uniquePresent,
+      absentEmployees: uniqueAbsent,
+      leaveEmployees: uniqueLeave,
+      activities: allEmployees.map(emp => ({
+        engineerName: emp.engineer_name,
+        engineerId: emp.engineer_id,
+        project: emp.project,
+        status: emp.status,
+        activityTarget: emp.activity_target,
+        startTime: emp.start_time,
+        endTime: emp.end_time,
+        leaveReason: emp.leave_reason,
+        problem: emp.problem,
+        source: emp.status === 'present' && !emp.engineer_id ? 'daily_report' : 'activity'
+      })),
+      counts: {
+        activityRecords: activities.length,
+        dailyReportRecords: dailyReports.length,
+        totalRecords: allEmployees.length
+      },
+      userRole: req.user.role,
+      accessLevel: isUserTeamLeaderOrManager ? 'full' : 'restricted'
     });
   } catch (error) {
-    console.error('Failed to log activity:', error);
-    res.status(500).json({ message: 'Unable to log activity', error: error.message });
+    console.error('❌ [ATTENDANCE] Failed:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to fetch attendance data', 
+      error: error.message 
+    });
   }
 });
 
-// GET - Get today's activities summary
-router.get('/today-summary', async (req, res) => {
+// GET - Get attendance data for date range (UPDATED WITH ROLE-BASED ACCESS)
+router.get('/attendance/range', verifyTokenAndRole(), async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const { startDate, endDate } = req.query;
+    const userId = req.user.id;
+    const isUserTeamLeaderOrManager = isTeamLeaderOrManager(req.user);
     
-    const [summary] = await pool.execute(`
-      SELECT 
-        (SELECT COUNT(*) FROM activities WHERE DATE(date) = DATE(?)) as total_activities,
-        (SELECT COUNT(DISTINCT engineer_id) FROM activities WHERE DATE(date) = DATE(?) AND status = 'present') as active_employees,
-        (SELECT GROUP_CONCAT(DISTINCT engineer_name SEPARATOR ', ') 
-         FROM activities 
-         WHERE DATE(date) = DATE(?) AND status = 'absent') as absentees_list
-    `, [today, today, today]);
+    if (!startDate || !endDate) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'startDate and endDate parameters are required' 
+      });
+    }
+
+    console.log(`📊 [ATTENDANCE-RANGE] Fetching for date range: ${startDate} to ${endDate} by user ${userId} (${req.user.role})`);
+
+    // Get distinct employees with activities (with role-based filtering)
+    let activitiesQuery = `
+      SELECT DISTINCT 
+        DATE(a.date) as report_date,
+        COALESCE(u.username, a.engineer_name) as engineer_name,
+        COALESCE(u.employee_id, a.engineer_id) as engineer_id,
+        a.status,
+        a.project,
+        a.activity_target,
+        TIME_FORMAT(a.start_time, '%H:%i') as start_time,
+        TIME_FORMAT(a.end_time, '%H:%i') as end_time,
+        a.leave_reason,
+        a.problem
+      FROM activities a
+      LEFT JOIN users u ON (a.engineer_id = u.employee_id OR a.engineer_name = u.username)
+      WHERE DATE(a.date) BETWEEN DATE(?) AND DATE(?)
+        AND (a.engineer_name IS NOT NULL AND a.engineer_name != '')
+    `;
     
-    res.json(summary[0]);
+    let activitiesParams = [startDate, endDate];
+    
+    // Get distinct employees with daily target reports (with role-based filtering)
+    let dailyReportsQuery = `
+      SELECT DISTINCT 
+        DATE(d.report_date) as report_date,
+        COALESCE(u.username, d.incharge) as engineer_name,
+        u.employee_id as engineer_id,
+        'present' as status,
+        d.end_customer_name as project,
+        d.daily_target_achieved as activity_target,
+        TIME_FORMAT(d.in_time, '%H:%i') as start_time,
+        TIME_FORMAT(d.out_time, '%H:%i') as end_time,
+        NULL as leave_reason,
+        d.problem_faced as problem
+      FROM daily_target_reports d
+      LEFT JOIN users u ON (d.user_id = u.id OR d.incharge = u.username)
+      WHERE DATE(d.report_date) BETWEEN DATE(?) AND DATE(?)
+        AND (d.incharge IS NOT NULL AND d.incharge != '')
+    `;
+    
+    let dailyReportsParams = [startDate, endDate];
+    
+    // Apply role-based filter
+    if (!isUserTeamLeaderOrManager) {
+      // Get current user's info
+      const [currentUser] = await pool.execute(
+        'SELECT employee_id, username FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (currentUser.length > 0) {
+        const userEmpId = currentUser[0].employee_id;
+        const username = currentUser[0].username;
+        
+        activitiesQuery += ` AND (a.engineer_id = ? OR a.engineer_name = ? OR u.id = ?)`;
+        activitiesParams.push(userEmpId, username, userId);
+        
+        dailyReportsQuery += ` AND (d.user_id = ? OR d.incharge = ?)`;
+        dailyReportsParams.push(userId, username);
+        
+        console.log(`🔒 Regular employee filter applied: empId=${userEmpId}, username=${username}`);
+      }
+    }
+    
+    activitiesQuery += ` ORDER BY DATE(a.date) DESC, engineer_name`;
+    dailyReportsQuery += ` ORDER BY DATE(d.report_date) DESC, engineer_name`;
+
+    const [activitiesEmployees] = await pool.execute(activitiesQuery, activitiesParams);
+    const [dailyReportEmployees] = await pool.execute(dailyReportsQuery, dailyReportsParams);
+
+    // Combine both datasets
+    const allEmployees = [...activitiesEmployees, ...dailyReportEmployees];
+    
+    console.log(`📊 Found ${activitiesEmployees.length} activity records and ${dailyReportEmployees.length} daily report records`);
+
+    // Organize data by date
+    const attendanceData = {};
+    const datesWithData = new Set();
+
+    // First, process activities table data
+    activitiesEmployees.forEach(record => {
+      const date = record.report_date;
+      datesWithData.add(date);
+      
+      if (!attendanceData[date]) {
+        attendanceData[date] = {
+          summary: {
+            totalActivities: 0,
+            totalEmployees: new Set(),
+            presentCount: 0,
+            absentCount: 0,
+            leaveCount: 0
+          },
+          activities: []
+        };
+      }
+      
+      const employeeKey = record.engineer_id || record.engineer_name;
+      attendanceData[date].summary.totalEmployees.add(employeeKey);
+      attendanceData[date].summary.totalActivities++;
+      
+      if (record.status === 'present') {
+        attendanceData[date].summary.presentCount++;
+      } else if (record.status === 'absent') {
+        attendanceData[date].summary.absentCount++;
+      } else if (record.status === 'leave') {
+        attendanceData[date].summary.leaveCount++;
+      }
+      
+      attendanceData[date].activities.push({
+        engineerName: record.engineer_name,
+        engineerId: record.engineer_id,
+        project: record.project,
+        status: record.status,
+        activityTarget: record.activity_target,
+        startTime: record.start_time,
+        endTime: record.end_time,
+        leaveReason: record.leave_reason,
+        problem: record.problem,
+        source: 'activity'
+      });
+    });
+
+    // Then, process daily target reports data
+    dailyReportEmployees.forEach(record => {
+      const date = record.report_date;
+      datesWithData.add(date);
+      
+      if (!attendanceData[date]) {
+        attendanceData[date] = {
+          summary: {
+            totalActivities: 0,
+            totalEmployees: new Set(),
+            presentCount: 0,
+            absentCount: 0,
+            leaveCount: 0
+          },
+          activities: []
+        };
+      }
+      
+      const employeeKey = record.engineer_id || record.engineer_name;
+      attendanceData[date].summary.totalEmployees.add(employeeKey);
+      attendanceData[date].summary.totalActivities++;
+      attendanceData[date].summary.presentCount++; // Daily report = Present
+      
+      attendanceData[date].activities.push({
+        engineerName: record.engineer_name,
+        engineerId: record.engineer_id,
+        project: record.project,
+        status: 'present', // Always present for daily report
+        activityTarget: record.activity_target,
+        startTime: record.start_time,
+        endTime: record.end_time,
+        leaveReason: record.leave_reason,
+        problem: record.problem,
+        source: 'daily_report'
+      });
+    });
+
+    // Convert Set to Array for datesWithData
+    const datesWithDataArray = Array.from(datesWithData).sort().reverse();
+
+    // Convert totalEmployees from Set to count
+    Object.keys(attendanceData).forEach(date => {
+      attendanceData[date].summary.totalEmployees = attendanceData[date].summary.totalEmployees.size;
+    });
+
+    // Calculate totals for the entire range
+    const totalSummary = {
+      totalDays: datesWithDataArray.length,
+      totalActivities: 0,
+      totalEmployees: new Set(),
+      presentCount: 0,
+      absentCount: 0,
+      leaveCount: 0
+    };
+
+    Object.values(attendanceData).forEach(dayData => {
+      totalSummary.totalActivities += dayData.summary.totalActivities;
+      totalSummary.presentCount += dayData.summary.presentCount;
+      totalSummary.absentCount += dayData.summary.absentCount;
+      totalSummary.leaveCount += dayData.summary.leaveCount;
+      
+      // Add unique employees across all days
+      dayData.activities.forEach(activity => {
+        const employeeKey = activity.engineerId || activity.engineerName;
+        totalSummary.totalEmployees.add(employeeKey);
+      });
+    });
+
+    totalSummary.totalEmployees = totalSummary.totalEmployees.size;
+
+    res.json({
+      success: true,
+      dateRange: {
+        startDate,
+        endDate
+      },
+      summary: totalSummary,
+      dailyData: attendanceData,
+      datesWithData: datesWithDataArray,
+      counts: {
+        activityRecords: activitiesEmployees.length,
+        dailyReportRecords: dailyReportEmployees.length,
+        totalRecords: allEmployees.length
+      },
+      userRole: req.user.role,
+      accessLevel: isUserTeamLeaderOrManager ? 'full' : 'restricted'
+    });
   } catch (error) {
-    console.error('Failed to fetch today summary:', error);
-    res.status(500).json({ message: 'Unable to fetch summary', error: error.message });
+    console.error('❌ [ATTENDANCE-RANGE] Failed:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to fetch date range attendance data', 
+      error: error.message 
+    });
   }
 });
 
@@ -281,7 +1019,7 @@ const insertSql = `
   )
 `
 
-// Original GET endpoint
+// Original GET endpoint (keep as is)
 router.get('/', async (_req, res) => {
   try {
     const [rows] = await pool.query(
@@ -301,7 +1039,7 @@ router.get('/', async (_req, res) => {
   }
 })
 
-// Original POST endpoint
+// Original POST endpoint (keep as is)
 router.post('/', async (req, res) => {
   try {
     for (const field of requiredFields) {

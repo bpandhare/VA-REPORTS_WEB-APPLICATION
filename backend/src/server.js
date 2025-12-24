@@ -60,6 +60,33 @@ async function migrateDatabase() {
       }
     }
 
+    // Create activities table (NEW: Fixes the "Unable to fetch activities" error)
+    try {
+      await pool.execute(`
+        CREATE TABLE IF NOT EXISTS activities (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          date DATE NOT NULL,
+          time TIME NOT NULL,
+          engineer_name VARCHAR(120) NOT NULL,
+          engineer_id VARCHAR(10),
+          project VARCHAR(120),
+          location VARCHAR(120),
+          activity_target TEXT,
+          problem TEXT,
+          status ENUM('present', 'absent', 'leave') DEFAULT 'present',
+          leave_reason TEXT,
+          start_time TIME,
+          end_time TIME,
+          activity_type VARCHAR(50),
+          logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      console.log('✓ Created activities table')
+    } catch (error) {
+      console.error('Error creating activities table:', error.message)
+    }
+
     // Create hourly_reports table if it doesn't exist
     try {
       await pool.execute(`

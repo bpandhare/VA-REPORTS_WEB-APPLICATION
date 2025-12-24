@@ -1,30 +1,47 @@
-#root {
-  width: 100%;
-  min-height: 100vh;
-  background: #e6edf7;
-}
-
-.vh-app-shell {
-  min-height: 100vh;
+/* App.css */
+.app {
   display: flex;
-  background-image: radial-gradient(circle at top, rgba(42, 209, 255, 0.15), transparent 45%);
+  min-height: 100vh;
 }
 
-.vh-content {
+.main {
   flex: 1;
-  padding: 3rem;
+  padding: 20px;
+  background: #f5f5f5;
+}
+
+.user-topbar {
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  background: linear-gradient(135deg, #f5f8ff 0%, #eaeffc 100%);
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 20px;
+  background: white;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  border: 1px solid #ddd;
 }
 
-@media (max-width: 960px) {
-  .vh-app-shell {
-    flex-direction: column;
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  font-size: 14px;
 }
 
-  .vh-content {
-    padding: 2rem 1.5rem;
-  }
+.user-info span:first-child {
+  font-weight: bold;
+}
+
+.logout-btn {
+  padding: 8px 16px;
+  background: #092544;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.logout-btn:hover {
+  background: #1a365d;
 }

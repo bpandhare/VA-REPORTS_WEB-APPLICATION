@@ -9,30 +9,53 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [token, setToken] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   // Function to fetch user profile using token
   const fetchUserProfile = async (token) => {
     try {
+      console.log('🔍 Fetching user profile with token:', token ? 'Token exists' : 'No token')
+      
       const response = await axios.get(`${API_URL}/auth/profile`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
       })
       
-      if (response.data) {
+      console.log('📋 Profile API response:', response.data)
+      
+      // Handle both response formats
+      const userData = response.data.user || response.data
+      
+      if (userData) {
         return {
-          id: response.data.id,
-          name: response.data.name || response.data.username,
-          username: response.data.username,
-          role: response.data.role,
-          employeeId: response.data.employeeId,
-          phone: response.data.phone,
-          dob: response.data.dob
+          id: userData.id,
+          name: userData.name || userData.username || userData.fullName,
+          username: userData.username,
+          role: userData.role,
+          employeeId: userData.employeeId,
+          phone: userData.phone,
+          dob: userData.dob,
+          fullName: userData.fullName || userData.name || userData.username
         }
       }
+      
+      console.warn('⚠️ No user data in response:', response.data)
       return null
+      
     } catch (error) {
       console.error('❌ Failed to fetch user profile:', error)
+      console.error('❌ Error response:', error.response?.data)
+      console.error('❌ Error status:', error.response?.status)
+      
+      if (error.response?.status === 401) {
+        console.warn('⚠️ Token expired or invalid')
+        // Clear invalid token
+        localStorage.removeItem('vh-auth')
+        setToken(null)
+        setUser(null)
+      }
+      
       return null
     }
   }
@@ -40,8 +63,12 @@ export function AuthProvider({ children }) {
   // Load auth from localStorage and fetch fresh user data
   useEffect(() => {
     const loadAuth = async () => {
+      setLoading(true)
+      setError(null)
+      
       const saved = localStorage.getItem('vh-auth')
       if (!saved) {
+        console.log('📂 No auth data in localStorage')
         setLoading(false)
         return
       }
@@ -49,7 +76,8 @@ export function AuthProvider({ children }) {
       try {
         const parsed = JSON.parse(saved)
         console.log('📂 Loading auth from localStorage:', { 
-          token: parsed.token ? 'Token exists' : 'No token',
+          hasToken: !!parsed.token,
+          hasUser: !!parsed.user,
           user: parsed.user 
         })
 
@@ -61,6 +89,7 @@ export function AuthProvider({ children }) {
           setToken(tokenVal)
           
           // Try to fetch fresh user profile from server
+          console.log('🔄 Fetching fresh user profile...')
           const freshUser = await fetchUserProfile(tokenVal)
           
           if (freshUser) {
@@ -74,25 +103,32 @@ export function AuthProvider({ children }) {
             console.log('✅ Auth loaded with fresh profile:', freshUser)
           } else if (savedUser?.username) {
             // Fallback to saved user data
+            console.log('🔄 Using cached user data')
             setUser(savedUser)
             console.log('✅ Auth loaded from localStorage (cached):', savedUser)
           } else {
             console.warn('❌ Invalid auth data in localStorage')
             localStorage.removeItem('vh-auth')
+            localStorage.removeItem('lastEmployeeId')
             setToken(null)
             setUser(null)
+            setError('Invalid authentication data')
           }
         } else {
           console.warn('❌ No token found in localStorage')
           localStorage.removeItem('vh-auth')
+          localStorage.removeItem('lastEmployeeId')
           setToken(null)
           setUser(null)
+          setError('No authentication token found')
         }
       } catch (error) {
         console.error('❌ Error parsing localStorage auth:', error)
         localStorage.removeItem('vh-auth')
+        localStorage.removeItem('lastEmployeeId')
         setToken(null)
         setUser(null)
+        setError('Failed to load authentication data')
       } finally {
         setLoading(false)
       }
@@ -107,27 +143,31 @@ export function AuthProvider({ children }) {
     
     if (!auth || !auth.token) {
       console.warn('❌ Auth object or token missing')
+      setError('Login failed: No token received')
       return false
     }
 
     try {
       // Fetch user profile from server with the new token
+      console.log('🔄 Fetching user profile...')
       const userProfile = await fetchUserProfile(auth.token)
       
       if (!userProfile) {
         console.error('❌ Failed to fetch user profile after login')
+        setError('Login failed: Could not fetch user profile')
         return false
       }
 
-    const userVal = {
-  id: userProfile.id,
-  name: userProfile.name || userProfile.username,  // Use username as fallback
-  username: userProfile.username,
-  role: userProfile.role,
-  employeeId: userProfile.employeeId,
-  phone: userProfile.phone,
-  dob: userProfile.dob
-}
+      const userVal = {
+        id: userProfile.id,
+        name: userProfile.name || userProfile.username,
+        username: userProfile.username,
+        role: userProfile.role,
+        employeeId: userProfile.employeeId,
+        phone: userProfile.phone,
+        dob: userProfile.dob,
+        fullName: userProfile.fullName || userProfile.name || userProfile.username
+      }
 
       console.log('✅ User profile fetched:', userVal)
 
@@ -147,10 +187,14 @@ export function AuthProvider({ children }) {
       // Update state
       setToken(auth.token)
       setUser(userVal)
+      setError(null)
       
+      console.log('✅ Login successful!')
       return true
+      
     } catch (error) {
       console.error('❌ Error during login process:', error)
+      setError('Login failed: ' + (error.message || 'Unknown error'))
       return false
     }
   }
@@ -161,6 +205,7 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('lastEmployeeId')
     setToken(null)
     setUser(null)
+    setError(null)
   }
 
   // Function to update user data (e.g., after profile update)
@@ -173,9 +218,37 @@ export function AuthProvider({ children }) {
     // Update localStorage
     const saved = localStorage.getItem('vh-auth')
     if (saved) {
-      const parsed = JSON.parse(saved)
-      parsed.user = updatedUser
-      localStorage.setItem('vh-auth', JSON.stringify(parsed))
+      try {
+        const parsed = JSON.parse(saved)
+        parsed.user = updatedUser
+        localStorage.setItem('vh-auth', JSON.stringify(parsed))
+      } catch (error) {
+        console.error('❌ Error updating localStorage:', error)
+      }
+    }
+  }
+
+  // Refresh user profile from server
+  const refreshProfile = async () => {
+    if (!token) {
+      console.warn('❌ Cannot refresh profile: No token')
+      return false
+    }
+
+    try {
+      console.log('🔄 Refreshing user profile...')
+      const freshUser = await fetchUserProfile(token)
+      
+      if (freshUser) {
+        updateUser(freshUser)
+        console.log('✅ Profile refreshed successfully')
+        return true
+      }
+      
+      return false
+    } catch (error) {
+      console.error('❌ Failed to refresh profile:', error)
+      return false
     }
   }
 
@@ -187,18 +260,18 @@ export function AuthProvider({ children }) {
 
   // Check if user is manager
   const isManager = () => {
-    return hasRole('manager')
+    return hasRole('manager') || hasRole('team leader') || hasRole('senior')
   }
 
   // Check if user is engineer
   const isEngineer = () => {
-    return hasRole('engineer')
+    return hasRole('engineer') || hasRole('assistant')
   }
 
   // Get user display name
   const getDisplayName = () => {
     if (!user) return ''
-    return user.name || user.username || ''
+    return user.name || user.username || user.employeeId || ''
   }
 
   // Get user role display
@@ -216,14 +289,17 @@ export function AuthProvider({ children }) {
     user,
     token,
     loading,
+    error,
     login,
     logout,
     updateUser,
+    refreshProfile,
     hasRole,
     isManager,
     isEngineer,
     getDisplayName,
-    getRoleDisplay
+    getRoleDisplay,
+    setError // Allow components to clear errors
   }
 
   return (
@@ -243,7 +319,7 @@ export function useAuth() {
 
 // Helper hook for authenticated API calls
 export function useAuthAxios() {
-  const { token } = useAuth()
+  const { token, logout } = useAuth()
   
   const authAxios = axios.create({
     baseURL: API_URL,
@@ -271,13 +347,54 @@ export function useAuthAxios() {
     (error) => {
       if (error.response?.status === 401) {
         console.warn('⚠️ Token expired or invalid')
-        // Optionally: trigger logout
-        // const { logout } = useAuth()
-        // logout()
+        // Trigger logout
+        logout()
+        // Redirect to login page
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login'
+        }
       }
       return Promise.reject(error)
     }
   )
 
   return authAxios
+}
+
+// Helper function to make authenticated API calls
+export function useApi() {
+  const { token } = useAuth()
+  
+  const apiCall = async (method, url, data = null) => {
+    try {
+      const config = {
+        method,
+        url: `${API_URL}${url}`,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+      
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+      }
+      
+      if (data) {
+        config.data = data
+      }
+      
+      const response = await axios(config)
+      return response.data
+    } catch (error) {
+      console.error(`❌ API ${method} ${url} failed:`, error)
+      throw error
+    }
+  }
+  
+  return {
+    get: (url) => apiCall('GET', url),
+    post: (url, data) => apiCall('POST', url, data),
+    put: (url, data) => apiCall('PUT', url, data),
+    delete: (url) => apiCall('DELETE', url)
+  }
 }

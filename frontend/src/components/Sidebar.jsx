@@ -1,89 +1,151 @@
 import './Sidebar.css'
 import { useAuth } from './AuthContext'
-// sidebar doesn't manage MoM state; CreateMoM is a separate page
-
-// Import a logo image - make sure to add your logo file to the project
-// Option 1: If you have a logo image in your assets folder
-import logo from '../assets/logo.jpeg' // Adjust the path based on your project structure
-// Option 2: Or use an online logo
-// const logoUrl = 'https://example.com/your-logo.png'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import logo from '../assets/logo.jpeg'
 
 function Sidebar({ currentPage, onPageChange }) {
   const { user } = useAuth()
-  // CreateMoM is a separate page; Sidebar only navigates to it
+  const navigate = useNavigate()
+  const location = useLocation()
+  const activePage = location.pathname.substring(1) || 'hourly'
+  
+  const [currentTime, setCurrentTime] = useState(new Date())
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const formatTime = (date) => {
+    return date.toLocaleString('en-IN', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+
+  const handleNavigation = (page) => {
+    onPageChange(page)
+    navigate(`/${page}`)
+  }
+
+  // Get day name and formatted date
+  const getDayAndDate = () => {
+    const date = new Date()
+    const dayName = date.toLocaleDateString('en-IN', { weekday: 'long' })
+    const formattedDate = date.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    })
+    return { dayName, formattedDate }
+  }
+
+  const { dayName, formattedDate } = getDayAndDate()
 
   return (
-    <aside className="vh-sidebar">
-      <div className="vh-brand">
-        <div className="vh-brand-header">
-          {/* Add your logo here */}
-          <img 
-            src={logo} 
-            alt="Vickhardth Logo" 
-            className="vh-logo"
-            // If using online URL: src={logoUrl}
-          />
-          <span className="vh-pill">VICKHARDTH</span>
-        </div>
-        <p className="vh-tagline">Daily reporting hub for site engineers.</p>
+    <div className="sidebar">
+      {/* Date Header */}
+      <div className="date-header">
+        <div className="date-day">{dayName}</div>
+        <div className="date-full">{formattedDate}, {currentTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}</div>
       </div>
 
-      <nav className="vh-nav">
-        <h2>Reports</h2>
-        <ul className="vh-nav-links">
-          <li>
+      {/* Company Branding */}
+      <div className="company-brand">
+        <div className="company-logo">
+          <img src={logo} alt="Vickhardth Logo" className="logo-img" />
+          <div className="company-name">VICKHARDTH</div>
+        </div>
+        <div className="company-tagline">Daily reporting hub for site engineers</div>
+      </div>
+
+      {/* Main Navigation */}
+      <nav className="main-nav">
+        <div className="nav-section">
+          <div className="section-title">REPORTS</div>
+          <div className="nav-buttons">
             <button
-              className={currentPage === 'hourly' ? 'active' : ''}
-              onClick={() => onPageChange('hourly')}
-              type="button"
+              className={`nav-btn ${activePage === 'hourly' ? 'active' : ''}`}
+              onClick={() => handleNavigation('hourly')}
             >
-              Hourly Report
+              <span className="btn-icon">⏰</span>
+              <span className="btn-text">Hourly Report</span>
             </button>
-          </li>
-          <li>
             <button
-              className={currentPage === 'daily' ? 'active' : ''}
-              onClick={() => onPageChange('daily')}
-              type="button"
+              className={`nav-btn ${activePage === 'daily' ? 'active' : ''}`}
+              onClick={() => handleNavigation('daily')}
             >
-              Daily Target Report
+              <span className="btn-icon">📋</span>
+              <span className="btn-text">Daily Target Report</span>
             </button>
-          </li>
-        </ul>
+          </div>
+        </div>
+
+        {user && (
+          <>
+            <div className="nav-section">
+              <div className="section-title">MONITORING</div>
+              <div className="nav-buttons">
+                <button
+                  className={`nav-btn ${activePage === 'activity' ? 'active' : ''}`}
+                  onClick={() => handleNavigation('activity')}
+                >
+                  <span className="btn-icon">📊</span>
+                  <span className="btn-text">
+                    View Activities
+                    <span className="btn-tag">
+                      {user.role === 'Manager' || user.role === 'Team Leader' ? '(All)' : '(Mine)'}
+                    </span>
+                  </span>
+                </button>
+                
+                {(user.role === 'Manager' || user.role === 'Team Leader' || user.role === 'Senior Assistant') && (
+                  <button
+                    className={`nav-btn ${activePage === 'attendance-history' ? 'active' : ''}`}
+                    onClick={() => handleNavigation('attendance-history')}
+                  >
+                    <span className="btn-icon">👥</span>
+                    <span className="btn-text">
+                      Attendance History
+                      <span className="btn-tag manager">(Manager)</span>
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="nav-section">
+              <div className="section-title">DOCUMENTS</div>
+              <div className="nav-buttons">
+                <button 
+                  className={`nav-btn ${activePage === 'create-mom' ? 'active' : ''}`} 
+                  onClick={() => handleNavigation('create-mom')}
+                >
+                  <span className="btn-icon">📄</span>
+                  <span className="btn-text">Create MoM</span>
+                  <span className="btn-download">(Download)</span>
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </nav>
 
-      {/* Activity Display for all roles */}
-      {user && (
-        <>
-          <nav className="vh-nav">
-            <h2>Monitoring</h2>
-            <ul className="vh-nav-links">
-              <li>
-                <button
-                  className={currentPage === 'activity' ? 'active' : ''}
-                  onClick={() => onPageChange('activity')}
-                  type="button"
-                >
-                  📊 View Activities
-                  {(user.role === 'Manager' || user.role === 'Team Leader') && <span style={{ fontSize: '0.75rem', marginLeft: '0.25rem' }}> (All)</span>}
-                  {(user.role === 'Senior Engineer' || user.role === 'Junior Engineer') && <span style={{ fontSize: '0.75rem', marginLeft: '0.25rem' }}> (Mine)</span>}
-                </button>
-              </li>
-            </ul>
-          </nav>
-
-          {/* Create MoM panel */}
-          <section className="vh-nav" style={{ marginTop: '1rem' }}>
-            <h2>Create MoM</h2>
-            <ul className="vh-nav-links">
-              <li>
-                <button className={currentPage === 'create-mom' ? 'active' : ''} onClick={() => onPageChange('create-mom')} type="button">Create MoM (Download)</button>
-              </li>
-            </ul>
-          </section>
-        </>
-      )}
-    </aside>
+      {/* Footer */}
+      <div className="sidebar-footer">
+        <div className="footer-text">
+          Site Activity Monitoring System
+        </div>
+        <div className="footer-version">
+          v1.0 • Professional Edition
+        </div>
+      </div>
+    </div>
   )
 }
 

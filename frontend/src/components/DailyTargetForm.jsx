@@ -690,38 +690,66 @@ function DailyTargetForm() {
       return
     }
 
-    // For leave location, no fields are required (remark is optional)
-    if (formData.locationType === 'leave') {
-      console.log('Leave location selected - no validation required')
-    } else {
-      // For office/site locations, require all work-related fields
-      const requiredFields = [
-        'reportDate', 'inTime', 'outTime', 'customerName', 'customerPerson', 'customerContact',
-        'endCustomerName', 'endCustomerPerson', 'endCustomerContact', 'projectNo', 'locationType',
-        'dailyTargetPlanned', 'dailyTargetAchieved', 'incharge'
-      ]
-
-      if (formData.locationType === 'site') {
-        requiredFields.push('siteStartDate')
-      }
-
-      const missingFields = requiredFields.filter(field => !formData[field])
-
-      if (missingFields.length > 0) {
-        setAlert({ type: 'error', message: `Please fill in all required fields: ${missingFields.join(', ')}` })
-        setSubmitting(false)
-        return
-      }
-    }
-
     try {
       const formDataToSend = new FormData()
 
-      Object.keys(formData).forEach((key) => {
-        if (key === 'momReport' && formData.momReport) {
-          formDataToSend.append('momReport', formData.momReport)
+      // Add attendanceStatus field - KEY FIX: Set status to 'leave' for leave location
+      const attendanceStatus = formData.locationType === 'leave' ? 'leave' : 'present'
+      
+      // Prepare data with attendance status and proper leave handling
+      const dataToSubmit = {
+        ...formData,
+        attendanceStatus: attendanceStatus, // This tells the backend this is a leave
+        problemFaced: formData.locationType === 'leave' 
+          ? (formData.problemFaced || 'On Leave') 
+          : formData.problemFaced
+      }
+
+      // For leave, set proper leave-related fields and clear work fields
+      if (formData.locationType === 'leave') {
+        // Clear time fields for leave
+        dataToSubmit.inTime = ''
+        dataToSubmit.outTime = ''
+        
+        // Set leave-specific defaults
+        dataToSubmit.siteLocation = 'Leave'
+        dataToSubmit.problemFaced = dataToSubmit.problemFaced || 'On Leave'
+        dataToSubmit.remark = dataToSubmit.remark || 'Leave application'
+        
+        // Clear work-related fields that should be empty for leave
+        dataToSubmit.customerName = ''
+        dataToSubmit.customerPerson = ''
+        dataToSubmit.customerContact = ''
+        dataToSubmit.endCustomerName = ''
+        dataToSubmit.endCustomerPerson = ''
+        dataToSubmit.endCustomerContact = ''
+        dataToSubmit.projectNo = ''
+        dataToSubmit.dailyTargetPlanned = ''
+        dataToSubmit.dailyTargetAchieved = ''
+        dataToSubmit.additionalActivity = ''
+        dataToSubmit.whoAddedActivity = ''
+        dataToSubmit.dailyPendingTarget = ''
+        dataToSubmit.reasonPendingTarget = ''
+        dataToSubmit.problemResolved = ''
+        dataToSubmit.onlineSupportRequired = ''
+        dataToSubmit.supportEngineerName = ''
+        dataToSubmit.siteStartDate = ''
+        dataToSubmit.siteEndDate = ''
+        dataToSubmit.incharge = ''
+      }
+
+      // Debug: Log what we're sending
+      console.log('🔍 Sending data with attendanceStatus:', attendanceStatus)
+      console.log('🔍 Location type:', formData.locationType)
+      console.log('🔍 Leave type:', formData.leaveType)
+      console.log('🔍 Data being sent:', dataToSubmit)
+
+      // Append all fields to FormData
+      Object.keys(dataToSubmit).forEach((key) => {
+        if (key === 'momReport' && dataToSubmit.momReport) {
+          formDataToSend.append('momReport', dataToSubmit.momReport)
         } else if (key !== 'momReport') {
-          formDataToSend.append(key, formData[key] || '')
+          formDataToSend.append(key, dataToSubmit[key] || '')
         }
       })
 
@@ -743,18 +771,20 @@ function DailyTargetForm() {
 
       // Store submitted data
       const submittedFormData = {
-        ...formData,
+        ...dataToSubmit,
         id: isEditMode ? submittedData.id : responseData.id,
         submittedAt: isEditMode ? submittedData.submittedAt : new Date().toISOString(),
-        momReportName: formData.momReport ? formData.momReport.name : (isEditMode ? submittedData.momReportName : null),
-        locationName: locationName || formData.siteLocation || '',
+        momReportName: dataToSubmit.momReport ? dataToSubmit.momReport.name : (isEditMode ? submittedData.momReportName : null),
+        locationName: locationName || dataToSubmit.siteLocation || '',
       }
       setSubmittedData(submittedFormData)
       setIsEditMode(false)
       
       setAlert({ 
         type: 'success', 
-        message: isEditMode ? 'Report updated successfully!' : 'Daily target report saved successfully! You can now view and edit it below.' 
+        message: isEditMode ? 'Report updated successfully!' : 
+          formData.locationType === 'leave' ? 'Leave application submitted successfully!' : 
+          'Daily target report saved successfully! You can now view and edit it below.' 
       })
       
       // Reset form
@@ -768,16 +798,16 @@ function DailyTargetForm() {
       // Reset file input
       setTimeout(() => {
         const fileInput = document.querySelector('input[name="momReport"]')
-        if (fileInput) {
-          fileInput.value = ''
-        }
-      }, 100)
-    } catch (error) {
-      setAlert({ type: 'error', message: error.message })
-    } finally {
-      setSubmitting(false)
+          if (fileInput) {
+            fileInput.value = ''
+          }
+        }, 100)
+      } catch (error) {
+        setAlert({ type: 'error', message: error.message })
+      } finally {
+        setSubmitting(false)
+      }
     }
-  }
 
   const canUploadPDF = formData.locationType === 'site' && locationAccess
 

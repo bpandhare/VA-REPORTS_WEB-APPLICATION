@@ -59,6 +59,72 @@ const upload = multer({
   },
 })
 
+// ==================== EMPLOYEE MANAGEMENT ====================
+
+// Get all employees for dropdown (from users table)
+router.get('/employees', verifyToken, async (req, res) => {
+  try {
+    console.log('👥 [GET EMPLOYEES] Fetching employee list');
+    
+    const [employees] = await pool.execute(`
+      SELECT 
+        id,
+        username as name,
+        employee_id as employeeId,
+        role,
+        phone
+      FROM users 
+      WHERE username IS NOT NULL 
+        AND username != ''
+        AND role NOT IN ('admin', 'superadmin') -- Exclude admin roles if needed
+      ORDER BY username
+    `);
+    
+    console.log(`✅ Found ${employees.length} employees`);
+    
+    res.json({
+      success: true,
+      employees
+    });
+  } catch (error) {
+    console.error('❌ [GET EMPLOYEES] Failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Unable to fetch employees'
+    });
+  }
+});
+
+// Get current user's info
+router.get('/current-user', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const [users] = await pool.execute(
+      'SELECT id, username, employee_id as employeeId, role, phone FROM users WHERE id = ?',
+      [userId]
+    );
+    
+    if (users.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      user: users[0]
+    });
+  } catch (error) {
+    console.error('❌ [GET CURRENT USER] Failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Unable to fetch user info'
+    });
+  }
+});
+
 // ==================== LEAVE TYPES CONFIGURATION ====================
 
 // Define leave types with configurations
@@ -453,7 +519,7 @@ router.get('/', verifyToken, async (req, res) => {
   try {
     const userId = req.user.id
     
-    const [rows] = await pool.execute(
+       const [rows] = await pool.execute(
       `SELECT id, report_date, in_time, out_time, customer_name, customer_person, 
        customer_contact, end_customer_name, end_customer_person, end_customer_contact,
        project_no, location_type, leave_type, site_location, location_lat, location_lng,
@@ -461,12 +527,11 @@ router.get('/', verifyToken, async (req, res) => {
        additional_activity, who_added_activity, daily_pending_target,
        reason_pending_target, problem_faced, problem_resolved,
        online_support_required, support_engineer_name,
-       site_start_date, site_end_date, incharge, remark,
+       site_start_date, site_end_date, incharge, remark, attendance_status,  // ADD THIS
        created_at, updated_at
        FROM daily_target_reports 
-       WHERE user_id = ?
-       ORDER BY report_date DESC, created_at DESC`,
-      [userId]
+       WHERE id = ? AND user_id = ?`,
+      [id, userId]
     )
     
     res.json(rows)
@@ -609,6 +674,14 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       remark,
     } = req.body
 
+    console.log('📝 [DAILY-TARGET] Creating report for user:', userId);
+    console.log('📝 [DAILY-TARGET] Request body:', {
+      reportDate,
+      locationType,
+      leaveType,
+      incharge
+    });
+
     // Validate required fields based on location type
     console.log('Backend validation - locationType:', locationType, 'leaveType:', leaveType)
     
@@ -711,6 +784,21 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       }
     }
 
+    // Get user info for incharge field
+    let inchargeUsername = incharge;
+    if (!inchargeUsername) {
+      // If incharge not provided, get current user's username
+      const [userInfo] = await pool.execute(
+        'SELECT username FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (userInfo.length > 0) {
+        inchargeUsername = userInfo[0].username;
+        console.log('Using current user as incharge:', inchargeUsername);
+      }
+    }
+
     // Set default values based on location type
     let finalInTime = inTime
     let finalOutTime = outTime
@@ -723,7 +811,7 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
     let finalProjectNo = projectNo
     let finalDailyTargetPlanned = dailyTargetPlanned
     let finalDailyTargetAchieved = dailyTargetAchieved
-    let finalIncharge = incharge
+    let finalIncharge = inchargeUsername
     let finalSiteStartDate = siteStartDate
 
     if (locationType === 'leave') {
@@ -739,7 +827,6 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       finalProjectNo = finalProjectNo || 'N/A'
       finalDailyTargetPlanned = finalDailyTargetPlanned || 'N/A'
       finalDailyTargetAchieved = finalDailyTargetAchieved || 'N/A'
-      finalIncharge = finalIncharge || 'N/A'
       finalSiteStartDate = finalSiteStartDate || new Date().toISOString().slice(0, 10)
     } else {
       finalSiteStartDate = finalSiteStartDate || new Date().toISOString().slice(0, 10)
@@ -756,6 +843,7 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
     const momReportPath = req.file ? req.file.path : null
 
     // Insert into database
+        // Insert into database
     const [result] = await pool.execute(
       `INSERT INTO daily_target_reports
        (report_date, in_time, out_time, customer_name, customer_person, customer_contact,
@@ -765,8 +853,8 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
         additional_activity, who_added_activity, daily_pending_target,
         reason_pending_target, problem_faced, problem_resolved,
         online_support_required, support_engineer_name,
-        site_start_date, site_end_date, incharge, remark, user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        site_start_date, site_end_date, incharge, remark, user_id, attendance_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         finalReportDate,
         finalInTime,
@@ -799,21 +887,66 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
         finalIncharge,
         remark || null,
         userId,
+        locationType === 'leave' ? 'leave' : 'present' // NEW: attendance_status
       ]
-    )
+    );
+    console.log('✅ Daily target report inserted with ID:', result.insertId);
+
+    // Also create an activity record for attendance tracking
+    try {
+      // Get user info for activity record
+      const [userInfo] = await pool.execute(
+        'SELECT username, employee_id FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (userInfo.length > 0) {
+        await pool.execute(
+          `INSERT INTO activities (
+            date, time, engineer_name, engineer_id, project, location,
+            activity_target, problem, status, start_time, end_time,
+            activity_type, logged_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [
+            finalReportDate,
+            finalInTime,
+            userInfo[0].username,
+            userInfo[0].employee_id,
+            locationType === 'leave' ? 'N/A' : (finalEndCustomerName || finalCustomerName),
+            siteLocation || locationType,
+            locationType === 'leave' ? 'Leave' : finalDailyTargetAchieved,
+            problemFaced || '',
+            locationType === 'leave' ? 'leave' : 'present',
+            finalInTime,
+            finalOutTime,
+            locationType === 'leave' ? 'leave' : 'daily_report'
+          ]
+        );
+        console.log('✅ Activity record created for attendance tracking');
+      }
+    } catch (activityError) {
+      console.warn('⚠️ Could not create activity record:', activityError.message);
+      // Don't fail the whole request if activity creation fails
+    }
 
     res.status(201).json({
+      success: true,
       message: 'Daily target report saved successfully',
       id: result.insertId,
-      leaveType: locationType === 'leave' ? leaveType : null
-    })
+      leaveType: locationType === 'leave' ? leaveType : null,
+      incharge: finalIncharge
+    });
   } catch (error) {
     // Delete uploaded file if there was an error
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path)
     }
-    console.error('Failed to save daily target report', error)
-    res.status(500).json({ message: 'Unable to save daily target report' })
+    console.error('❌ Failed to save daily target report:', error)
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to save daily target report',
+      error: error.message 
+    })
   }
 })
 
@@ -863,6 +996,20 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
     // Set default values based on location type
     const finalReportDate = safeReportDate || new Date().toISOString().slice(0, 10)
 
+    // Get user info for incharge field
+    let inchargeUsername = incharge;
+    if (!inchargeUsername) {
+      // If incharge not provided, get current user's username
+      const [userInfo] = await pool.execute(
+        'SELECT username FROM users WHERE id = ?',
+        [userId]
+      );
+      
+      if (userInfo.length > 0) {
+        inchargeUsername = userInfo[0].username;
+      }
+    }
+
     let finalInTime = inTime
     let finalOutTime = outTime
     let finalCustomerName = customerName
@@ -874,7 +1021,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
     let finalProjectNo = projectNo
     let finalDailyTargetPlanned = dailyTargetPlanned
     let finalDailyTargetAchieved = dailyTargetAchieved
-    let finalIncharge = incharge
+    let finalIncharge = inchargeUsername
     let finalSiteStartDate = siteStartDate
 
     // Check if the report belongs to the user
@@ -950,7 +1097,6 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
       finalProjectNo = finalProjectNo || 'N/A'
       finalDailyTargetPlanned = finalDailyTargetPlanned || 'N/A'
       finalDailyTargetAchieved = finalDailyTargetAchieved || 'N/A'
-      finalIncharge = finalIncharge || 'N/A'
       finalSiteStartDate = finalSiteStartDate || new Date().toISOString().slice(0, 10)
     } else {
       // For office/site locations, validate all required fields
@@ -967,7 +1113,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
         !locationType ||
         !dailyTargetPlanned ||
         !dailyTargetAchieved ||
-        !incharge
+        !finalIncharge
       ) {
         return res.status(400).json({
           message: 'All required fields must be filled',
@@ -987,6 +1133,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
     let momReportPath = req.file ? req.file.path : existing[0].mom_report_path
 
     // Update database
+       // Update database
     const [result] = await pool.execute(
       `UPDATE daily_target_reports SET
        report_date = ?, in_time = ?, out_time = ?, customer_name = ?, customer_person = ?, customer_contact = ?,
@@ -996,7 +1143,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
        additional_activity = ?, who_added_activity = ?, daily_pending_target = ?,
        reason_pending_target = ?, problem_faced = ?, problem_resolved = ?,
        online_support_required = ?, support_engineer_name = ?,
-       site_start_date = ?, site_end_date = ?, incharge = ?, remark = ?
+       site_start_date = ?, site_end_date = ?, incharge = ?, remark = ?, attendance_status = ?
        WHERE id = ? AND user_id = ?`,
       [
         finalReportDate,
@@ -1029,6 +1176,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
         siteEndDate || null,
         finalIncharge,
         remark || null,
+        locationType === 'leave' ? 'leave' : 'present', // NEW: attendance_status
         id,
         userId
       ]
@@ -1043,6 +1191,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
     }
 
     res.status(200).json({
+      success: true,
       message: 'Daily target report updated successfully',
       id: parseInt(id),
     })
@@ -1052,7 +1201,11 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
       fs.unlinkSync(req.file.path)
     }
     console.error('Failed to update daily target report', error)
-    res.status(500).json({ message: 'Unable to update daily target report' })
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to update daily target report',
+      error: error.message 
+    })
   }
 })
 
@@ -1070,7 +1223,10 @@ router.delete('/:id', verifyToken, async (req, res) => {
     )
     
     if (rows.length === 0) {
-      return res.status(404).json({ message: 'Report not found or access denied' })
+      return res.status(404).json({ 
+        success: false,
+        message: 'Report not found or access denied' 
+      })
     }
     
     // Delete PDF file if exists
@@ -1086,17 +1242,25 @@ router.delete('/:id', verifyToken, async (req, res) => {
     )
     
     if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Report not found' })
+      return res.status(404).json({ 
+        success: false,
+        message: 'Report not found' 
+      })
     }
     
     res.json({ 
+      success: true,
       message: 'Daily target report deleted successfully',
       wasLeave: rows[0].location_type === 'leave',
       leaveType: rows[0].leave_type
     })
   } catch (error) {
     console.error('Failed to delete daily target report:', error)
-    res.status(500).json({ message: 'Unable to delete daily target report' })
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to delete daily target report',
+      error: error.message 
+    })
   }
 })
 

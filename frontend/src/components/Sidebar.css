@@ -1,164 +1,267 @@
-.vh-sidebar {
-  width: 320px;
-  background: linear-gradient(180deg, #0b1f32 0%, #0d2842 60%, #103555 100%);
-  color: #f8fbff;
-  padding: 2.5rem 2rem;
+/* Sidebar.css */
+.sidebar {
+  width: 280px;
+  background: white;
+  padding: 20px;
+  border-right: 1px solid #ddd;
   display: flex;
   flex-direction: column;
-  gap: 2rem;
-  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  gap: 20px;
 }
 
-.vh-brand h1 {
-  font-size: 1.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin: 0.5rem 0 0;
-}
-
-.vh-brand span {
-  color: #2ad1ff;
-}
-
-.vh-pill {
-  display: inline-block;
-  padding: 0.35rem 0.75rem;
-  font-size: 0.75rem;
-  letter-spacing: 0.2em;
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 999px;
-}
-
-.vh-tagline {
-  color: rgba(255, 255, 255, 0.8);
-  margin: 0.5rem 0 0;
-}
-
-.vh-highlight h2,
-.vh-quick-links h2 {
-  text-transform: uppercase;
-  font-size: 0.85rem;
-  letter-spacing: 0.2em;
-  margin-bottom: 0.75rem;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.vh-highlight ul,
-.vh-quick-links ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.vh-highlight li {
-  padding-left: 1rem;
-  position: relative;
-  color: rgba(255, 255, 255, 0.85);
-}
-
-.vh-highlight li::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #2ad1ff;
-  position: absolute;
-  left: 0;
-  top: 0.45rem;
-}
-
-.vh-quick-links a {
-  color: #8ce3ff;
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.vh-quick-links a:hover {
-  color: #ffffff;
-  text-decoration: underline;
-}
-
-.vh-meta {
-  font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.8);
-  border-top: 1px solid rgba(255, 255, 255, 0.15);
-  padding-top: 1rem;
-  margin-top: auto;
-}
-
-.vh-meta small {
-  display: block;
-  margin-top: 0.75rem;
-  color: rgba(255, 255, 255, 0.6);
-}
-
-.vh-nav {
-  margin-top: 1rem;
-}
-
-.vh-nav h2 {
-  text-transform: uppercase;
-  font-size: 0.85rem;
-  letter-spacing: 0.2em;
-  margin-bottom: 0.75rem;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.vh-nav-links {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.vh-nav-links li {
-  margin: 0;
-}
-
-.vh-nav-links button {
-  width: 100%;
-  text-align: left;
-  padding: 0.75rem 1rem;
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+.time-box {
+  background: #092544;
+  color: white;
+  padding: 15px;
   border-radius: 8px;
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 0.95rem;
+  text-align: center;
+  font-size: 14px;
+}
+
+.brand-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+
+.logo {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+}
+
+.brand-name {
+  font-weight: bold;
+  color: #092544;
+}
+
+.tagline {
+  color: #666;
+  font-size: 13px;
+  margin: 0;
+}
+
+.nav h3 {
+  color: #092544;
+  margin: 0 0 10px 0;
+  font-size: 15px;
+}
+
+.nav-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nav-links button {
+  padding: 12px 15px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  text-align: left;
   cursor: pointer;
-  transition: all 0.2s;
+  font-size: 14px;
+  color: #333;
 }
 
-.vh-nav-links button:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.3);
-  color: #ffffff;
-}
-
-.vh-nav-links button.active {
-  background: rgba(42, 209, 255, 0.2);
+.nav-links button:hover {
+  background: #f0f7ff;
   border-color: #2ad1ff;
-  color: #2ad1ff;
-  font-weight: 600;
 }
 
+.nav-links button.active {
+  background: #e8f4ff;
+  border-color: #2ad1ff;
+  color: #092544;
+  font-weight: bold;
+}/* Sidebar.css */
+.sidebar {
+  width: 280px;
+  background: #ffffff;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  border-right: 1px solid #e5e7eb;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.05);
+}
 
-/* Add this to your Sidebar.css - adjust only the width/height values */
-.vh-brand-header {
+/* Date Header */
+.date-header {
+  background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+  color: white;
+  padding: 20px;
+  text-align: center;
+}
+
+.date-day {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  letter-spacing: 0.5px;
+}
+
+.date-full {
+  font-size: 14px;
+  opacity: 0.9;
+  font-weight: 400;
+}
+
+/* Company Branding */
+.company-brand {
+  padding: 20px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.company-logo {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
-.vh-logo {
-  width: 36px; /* ADJUST THIS SIZE */
-  height: 36px; /* ADJUST THIS SIZE */
-  object-fit: contain; /* Keep this for proper image scaling */
-  border-radius: 6px; /* Optional: adjust if needed */
-  border: 1px solid rgba(255, 255, 255, 0.2); /* Optional: match your theme */
+.logo-img {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 2px solid #3b82f6;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
+}
+
+.company-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e40af;
+  letter-spacing: 1px;
+}
+
+.company-tagline {
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+/* Main Navigation */
+.main-nav {
+  flex: 1;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.nav-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #64748b;
+  letter-spacing: 1px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.nav-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nav-btn {
+  padding: 14px 16px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.nav-btn:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  transform: translateX(2px);
+}
+
+.nav-btn.active {
+  background: #eff6ff;
+  border-color: #3b82f6;
+  color: #1e40af;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+}
+
+.nav-btn.active .btn-icon {
+  color: #3b82f6;
+}
+
+.btn-icon {
+  font-size: 18px;
+  width: 24px;
+  text-align: center;
+}
+
+.btn-text {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-tag {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 400;
+}
+
+.btn-tag.manager {
+  color: #ef4444;
+  font-weight: 500;
+}
+
+.btn-download {
+  font-size: 12px;
+  color: #10b981;
+  font-weight: 500;
+}
+
+/* Sidebar Footer */
+.sidebar-footer {
+  padding: 16px 20px;
+  border-top: 1px solid #e5e7eb;
+  background: #f8fafc;
+  text-align: center;
+}
+
+.footer-text {
+  font-size: 12px;
+  color: #475569;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.footer-version {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .sidebar {
+    width: 260px;
+  }
 }
