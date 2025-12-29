@@ -12,6 +12,9 @@ export default function ActivityDisplay() {
   const [dateSummary, setDateSummary] = useState(null)
   const [attendanceData, setAttendanceData] = useState(null)
   const [availableDates, setAvailableDates] = useState([])
+  const [selectedEngineer, setSelectedEngineer] = useState(null)
+  const [engineerModalOpen, setEngineerModalOpen] = useState(false)
+  const [engineerLoading, setEngineerLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('summary')
   
   const hasFetchedInitial = useRef(false)
@@ -37,6 +40,8 @@ export default function ActivityDisplay() {
     currentUser: `${API_BASE}/api/daily-target/current-user`,  // From your daily-target routes
     employees: `${API_BASE}/api/daily-target/employees`,       // From your daily-target routes
   }), [API_BASE])
+  // Engineer endpoint
+  endpoints.engineer = `${API_BASE}/api/activity/engineer`
   
   // Debug: Log endpoints
   useEffect(() => {
@@ -297,6 +302,7 @@ export default function ActivityDisplay() {
   }
 
   return (
+    <>
     <section className="vh-form-shell">
       <header className="vh-form-header">
         <div>
@@ -559,7 +565,24 @@ export default function ActivityDisplay() {
                           {dateSummary.dailyReports.slice(0, 10).map((report, index) => (
                             <tr key={index}>
                               <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                                <div style={{ fontWeight: 'bold' }}>{report.engineerName || 'Unknown'}</div>
+                                <div style={{ fontWeight: 'bold', cursor: user?.role === 'Manager' || user?.role === 'Team Leader' ? 'pointer' : 'default', color: (user?.role === 'Manager' || user?.role === 'Team Leader') ? '#1e40af' : 'inherit' }}
+                                  onClick={async () => {
+                                    if (!(user?.role === 'Manager' || user?.role === 'Team Leader')) return;
+                                    const identifier = report.engineerId || report.engineerName;
+                                    try {
+                                      setEngineerLoading(true)
+                                      const res = await fetch(`${endpoints.engineer}/${encodeURIComponent(identifier)}`, { headers: { Authorization: `Bearer ${token}` } })
+                                      if (!res.ok) throw new Error('Failed to fetch engineer')
+                                      const data = await res.json()
+                                      setSelectedEngineer({ ...data.user, recentActivity: data.recentActivity })
+                                      setEngineerModalOpen(true)
+                                    } catch (e) {
+                                      console.error('Failed to fetch engineer:', e)
+                                    } finally {
+                                      setEngineerLoading(false)
+                                    }
+                                  }}
+                                >{report.engineerName || 'Unknown'}</div>
                                 {report.engineerId && <small style={{ color: '#666' }}>ID: {report.engineerId}</small>}
                               </td>
                               <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>{report.projectName || 'N/A'}</td>
@@ -597,7 +620,24 @@ export default function ActivityDisplay() {
                           {dateSummary.hourlyReports.slice(0, 10).map((report, index) => (
                             <tr key={index}>
                               <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                                <div style={{ fontWeight: 'bold' }}>{report.engineerName || 'Unknown'}</div>
+                                <div style={{ fontWeight: 'bold', cursor: user?.role === 'Manager' || user?.role === 'Team Leader' ? 'pointer' : 'default', color: (user?.role === 'Manager' || user?.role === 'Team Leader') ? '#1e40af' : 'inherit' }}
+                                  onClick={async () => {
+                                    if (!(user?.role === 'Manager' || user?.role === 'Team Leader')) return;
+                                    const identifier = report.engineerId || report.engineerName;
+                                    try {
+                                      setEngineerLoading(true)
+                                      const res = await fetch(`${endpoints.engineer}/${encodeURIComponent(identifier)}`, { headers: { Authorization: `Bearer ${token}` } })
+                                      if (!res.ok) throw new Error('Failed to fetch engineer')
+                                      const data = await res.json()
+                                      setSelectedEngineer({ ...data.user, recentActivity: data.recentActivity })
+                                      setEngineerModalOpen(true)
+                                    } catch (e) {
+                                      console.error('Failed to fetch engineer:', e)
+                                    } finally {
+                                      setEngineerLoading(false)
+                                    }
+                                  }}
+                                >{report.engineerName || 'Unknown'}</div>
                                 {report.engineerId && <small style={{ color: '#666' }}>ID: {report.engineerId}</small>}
                               </td>
                               <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>{report.projectName || 'N/A'}</td>
@@ -868,7 +908,25 @@ export default function ActivityDisplay() {
                     {activities.slice(0, 20).map((a, index) => (
                       <tr key={index}>
                         <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                          <div style={{ fontWeight: 'bold' }}>{a.engineerName || a.username || 'N/A'}</div>
+                          <div
+                            style={{ fontWeight: 'bold', cursor: (user?.role === 'Manager' || user?.role === 'Team Leader') ? 'pointer' : 'default', color: (user?.role === 'Manager' || user?.role === 'Team Leader') ? '#1e40af' : 'inherit' }}
+                            onClick={async () => {
+                              if (!(user?.role === 'Manager' || user?.role === 'Team Leader')) return;
+                              const identifier = a.engineerId || a.engineerName || a.username;
+                              try {
+                                setEngineerLoading(true)
+                                const res = await fetch(`${endpoints.engineer}/${encodeURIComponent(identifier)}`, { headers: { Authorization: `Bearer ${token}` } })
+                                if (!res.ok) throw new Error('Failed to fetch engineer')
+                                const data = await res.json()
+                                setSelectedEngineer({ ...data.user, recentActivity: data.recentActivity })
+                                setEngineerModalOpen(true)
+                              } catch (e) {
+                                console.error('Failed to fetch engineer:', e)
+                              } finally {
+                                setEngineerLoading(false)
+                              }
+                            }}
+                          >{a.engineerName || a.username || 'N/A'}</div>
                           {a.engineerId && <small style={{ color: '#666' }}>ID: {a.engineerId}</small>}
                         </td>
                         <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>{formatDate(a.date || a.reportDate)}</td>
@@ -933,5 +991,38 @@ export default function ActivityDisplay() {
         )}
       </div>
     </section>
+      {engineerModalOpen && selectedEngineer && (
+        <div style={{ position: 'fixed', left: 0, top: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+          <div style={{ background: 'white', width: '720px', maxWidth: '95%', borderRadius: '8px', padding: '20px', boxShadow: '0 10px 30px rgba(0,0,0,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ margin: 0 }}>{selectedEngineer.username || selectedEngineer.name}</h3>
+              <div>
+                <button onClick={() => { setEngineerModalOpen(false); setSelectedEngineer(null); }} style={{ padding: '8px 12px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Close</button>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '20px' }}>
+              <div style={{ flex: 1 }}>
+                <p><strong>Employee ID:</strong> {selectedEngineer.employeeId || 'N/A'}</p>
+                <p><strong>Role:</strong> {selectedEngineer.role || 'N/A'}</p>
+                <p><strong>Phone:</strong> {selectedEngineer.phone || 'N/A'}</p>
+                <p><strong>Email:</strong> {selectedEngineer.email || 'N/A'}</p>
+              </div>
+              <div style={{ flex: 1 }}>
+                <h4 style={{ marginTop: 0 }}>Recent Activity</h4>
+                <div style={{ maxHeight: '240px', overflowY: 'auto' }}>
+                  {(selectedEngineer.recentActivity || []).map((ra, i) => (
+                    <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid #f1f5f9' }}>
+                      <div style={{ fontSize: '14px' }}><strong>{ra.type}</strong> — {ra.project || 'N/A'}</div>
+                      <div style={{ fontSize: '13px', color: '#666' }}>{ra.date} {ra.time ? `• ${ra.time}` : ''} {ra.leaveReason ? `• ${ra.leaveReason}` : ''}</div>
+                    </div>
+                  ))}
+                  {(!selectedEngineer.recentActivity || selectedEngineer.recentActivity.length === 0) && <div style={{ color: '#666' }}>No recent activity</div>}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
