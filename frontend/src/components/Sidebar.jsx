@@ -171,6 +171,13 @@ function Sidebar() {
                 </span>
               </span>
             </button>
+            <button
+              className={`nav-btn ${activePage === 'projects' ? 'active' : ''}`}
+              onClick={() => handleNavigation('projects')}
+            >
+              <span className="btn-icon">📁</span>
+              <span className="btn-text">Projects</span>
+            </button>
             
             {(user?.role === 'Manager' || user?.role === 'Team Leader' || user?.role === 'Senior Assistant') && (
               <button

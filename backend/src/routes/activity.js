@@ -173,10 +173,42 @@ router.get('/activities', verifyTokenAndRole(), async (req, res) => {
     // Add ordering and pagination
     const orderClause = `ORDER BY a.date DESC, a.logged_at DESC`;
     const paginationClause = `LIMIT ? OFFSET ?`;
-    
+
+    // If client requests CSV export, run the query without pagination and return CSV
+    if (req.query.format === 'csv' || req.query.export === 'csv') {
+      const exportQuery = `
+        ${baseQuery}
+        ${orderClause}
+      `;
+      console.log('🔍 [DEBUG] Export query (CSV):', exportQuery);
+      const [exportRows] = await pool.execute(exportQuery, params);
+
+      // Build CSV header
+      const headers = [
+        'id','date','time','engineer_name','engineer_id','project','location','activity_target','problem','status','leave_reason','start_time','end_time','activity_type','logged_at'
+      ];
+
+      const escapeCsv = (v) => {
+        if (v === null || v === undefined) return '';
+        const s = String(v);
+        if (s.includes(',') || s.includes('\n') || s.includes('"')) {
+          return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+      };
+
+      const rows = exportRows.map(r => headers.map(h => escapeCsv(r[h] ?? r[h.toLowerCase()]) ).join(','));
+
+      const csv = [headers.join(','), ...rows].join('\n');
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="activities-${new Date().toISOString().slice(0,10)}.csv"`);
+      return res.send(csv);
+    }
+
     // FIXED: Create new array for pagination params
     const paginationParams = [...params, parseInt(limit), (parseInt(page) - 1) * parseInt(limit)];
-    
+
     const finalQuery = `
       ${baseQuery}
       ${orderClause}

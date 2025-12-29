@@ -11,6 +11,8 @@ import CreateMOM from './components/CreateMoM'
 import AttendanceHistory from './components/AttendanceHistory'
 import LeaveApplication from './components/LeaveApplication'
 import ManagerApproval from './components/ManagerLeaveApproval' // Add this import
+import ProjectList from './components/ProjectList'
+import ProjectForm from './components/ProjectForm'
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('hourly')
@@ -36,6 +38,16 @@ function AppContent() {
             <Route path="/create-mom" element={<CreateMOM />} />
             <Route path="/leave-application" element={<LeaveApplication />} />
             <Route path="/leave-approval" element={<ManagerApproval />} /> {/* Add this route */}
+            <Route path="/projects" element={(
+              <div style={{ display: 'flex', gap: 16 }}>
+                <div style={{ flex: 1 }}>
+                  <ProjectForm onCreated={() => { /* optionally refresh via events */ }} />
+                </div>
+                <div style={{ flex: 2 }}>
+                  <ProjectList />
+                </div>
+              </div>
+            )} />
             <Route path="/" element={<Navigate to="/hourly" replace />} />
             <Route path="*" element={<Navigate to="/hourly" replace />} />
           </Routes>

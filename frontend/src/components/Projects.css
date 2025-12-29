@@ -1,0 +1,74 @@
+.projects-page {
+  padding: 20px;
+}
+.projects-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 18px;
+}
+.projects-hero .title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #0b2540;
+}
+.projects-stats {
+  display: flex;
+  gap: 12px;
+}
+.stat-card {
+  background: #fff;
+  border: 1px solid #eef3f7;
+  padding: 12px 16px;
+  border-radius: 8px;
+  min-width: 140px;
+  text-align: left;
+}
+.stat-card .label { color: #6b7280; font-size: 12px }
+.stat-card .value { font-size: 18px; font-weight: 700; color: #092544 }
+.new-project-btn {
+  background: linear-gradient(90deg,#2ad1ff,#0086c7);
+  color: white;
+  border: none;
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.projects-list { margin-top: 12px }
+.project-card {
+  background: #fff;
+  border: 1px solid #e6eef4;
+  padding: 14px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.project-card .meta { color: #6b7280; font-size: 13px }
+
+/* Modal */
+.modal-backdrop {
+  position: fixed;
+  left: 0; top: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+.modal-pane {
+  background: #fff;
+  width: 720px;
+  max-width: 95%;
+  border-radius: 10px;
+  padding: 18px;
+  box-shadow: 0 12px 40px rgba(2,6,23,0.2);
+}
+.form-row { margin-bottom: 10px }
+.form-row label { display:block; font-size:13px; color:#374151; margin-bottom:6px }
+.form-row input, .form-row textarea { width:100%; padding:8px 10px; border-radius:6px; border:1px solid #e6eef4 }
+.form-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:12px }
+.btn-primary { background:#2ad1ff; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor:pointer }
+.btn-ghost { background:transparent; border:1px solid #e6eef4; padding:8px 12px; border-radius:6px; cursor:pointer }

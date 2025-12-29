@@ -11,6 +11,7 @@ import authRouter from './routes/auth.js'
 import hourlyReportRouter from './routes/hourlyReport.js'
 import dailyTargetRouter from './routes/dailyTarget.js'
 import employeeActivityRouter from './routes/employeeActivity.js'
+import projectsRouter from './routes/projects.js'
 import pool from './db.js'
 
 dotenv.config()
@@ -57,6 +58,22 @@ async function migrateDatabase() {
         // Column already exists, that's fine
       } else {
         throw error
+      }
+    }
+
+    // Ensure users table has an assigned_project_id column to track current project assignment
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN assigned_project_id INT NULL')
+      console.log('✓ Added assigned_project_id column to users table')
+    } catch (error) {
+      // Ignore duplicate column errors
+      if (error.code === 'ER_DUP_FIELDNAME') {
+        // already exists
+      } else {
+        try {
+          // Some MySQL versions return different codes; attempt safe add
+          await pool.execute('ALTER TABLE users ADD COLUMN assigned_project_id INT NULL')
+        } catch (e) {}
       }
     }
 
@@ -125,6 +142,39 @@ async function migrateDatabase() {
           await pool.execute('ALTER TABLE hourly_reports ADD COLUMN time_period VARCHAR(50) NULL')
         } catch (e) {}
       }
+    }
+
+    // Create projects and project_collaborators tables
+    try {
+      await pool.execute(`
+        CREATE TABLE IF NOT EXISTS projects (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          description TEXT,
+          created_by INT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      console.log('✓ Created projects table')
+    } catch (error) {
+      console.error('Error creating projects table:', error.message)
+    }
+
+    try {
+      await pool.execute(`
+        CREATE TABLE IF NOT EXISTS project_collaborators (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          project_id INT NOT NULL,
+          user_id INT DEFAULT NULL,
+          collaborator_employee_id VARCHAR(50) DEFAULT NULL,
+          role VARCHAR(80) DEFAULT NULL,
+          added_by INT DEFAULT NULL,
+          added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      console.log('✓ Created project_collaborators table')
+    } catch (error) {
+      console.error('Error creating project_collaborators table:', error.message)
     }
 
     // Create daily_target_reports table if it doesn't exist - UPDATED WITH leave_type
@@ -332,6 +382,7 @@ app.use('/api/activity', activityRouter)
 app.use('/api/hourly-report', hourlyReportRouter)
 app.use('/api/daily-target', dailyTargetRouter)
 app.use('/api/employee-activity', employeeActivityRouter)
+app.use('/api/projects', projectsRouter)
 
 // Serve frontend static files in production
 if (process.env.NODE_ENV === 'production') {
