@@ -28,6 +28,7 @@ const verifyToken = (req, res, next) => {
 }
 
 // Get all activities based on user role and hierarchy
+// Fix the activities endpoint
 router.get('/activities', verifyToken, async (req, res) => {
   try {
     const userId = req.user.id
@@ -38,96 +39,78 @@ router.get('/activities', verifyToken, async (req, res) => {
     const limitNum = parseInt(limit) || 20
     const offset = (pageNum - 1) * limitNum
 
-    // Combine daily and hourly reports into a single activity list with a "reportType" field
-    // We'll fetch the daily_target_reports and hourly_reports with matching columns aliased
+    // Get user details for filtering
+    const [userRows] = await pool.execute(
+      'SELECT username, employee_id FROM users WHERE id = ?',
+      [userId]
+    )
+    
+    const username = userRows[0]?.username
+    const employeeId = userRows[0]?.employee_id
+
+    // Build WHERE clause based on role
+    let whereClause = ''
+    let params = []
+    let countParams = []
+
     const r = (role || '').toLowerCase()
     const isManagerish = r.includes('manager') || r.includes('team leader') || r.includes('group leader')
 
-    // Build WHERE clauses depending on role. For historical records that predate adding
-    // user_id we fall back to matching the "incharge" username on daily reports.
-    let dailyWhere = ''
-    let hourlyWhere = ''
-    let params = []
-    let username = null
     if (!isManagerish) {
-      // fetch username for fallback matching
-      const [uRows] = await pool.execute('SELECT username FROM users WHERE id = ?', [userId])
-      username = (uRows && uRows[0] && uRows[0].username) || null
-
-      dailyWhere = ' WHERE (dtr.user_id = ? OR dtr.incharge = ?)'
-      hourlyWhere = ' WHERE (hr.user_id = ? OR u.username = ?)'
-      // params order: daily (userId, username), hourly (userId, username)
-      params = [userId, username, userId, username]
+      // Regular employee - see only their own activities
+      whereClause = ' WHERE (a.engineer_id = ? OR a.engineer_name = ? OR u.id = ?)'
+      params = [employeeId, username, userId, limitNum, offset]
+      countParams = [employeeId, username, userId]
+    } else {
+      // Manager - see all activities
+      whereClause = ''
+      params = [limitNum, offset]
+      countParams = []
     }
 
-    // Select common fields and add reportType
-    // For daily: use report_date, in_time/out_time, project_no as projectNo, location_type, daily_target_achieved, problem_faced, incharge as username
-    // For hourly: use report_date, NULL in_time/out_time, project_name as projectNo, NULL location_type, daily_target, hourly_activity as dailyTargetAchieved, problem_faced_by_engineer_hourly as problem_faced, username from users table if available
-    const dailyQuery = `
-      SELECT dtr.id as id,
-             dtr.report_date AS reportDate,
-             dtr.in_time AS inTime,
-             dtr.out_time AS outTime,
-             dtr.project_no AS projectNo,
-             dtr.location_type AS locationType,
-             dtr.daily_target_achieved AS dailyTargetAchieved,
-             dtr.problem_faced AS problemFaced,
-             dtr.incharge AS username,
-             dtr.created_at AS createdAt,
-             'daily' AS reportType,
-             dtr.customer_name AS customerName,
-             dtr.customer_person AS customerPerson,
-             dtr.customer_contact AS custContact,
-             dtr.end_customer_name AS endCustName,
-             dtr.end_customer_person AS endCustPerson,
-             dtr.end_customer_contact AS endCustContact,
-             dtr.site_location AS siteLocation
-                     , NULL AS hourlyActivity
-      FROM daily_target_reports dtr
-      ${dailyWhere}
+    // Count query
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM activities a
+      LEFT JOIN users u ON (a.engineer_id = u.employee_id OR a.engineer_name = u.username)
+      ${whereClause}
     `
 
-    const hourlyQuery = `
-      SELECT hr.id AS id,
-             hr.report_date AS reportDate,
-             NULL AS inTime,
-             NULL AS outTime,
-             hr.project_name AS projectNo,
-             NULL AS locationType,
-             hr.daily_target AS dailyTargetAchieved,
-             hr.problem_faced_by_engineer_hourly AS problemFaced,
-             u.username AS username,
-             hr.created_at AS createdAt,
-             'hourly' AS reportType,
-             NULL AS customerName,
-             NULL AS customerPerson,
-             NULL AS custContact,
-             NULL AS endCustName,
-             NULL AS endCustPerson,
-             NULL AS endCustContact,
-             NULL AS siteLocation,
-             hr.hourly_activity AS hourlyActivity
-      FROM hourly_reports hr
-      LEFT JOIN users u ON hr.user_id = u.id
-      ${hourlyWhere}
+    // Main query
+    const mainQuery = `
+      SELECT
+        a.id,
+        DATE_FORMAT(a.date, '%Y-%m-%d') as date,
+        TIME_FORMAT(a.time, '%H:%i:%s') as time,
+        COALESCE(u.username, a.engineer_name) as engineer_name,
+        COALESCE(u.employee_id, a.engineer_id) as engineer_id,
+        a.project,
+        a.location,
+        a.activity_target,
+        a.problem,
+        a.status,
+        a.leave_reason,
+        TIME_FORMAT(a.start_time, '%H:%i:%s') as start_time,
+        TIME_FORMAT(a.end_time, '%H:%i:%s') as end_time,
+        a.activity_type,
+        DATE_FORMAT(a.logged_at, '%Y-%m-%d %H:%i:%s') as logged_at
+      FROM activities a
+      LEFT JOIN users u ON (a.engineer_id = u.employee_id OR a.engineer_name = u.username)
+      ${whereClause}
+      ORDER BY a.date DESC, a.logged_at DESC
+      LIMIT ? OFFSET ?
     `
 
-    // Union both queries, wrap in an outer select to ORDER/LIMIT safely
-    const combinedQuery = `
-      SELECT id, reportDate, inTime, outTime, projectNo, locationType, dailyTargetAchieved, problemFaced, username, createdAt, reportType,
-             customerName, customerPerson, custContact, endCustName, endCustPerson, endCustContact, siteLocation, hourlyActivity
-      FROM (
-        (${dailyQuery})
-        UNION ALL
-        (${hourlyQuery})
-      ) AS combined
-      ORDER BY createdAt DESC
-      LIMIT ${limitNum} OFFSET ${offset}
-    `
+    console.log('Count query:', countQuery)
+    console.log('Count params:', countParams)
+    console.log('Main query:', mainQuery)
+    console.log('Main params:', params)
 
-    console.log('Executing combined activities query for role', role, 'with params', params)
-    const [activities] = await pool.execute(combinedQuery, params)
-    console.log('Fetched combined activities count:', activities.length)
+    // Execute queries
+    const [countResult] = await pool.execute(countQuery, countParams)
+    const [activities] = await pool.execute(mainQuery, params)
+
+    const total = countResult[0]?.total || 0
 
     res.json({
       success: true,
@@ -135,7 +118,8 @@ router.get('/activities', verifyToken, async (req, res) => {
       pagination: {
         page: pageNum,
         limit: limitNum,
-        total: activities ? activities.length : 0,
+        total: total,
+        totalPages: Math.ceil(total / limitNum)
       },
     })
   } catch (error) {

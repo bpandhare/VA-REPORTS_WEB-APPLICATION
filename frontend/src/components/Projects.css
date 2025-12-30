@@ -72,3 +72,4 @@
 .form-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:12px }
 .btn-primary { background:#2ad1ff; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor:pointer }
 .btn-ghost { background:transparent; border:1px solid #e6eef4; padding:8px 12px; border-radius:6px; cursor:pointer }
+

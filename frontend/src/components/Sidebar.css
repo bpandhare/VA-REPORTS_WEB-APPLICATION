@@ -415,3 +415,21 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
+/* Add to your existing Sidebar.css */
+
+.btn-tag.new {
+  background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: bold;
+  margin-left: 0.5rem;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.8; }
+  50% { opacity: 1; }
+  100% { opacity: 0.8; }
+}

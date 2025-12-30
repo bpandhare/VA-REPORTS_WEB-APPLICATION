@@ -1,5 +1,5 @@
-// App.jsx - Updated with ManagerApproval route
-import { useState, useEffect } from 'react'
+// App.jsx - Updated with role-based routing
+import { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './components/AuthContext'
 import Sidebar from './components/Sidebar'
@@ -10,22 +10,25 @@ import Login from './components/AuthForm'
 import CreateMOM from './components/CreateMoM'
 import AttendanceHistory from './components/AttendanceHistory'
 import LeaveApplication from './components/LeaveApplication'
-import ManagerApproval from './components/ManagerLeaveApproval' // Add this import
+import ManagerApproval from './components/ManagerLeaveApproval'
 import ProjectList from './components/ProjectList'
-import ProjectForm from './components/ProjectForm'
+import EmployeeProjects from './components/EmployeeProjects'
+import TimeTracker from './components/TimeTracker'
+import ProjectDetails from './components/ProjectDetails'
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('hourly')
   const { token, user } = useAuth()
   
-  console.log('Auth state:', { token, user, hasToken: !!token })
+  console.log('Auth state:', { token, user, hasToken: !!token, role: user?.role })
   
   const handlePageChange = (page) => {
     setCurrentPage(page)
   }
 
   if (token) {
-    console.log('User is logged in, showing sidebar')
+    const isManager = user?.role === 'Manager'
+    
     return (
       <div style={{ display: 'flex', minHeight: '100vh' }}>
         <Sidebar currentPage={currentPage} onPageChange={handlePageChange} />
@@ -37,17 +40,20 @@ function AppContent() {
             <Route path="/attendance-history" element={<AttendanceHistory />} />
             <Route path="/create-mom" element={<CreateMOM />} />
             <Route path="/leave-application" element={<LeaveApplication />} />
-            <Route path="/leave-approval" element={<ManagerApproval />} /> {/* Add this route */}
-            <Route path="/projects" element={(
-              <div style={{ display: 'flex', gap: 16 }}>
-                <div style={{ flex: 1 }}>
-                  <ProjectForm onCreated={() => { /* optionally refresh via events */ }} />
-                </div>
-                <div style={{ flex: 2 }}>
-                  <ProjectList />
-                </div>
-              </div>
-            )} />
+            <Route path="/time-tracker" element={<TimeTracker />} />
+            <Route path="/project/:id" element={<ProjectDetails />} />
+            
+            {/* Projects - different views based on role */}
+            <Route path="/projects" element={
+              isManager ? <ProjectList /> : <EmployeeProjects />
+            } />
+            
+            {/* Manager-only routes */}
+            {isManager && (
+              <Route path="/leave-approval" element={<ManagerApproval />} />
+            )}
+            
+            {/* Default route */}
             <Route path="/" element={<Navigate to="/hourly" replace />} />
             <Route path="*" element={<Navigate to="/hourly" replace />} />
           </Routes>
@@ -58,13 +64,15 @@ function AppContent() {
     console.log('User is NOT logged in, showing login page')
     return (
       <Routes>
-        <Route path="*" element={<Login />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     )
   }
 }
 
 function App() {
+  
   return (
     <AuthProvider>
       <Router>

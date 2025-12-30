@@ -420,3 +420,68 @@ ADD COLUMN leave_approval_remark TEXT DEFAULT NULL;
 -- Optionally, add an index for better performance
 CREATE INDEX idx_leave_status ON daily_target_reports(leave_status);
 CREATE INDEX idx_location_type ON daily_target_reports(location_type);
+
+
+-- Add status column to projects table
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active';
+
+-- Tasks table
+CREATE TABLE IF NOT EXISTS project_tasks (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  project_id INT NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  assigned_to INT, -- user_id
+  status ENUM('pending', 'in_progress', 'completed', 'blocked') DEFAULT 'pending',
+  priority ENUM('low', 'medium', 'high', 'urgent') DEFAULT 'medium',
+  due_date DATE,
+  estimated_hours DECIMAL(5,2),
+  actual_hours DECIMAL(5,2),
+  created_by INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Task comments/updates table
+CREATE TABLE IF NOT EXISTS task_updates (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  task_id INT NOT NULL,
+  user_id INT NOT NULL,
+  content TEXT NOT NULL,
+  old_status VARCHAR(50),
+  new_status VARCHAR(50),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (task_id) REFERENCES project_tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Task attachments table
+CREATE TABLE IF NOT EXISTS task_attachments (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  task_id INT NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  file_path VARCHAR(500) NOT NULL,
+  file_size INT,
+  file_type VARCHAR(100),
+  uploaded_by INT,
+  uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (task_id) REFERENCES project_tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS project_files (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  project_id INT NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  file_url VARCHAR(500) NOT NULL,
+  file_type VARCHAR(100),
+  file_size INT,
+  uploaded_by INT,
+  uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+);

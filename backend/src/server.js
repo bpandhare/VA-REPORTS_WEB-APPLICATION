@@ -13,8 +13,7 @@ import dailyTargetRouter from './routes/dailyTarget.js'
 import employeeActivityRouter from './routes/employeeActivity.js'
 import projectsRouter from './routes/projects.js'
 import pool from './db.js'
-
-dotenv.config()
+import timeTrackingRoutes from './routes/timeTracking.js'
 
 // ES Modules fix for __dirname
 const __filename = fileURLToPath(import.meta.url)
@@ -231,7 +230,17 @@ async function migrateDatabase() {
         console.error('Error adding report_date column:', error.message)
       }
     }
-
+try {
+  await pool.execute('ALTER TABLE users ADD COLUMN email VARCHAR(255)')
+  console.log('✓ Added email column to users table')
+} catch (error) {
+  if (error.code === 'ER_DUP_FIELDNAME') {
+    // Column already exists, that's fine
+    console.log('✓ Email column already exists')
+  } else {
+    console.error('Error adding email column:', error.message)
+  }
+}
     // Add new columns to existing daily_target_reports table if they don't exist
     const newColumns = [
       { name: 'end_customer_name', type: 'VARCHAR(120) DEFAULT ""' },
@@ -313,9 +322,13 @@ async function migrateDatabase() {
   }
 }
 
+// Initialize app FIRST
 const app = express()
 const PORT = process.env.PORT || 5000
 const HOST = '0.0.0.0'
+
+app.use('/api/time-tracking', timeTrackingRoutes)
+dotenv.config()
 
 // Security middleware
 app.use(helmet({
@@ -376,13 +389,62 @@ app.get('/health', (_req, res) => {
   })
 })
 
+// Add the user info endpoint HERE (after app is initialized)
+// You'll need to import or define verifyToken middleware
+import jwt from 'jsonwebtoken'
+
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers.authorization
+  if ((!authHeader || !authHeader.startsWith('Bearer ')) && process.env.NODE_ENV !== 'production') {
+    req.user = { id: 1, username: 'dev', role: 'Manager' }
+    return next()
+  }
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, message: 'Missing token' })
+  }
+
+  const token = authHeader.slice(7)
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET ?? 'vickhardth-site-pulse-secret')
+    req.user = decoded
+    next()
+  } catch (error) {
+    if (process.env.NODE_ENV !== 'production') {
+      req.user = { id: 1, username: 'dev', role: 'Manager' }
+      return next()
+    }
+    res.status(401).json({ success: false, message: 'Invalid token' })
+  }
+}
+
+app.get('/api/users/me', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id
+    
+    const [rows] = await pool.execute(
+      'SELECT id, username, role, employee_id FROM users WHERE id = ?',
+      [userId]
+    )
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found' })
+    }
+    
+    res.json({ success: true, ...rows[0] })
+  } catch (error) {
+    console.error('Failed to fetch user info:', error)
+    res.status(500).json({ success: false, message: 'Unable to fetch user info' })
+  }
+})
+
 // API Routes
 app.use('/api/auth', authRouter)
 app.use('/api/activity', activityRouter)
 app.use('/api/hourly-report', hourlyReportRouter)
 app.use('/api/daily-target', dailyTargetRouter)
 app.use('/api/employee-activity', employeeActivityRouter)
-app.use('/api/projects', projectsRouter)
+app.use('/api/projects', verifyToken, projectsRouter)
 
 // Serve frontend static files in production
 if (process.env.NODE_ENV === 'production') {
@@ -451,9 +513,33 @@ migrateDatabase().then(() => {
     console.log(`📡 API server ready on http://${HOST}:${PORT}`)
     console.log(`🔐 Auth endpoint: http://${HOST}:${PORT}/api/auth/login`)
     console.log(`🏥 Health check: http://${HOST}:${PORT}/health`)
+    console.log(`👤 User info endpoint: http://${HOST}:${PORT}/api/users/me`)
     
     if (process.env.NODE_ENV === 'production') {
       console.log(`🌐 Serving frontend from static build`)
     }
   })
 })
+// Create project_files table
+try {
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS project_files (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      description TEXT,
+      file_name VARCHAR(255) NOT NULL,
+      original_name VARCHAR(255) NOT NULL,
+      file_path VARCHAR(500) NOT NULL,
+      file_size INT NOT NULL,
+      mime_type VARCHAR(100) NOT NULL,
+      uploaded_by INT NOT NULL,
+      uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `)
+  console.log('✓ Created project_files table')
+} catch (error) {
+  console.error('Error creating project_files table:', error.message)
+}

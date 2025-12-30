@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useAuth } from './AuthContext'
 import './OnboardingForm.css'
 
+
 export default function ActivityDisplay() {
   const { token, user } = useAuth()
   

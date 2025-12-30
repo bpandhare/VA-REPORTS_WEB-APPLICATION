@@ -88,6 +88,9 @@ function Sidebar() {
   // Check if user has employee ID
   const hasEmployeeId = user?.employeeId || user?.employee_id || user?.id
 
+  // Check if user is manager
+  const isManager = user?.role === 'Manager'
+
   return (
     <div className="sidebar">
       {/* Top User Profile Section */}
@@ -136,6 +139,21 @@ function Sidebar() {
 
       {/* Main Navigation */}
       <nav className="main-nav">
+        {/* TIME TRACKER SECTION */}
+        <div className="nav-section">
+          <div className="section-title">TIME TRACKING</div>
+          <div className="nav-buttons">
+            <button
+              className={`nav-btn ${activePage === 'time-tracker' ? 'active' : ''}`}
+              onClick={() => handleNavigation('time-tracker')}
+            >
+              <span className="btn-icon">⏰</span>
+              <span className="btn-text">Time Tracker</span>
+              <span className="btn-tag new">NEW</span>
+            </button>
+          </div>
+        </div>
+
         <div className="nav-section">
           <div className="section-title">REPORTS</div>
           <div className="nav-buttons">
@@ -167,16 +185,21 @@ function Sidebar() {
               <span className="btn-text">
                 View Activities
                 <span className="btn-tag">
-                  {user?.role === 'Manager' || user?.role === 'Team Leader' ? '(All)' : '(Mine)'}
+                  {isManager ? '(All)' : '(Mine)'}
                 </span>
               </span>
             </button>
+            
+            {/* Projects button - shows for everyone but will navigate to different views */}
             <button
               className={`nav-btn ${activePage === 'projects' ? 'active' : ''}`}
               onClick={() => handleNavigation('projects')}
             >
               <span className="btn-icon">📁</span>
               <span className="btn-text">Projects</span>
+              <span className="btn-tag">
+                {isManager ? '(Manage)' : '(My Projects)'}
+              </span>
             </button>
             
             {(user?.role === 'Manager' || user?.role === 'Team Leader' || user?.role === 'Senior Assistant') && (
@@ -197,14 +220,17 @@ function Sidebar() {
         <div className="nav-section">
           <div className="section-title">DOCUMENTS</div>
           <div className="nav-buttons">
-            <button 
-              className={`nav-btn ${activePage === 'create-mom' ? 'active' : ''}`} 
-              onClick={() => handleNavigation('create-mom')}
-            >
-              <span className="btn-icon">📄</span>
-              <span className="btn-text">Create MoM</span>
-              <span className="btn-download">(Download)</span>
-            </button>
+            {/* Only managers can create MOM */}
+            { (
+              <button 
+                className={`nav-btn ${activePage === 'create-mom' ? 'active' : ''}`} 
+                onClick={() => handleNavigation('create-mom')}
+              >
+                <span className="btn-icon">📄</span>
+                <span className="btn-text">Create MoM</span>
+                <span className="btn-download">(Download)</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -252,7 +278,7 @@ function Sidebar() {
           Site Activity Monitoring System
         </div>
         <div className="footer-version">
-          v1.0 • Professional Edition
+          v1.1 • Professional Edition
         </div>
       </div>
     </div>
