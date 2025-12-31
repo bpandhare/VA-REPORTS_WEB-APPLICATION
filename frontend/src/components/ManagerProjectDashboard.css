@@ -593,3 +593,501 @@
     grid-template-columns: 1fr;
   }
 }
+/* Customer Select Styles */
+.customer-select {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 16px;
+  background-color: white;
+  transition: border-color 0.3s;
+}
+
+.customer-select:focus {
+  outline: none;
+  border-color: #2ad1ff;
+  box-shadow: 0 0 0 2px rgba(42, 209, 255, 0.2);
+}
+
+.customer-select option {
+  padding: 10px;
+  font-size: 14px;
+}
+
+/* Form Layout */
+.form-row {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
+.form-row .form-group {
+  flex: 1;
+}
+
+/* Modal Improvements */
+.modal-content {
+  max-width: 600px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+/* Budget Input */
+input[type="number"] {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 16px;
+}
+/* Customer info styling */
+.project-customer {
+  margin: 8px 0;
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.customer-label {
+  font-weight: 600;
+  color: #4b5563;
+  margin-right: 8px;
+}
+
+.customer-name {
+  color: #1f2937;
+  font-weight: 500;
+}
+
+/* Customer list in sidebar */
+.customer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.customer-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: #f9fafb;
+  border-radius: 6px;
+}
+
+.customer-icon {
+  font-size: 16px;
+}
+
+.customer-project {
+  margin-left: auto;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.no-customers {
+  text-align: center;
+  color: #9ca3af;
+  font-style: italic;
+  padding: 16px;
+}
+
+/* Quick stats */
+.quick-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.quick-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.quick-stat:last-child {
+  border-bottom: none;
+}
+
+/* Project details */
+.project-details {
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-label {
+  font-weight: 500;
+  color: #6b7280;
+  min-width: 60px;
+}
+
+.detail-value {
+  color: #374151;
+}
+
+.priority-badge {
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background-color: #f3f4f6;
+}
+/* Customer display in project cards */
+.project-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.meta-icon {
+  font-size: 16px;
+}
+
+.meta-label {
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.meta-value {
+  color: #1f2937;
+  font-weight: 500;
+}
+
+/* Project details grid */
+.project-details-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail-label {
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.detail-value {
+  font-size: 14px;
+  color: #374151;
+}
+
+.priority-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Sidebar styles */
+.customer-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.summary-item:last-child {
+  border-bottom: none;
+}
+
+.summary-value {
+  font-weight: 600;
+  color: #3b82f6;
+}
+
+.recent-customers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.customer-item {
+  padding: 8px;
+  background: #f8fafc;
+  border-radius: 6px;
+  border-left: 3px solid #3b82f6;
+}
+
+.customer-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.customer-name {
+  font-weight: 500;
+  color: #1e293b;
+}
+
+.project-name {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.no-data {
+  text-align: center;
+  color: #94a3b8;
+  font-style: italic;
+  padding: 16px;
+}
+
+/* Refresh button */
+.btn-refresh {
+  padding: 6px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  color: #475569;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-refresh:hover {
+  background: #e2e8f0;
+}
+/* Customer Section in Project Cards */
+.project-customer-section {
+  margin: 10px 0;
+  padding: 8px;
+  background: #f8fafc;
+  border-radius: 6px;
+  border-left: 3px solid #3b82f6;
+}
+
+.customer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.customer-icon {
+  font-size: 18px;
+}
+
+.customer-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.customer-label {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.customer-name {
+  font-size: 14px;
+  color: #1e293b;
+  font-weight: 600;
+}
+
+/* Customer Stats in Sidebar */
+.customer-stats {
+  margin-top: 15px;
+}
+
+.customer-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.customer-stat:last-child {
+  border-bottom: none;
+}
+
+.customer-stat .stat-value {
+  font-weight: 600;
+  color: #3b82f6;
+  font-size: 16px;
+}
+
+/* Project Details */
+.project-details {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin: 15px 0;
+}
+
+.detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail-label {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.priority-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Refresh Button */
+.btn-refresh {
+  padding: 8px 16px;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #475569;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.btn-refresh:hover {
+  background: #e2e8f0;
+}
+
+/* Customer Select Styling */
+.customer-select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+}
+
+.customer-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+/* Error message */
+.error-message {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.error-message button {
+  background: none;
+  border: none;
+  color: #dc2626;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 8px;
+}
+
+/* Customer display */
+.project-customer-display {
+  margin: 10px 0;
+  padding: 10px;
+  background: #f0f9ff;
+  border-radius: 6px;
+  border-left: 3px solid #0ea5e9;
+}
+
+.customer-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.customer-icon {
+  font-size: 18px;
+}
+
+.customer-text {
+  font-size: 14px;
+}
+
+/* Debug info */
+.debug-info {
+  background: #f8fafc;
+  padding: 8px 16px;
+  border-radius: 6px;
+  margin: 10px 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+/* Database status */
+.db-status {
+  margin-top: 15px;
+}
+
+.status-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.status-item:last-child {
+  border-bottom: none;
+}
+
+.status-value {
+  font-weight: 600;
+  color: #3b82f6;
+}
+
+/* Form error */
+.form-error {
+  background: #fef2f2;
+  color: #dc2626;
+  padding: 10px;
+  border-radius: 6px;
+  margin-bottom: 15px;
+  font-size: 14px;
+}

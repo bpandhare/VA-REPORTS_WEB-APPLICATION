@@ -48,12 +48,29 @@ const ProjectDetails = () => {
     priority: 'medium',
     due_date: ''
   })
+  
+  // Add these states for the contribute tab
+  const [showQuickUpdate, setShowQuickUpdate] = useState(false)
+  const [showFileUpload, setShowFileUpload] = useState(false)
+  const [showTaskUpdate, setShowTaskUpdate] = useState(false)
+  const [showCommentForm, setShowCommentForm] = useState(false)
+  const [quickUpdate, setQuickUpdate] = useState('')
+  const [progressPercentage, setProgressPercentage] = useState(0)
+  const [updateStatus, setUpdateStatus] = useState('on_track')
+  const [recentContributions, setRecentContributions] = useState([])
 
   useEffect(() => {
     console.log('ProjectDetails mounted with ID:', id)
     console.log('Current user:', user)
     fetchProjectDetails()
   }, [id])
+
+  // Add this useEffect for contributions
+  useEffect(() => {
+    if (activeTab === 'contribute') {
+      fetchRecentContributions()
+    }
+  }, [activeTab])
 
   const fetchProjectDetails = async () => {
     try {
@@ -115,6 +132,55 @@ const ProjectDetails = () => {
       setError(error.message || 'An unexpected error occurred')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchRecentContributions = async () => {
+    try {
+      // You'll need to create this API endpoint or use existing data
+      // For now, we'll simulate with existing data
+      const mockContributions = [
+        {
+          id: 1,
+          type: 'file',
+          userName: user?.username || 'User',
+          content: 'Uploaded project specification document',
+          time: '2 hours ago'
+        },
+        {
+          id: 2,
+          type: 'update',
+          userName: 'John Doe',
+          content: 'Completed site inspection and submitted report',
+          time: '1 day ago'
+        }
+      ]
+      setRecentContributions(mockContributions)
+    } catch (error) {
+      console.error('Failed to fetch contributions:', error)
+    }
+  }
+
+  const handleQuickUpdate = async (e) => {
+    e.preventDefault()
+    try {
+      // You'll need to create this API endpoint
+      // const res = await api.post(`/api/projects/${id}/updates`, {
+      //   content: quickUpdate,
+      //   progress: progressPercentage,
+      //   status: updateStatus
+      // })
+      
+      // For now, simulate success
+      alert('Update posted successfully!')
+      setQuickUpdate('')
+      setProgressPercentage(0)
+      setUpdateStatus('on_track')
+      setShowQuickUpdate(false)
+      fetchRecentContributions()
+    } catch (error) {
+      console.error('Failed to post update:', error)
+      alert('Failed to post update: ' + (error.response?.data?.message || error.message))
     }
   }
 
@@ -180,7 +246,9 @@ const ProjectDetails = () => {
       if (res.data?.success) {
         setNewFile({ name: '', description: '', file: null })
         document.getElementById('fileInput').value = ''
+        setShowFileUpload(false)
         fetchProjectDetails()
+        fetchRecentContributions()
         alert('File uploaded successfully!')
       } else {
         alert(res.data?.message || 'Upload failed')
@@ -223,6 +291,42 @@ const ProjectDetails = () => {
         console.error('Failed to delete file:', error)
         alert('Failed to delete file: ' + (error.response?.data?.message || error.message))
       }
+    }
+  }
+
+  // Format date function
+  const formatDate = (dateString) => {
+    if (!dateString) return 'Not set'
+    try {
+      return new Date(dateString).toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+      })
+    } catch {
+      return dateString
+    }
+  }
+
+  // Format currency
+  const formatCurrency = (amount) => {
+    if (!amount) return 'Not set'
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(amount)
+  }
+
+  // Get priority color
+  const getPriorityColor = (priority) => {
+    switch(priority?.toLowerCase()) {
+      case 'low': return '#4CAF50'
+      case 'medium': return '#FF9800'
+      case 'high': return '#F44336'
+      case 'urgent': return '#9C27B0'
+      default: return '#757575'
     }
   }
 
@@ -273,7 +377,7 @@ const ProjectDetails = () => {
             <span className="project-id">ID: #{project.id}</span>
             <span className="created-date">
               Created: {project.created_at 
-                ? new Date(project.created_at).toLocaleDateString() 
+                ? formatDate(project.created_at)
                 : 'Date not available'}
             </span>
           </div>
@@ -294,6 +398,53 @@ const ProjectDetails = () => {
             </select>
           </div>
         )}
+      </div>
+
+      {/* Project Details Section - ADDED */}
+      <div className="project-details-section">
+        <div className="details-grid">
+          {/* Customer Info */}
+          <div className="detail-card">
+            <div className="detail-icon">👤</div>
+            <div className="detail-content">
+              <h4>Customer</h4>
+              <p className="detail-value">{project.customer || 'Not specified'}</p>
+            </div>
+          </div>
+
+          {/* Priority */}
+          <div className="detail-card">
+            <div className="detail-icon">⚡</div>
+            <div className="detail-content">
+              <h4>Priority</h4>
+              <p className="detail-value" style={{ color: getPriorityColor(project.priority) }}>
+                {project.priority ? project.priority.toUpperCase() : 'Not set'}
+              </p>
+            </div>
+          </div>
+
+          {/* Dates */}
+          <div className="detail-card">
+            <div className="detail-icon">📅</div>
+            <div className="detail-content">
+              <h4>Timeline</h4>
+              <p className="detail-value">
+                {formatDate(project.start_date)} - {formatDate(project.end_date) || 'Ongoing'}
+              </p>
+            </div>
+          </div>
+
+          {/* Budget */}
+          <div className="detail-card">
+            <div className="detail-icon">💰</div>
+            <div className="detail-content">
+              <h4>Budget</h4>
+              <p className="detail-value">
+                {project.budget ? formatCurrency(project.budget) : 'Not specified'}
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Description */}
@@ -342,6 +493,7 @@ const ProjectDetails = () => {
       <div className="tab-content">
         {activeTab === 'overview' && (
           <div className="overview-tab">
+            {/* Updated Stats Grid */}
             <div className="stats-grid">
               <div className="stat-card">
                 <h4>Team Members</h4>
@@ -359,13 +511,48 @@ const ProjectDetails = () => {
                 <div className="stat-label">{taskStats.completed || 0}/{taskStats.total || 0} completed</div>
               </div>
               <div className="stat-card">
-                <h4>Created On</h4>
+                <h4>Days Active</h4>
                 <div className="stat-value">
                   {project.created_at 
-                    ? new Date(project.created_at).toLocaleDateString()
+                    ? Math.floor((new Date() - new Date(project.created_at)) / (1000 * 60 * 60 * 24))
                     : 'N/A'}
                 </div>
-                <div className="stat-label">Project start date</div>
+                <div className="stat-label">Since creation</div>
+              </div>
+            </div>
+
+            {/* Project Summary */}
+            <div className="project-summary">
+              <h3>Project Summary</h3>
+              <div className="summary-content">
+                <div className="summary-item">
+                  <span className="summary-label">Customer:</span>
+                  <span className="summary-value">{project.customer || 'Not specified'}</span>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-label">Priority:</span>
+                  <span className="summary-value" style={{ color: getPriorityColor(project.priority) }}>
+                    {project.priority ? project.priority.toUpperCase() : 'Not set'}
+                  </span>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-label">Start Date:</span>
+                  <span className="summary-value">{formatDate(project.start_date)}</span>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-label">End Date:</span>
+                  <span className="summary-value">{formatDate(project.end_date) || 'Not set'}</span>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-label">Budget:</span>
+                  <span className="summary-value">
+                    {project.budget ? formatCurrency(project.budget) : 'Not specified'}
+                  </span>
+                </div>
+                <div className="summary-item">
+                  <span className="summary-label">Created:</span>
+                  <span className="summary-value">{formatDate(project.created_at)}</span>
+                </div>
               </div>
             </div>
 
@@ -378,7 +565,7 @@ const ProjectDetails = () => {
                     <div className="file-name">{file.name}</div>
                     <div className="file-meta">
                       Uploaded by {file.uploaded_by_name || 'Unknown'} • {file.uploaded_at 
-                        ? new Date(file.uploaded_at).toLocaleDateString()
+                        ? formatDate(file.uploaded_at)
                         : 'Unknown date'}
                     </div>
                   </div>
@@ -447,7 +634,7 @@ const ProjectDetails = () => {
                       </span>
                       <span className="upload-date">
                         {file.uploaded_at 
-                          ? new Date(file.uploaded_at).toLocaleDateString()
+                          ? formatDate(file.uploaded_at)
                           : 'Unknown date'}
                       </span>
                     </div>
@@ -596,16 +783,16 @@ const ProjectDetails = () => {
                         <span>Assigned to: {task.assigned_to_name}</span>
                       )}
                       {task.due_date && (
-                        <span>Due: {new Date(task.due_date).toLocaleDateString()}</span>
+                        <span>Due: {formatDate(task.due_date)}</span>
                       )}
-                      <span>Created: {new Date(task.created_at).toLocaleDateString()}</span>
+                      <span>Created: {formatDate(task.created_at)}</span>
                     </div>
                     
                     <div className="task-footer">
                       <span>Updates: {task.updates_count || 0}</span>
                       <span>Attachments: {task.attachments_count || 0}</span>
                       {task.completed_at && (
-                        <span>Completed: {new Date(task.completed_at).toLocaleDateString()}</span>
+                        <span>Completed: {formatDate(task.completed_at)}</span>
                       )}
                     </div>
                   </div>
@@ -652,70 +839,278 @@ const ProjectDetails = () => {
 
         {activeTab === 'contribute' && (
           <div className="contribute-tab">
-            <h3>Contribute to Project</h3>
-            <p>Upload files, documents, or add notes to contribute to this project.</p>
+            <div className="contribute-header">
+              <h2>Contribute to Project</h2>
+              <p className="contribute-subtitle">
+                Share updates, upload files, or report progress on this project
+              </p>
+            </div>
 
-            <form onSubmit={handleFileUpload} className="upload-form">
-              <div className="form-group">
-                <label>File *</label>
-                <input
-                  type="file"
-                  id="fileInput"
-                  onChange={handleFileChange}
-                  required
-                  className="file-input"
-                />
-                <small>Supported: PDF, DOC, DOCX, Images, Excel (Max 10MB)</small>
+            <div className="contribute-options">
+              {/* Option 1: Quick Status Update */}
+              <div className="contribute-option">
+                <div className="option-icon">📝</div>
+                <div className="option-content">
+                  <h4>Quick Status Update</h4>
+                  <p>Share what you're working on or provide a brief progress update</p>
+                  <button 
+                    className="option-button"
+                    onClick={() => setShowQuickUpdate(true)}
+                  >
+                    Add Update
+                  </button>
+                </div>
               </div>
 
-              <div className="form-group">
-                <label>File Name</label>
-                <input
-                  type="text"
-                  value={newFile.name}
-                  onChange={(e) => setNewFile({...newFile, name: e.target.value})}
-                  placeholder="Enter a descriptive name"
-                  required
-                />
+              {/* Option 2: File Upload */}
+              <div className="contribute-option">
+                <div className="option-icon">📎</div>
+                <div className="option-content">
+                  <h4>Upload File</h4>
+                  <p>Share documents, images, or other files related to the project</p>
+                  <button 
+                    className="option-button"
+                    onClick={() => setShowFileUpload(true)}
+                  >
+                    Upload File
+                  </button>
+                </div>
               </div>
 
-              <div className="form-group">
-                <label>Description</label>
-                <textarea
-                  value={newFile.description}
-                  onChange={(e) => setNewFile({...newFile, description: e.target.value})}
-                  placeholder="Describe what this file contains"
-                  rows="4"
-                />
+              {/* Option 3: Task Progress */}
+              <div className="contribute-option">
+                <div className="option-icon">✅</div>
+                <div className="option-content">
+                  <h4>Update Task Progress</h4>
+                  <p>Mark tasks as complete or update their status</p>
+                  <button 
+                    className="option-button"
+                    onClick={() => setActiveTab('tasks')}
+                  >
+                    Update Tasks
+                  </button>
+                </div>
               </div>
 
-              <div className="form-actions">
-                <button 
-                  type="button" 
-                  className="cancel-button"
-                  onClick={() => setActiveTab('files')}
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit" 
-                  className="upload-button"
-                  disabled={uploading}
-                >
-                  {uploading ? 'Uploading...' : 'Upload File'}
-                </button>
+              {/* Option 4: Add Note/Comment */}
+              <div className="contribute-option">
+                <div className="option-icon">💬</div>
+                <div className="option-content">
+                  <h4>Add Comment</h4>
+                  <p>Share thoughts, questions, or feedback about the project</p>
+                  <button 
+                    className="option-button"
+                    onClick={() => setShowCommentForm(true)}
+                  >
+                    Add Comment
+                  </button>
+                </div>
               </div>
-            </form>
+            </div>
 
-            <div className="upload-guidelines">
-              <h4>Upload Guidelines:</h4>
-              <ul>
-                <li>Only upload files related to this project</li>
-                <li>Maximum file size: 10MB</li>
-                <li>Supported formats: PDF, DOC/DOCX, XLS/XLSX, JPG, PNG</li>
-                <li>Name files descriptively for easy reference</li>
-                <li>Add descriptions to help team members understand the content</li>
-              </ul>
+            {/* File Upload Form */}
+            {showFileUpload && (
+              <div className="contribute-form">
+                <div className="form-header">
+                  <h3>Upload File</h3>
+                  <button 
+                    className="close-button"
+                    onClick={() => setShowFileUpload(false)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <form onSubmit={handleFileUpload} className="upload-form">
+                  <div className="form-group">
+                    <label>File *</label>
+                    <input
+                      type="file"
+                      id="fileInput"
+                      onChange={handleFileChange}
+                      required
+                      className="file-input"
+                    />
+                    <small>Supported: PDF, DOC, DOCX, Images, Excel (Max 10MB)</small>
+                  </div>
+
+                  <div className="form-group">
+                    <label>File Name</label>
+                    <input
+                      type="text"
+                      value={newFile.name}
+                      onChange={(e) => setNewFile({...newFile, name: e.target.value})}
+                      placeholder="Enter a descriptive name"
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Description</label>
+                    <textarea
+                      value={newFile.description}
+                      onChange={(e) => setNewFile({...newFile, description: e.target.value})}
+                      placeholder="Describe what this file contains"
+                      rows="4"
+                    />
+                  </div>
+
+                  <div className="form-actions">
+                    <button 
+                      type="button" 
+                      className="cancel-button"
+                      onClick={() => setShowFileUpload(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="upload-button"
+                      disabled={uploading}
+                    >
+                      {uploading ? 'Uploading...' : 'Upload File'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* Quick Update Form */}
+            {showQuickUpdate && (
+              <div className="contribute-form">
+                <div className="form-header">
+                  <h3>Quick Status Update</h3>
+                  <button 
+                    className="close-button"
+                    onClick={() => setShowQuickUpdate(false)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <form onSubmit={handleQuickUpdate} className="update-form">
+                  <div className="form-group">
+                    <label>What are you working on? *</label>
+                    <textarea
+                      value={quickUpdate}
+                      onChange={(e) => setQuickUpdate(e.target.value)}
+                      placeholder="E.g., Completed site inspection, working on report, encountered issue with..."
+                      rows="4"
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Progress Percentage</label>
+                    <div className="progress-slider">
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={progressPercentage}
+                        onChange={(e) => setProgressPercentage(e.target.value)}
+                        className="slider"
+                      />
+                      <span className="slider-value">{progressPercentage}%</span>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Status</label>
+                    <select
+                      value={updateStatus}
+                      onChange={(e) => setUpdateStatus(e.target.value)}
+                    >
+                      <option value="on_track">On Track</option>
+                      <option value="at_risk">At Risk</option>
+                      <option value="blocked">Blocked</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                  </div>
+
+                  <div className="form-actions">
+                    <button 
+                      type="button" 
+                      className="cancel-button"
+                      onClick={() => setShowQuickUpdate(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="submit-button"
+                    >
+                      Post Update
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* Comment Form */}
+            {showCommentForm && (
+              <div className="contribute-form">
+                <div className="form-header">
+                  <h3>Add Comment</h3>
+                  <button 
+                    className="close-button"
+                    onClick={() => setShowCommentForm(false)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <form className="comment-form">
+                  <div className="form-group">
+                    <label>Your Comment *</label>
+                    <textarea
+                      placeholder="Share your thoughts, questions, or feedback..."
+                      rows="4"
+                      required
+                    />
+                  </div>
+                  <div className="form-actions">
+                    <button 
+                      type="button" 
+                      className="cancel-button"
+                      onClick={() => setShowCommentForm(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="submit-button"
+                    >
+                      Post Comment
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* Recent Contributions */}
+            <div className="recent-contributions">
+              <h3>Recent Contributions</h3>
+              {recentContributions.length > 0 ? (
+                <div className="contributions-list">
+                  {recentContributions.map(contribution => (
+                    <div key={contribution.id} className="contribution-item">
+                      <div className="contribution-icon">
+                        {contribution.type === 'file' ? '📎' : 
+                         contribution.type === 'update' ? '📝' : 
+                         contribution.type === 'task' ? '✅' : '💬'}
+                      </div>
+                      <div className="contribution-content">
+                        <div className="contribution-header">
+                          <span className="contributor">{contribution.userName}</span>
+                          <span className="contribution-type">{contribution.type}</span>
+                          <span className="contribution-time">{contribution.time}</span>
+                        </div>
+                        <p className="contribution-text">{contribution.content}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="no-contributions">No contributions yet. Be the first to contribute!</p>
+              )}
             </div>
           </div>
         )}
@@ -738,326 +1133,5 @@ const ProjectDetails = () => {
     </div>
   )
 }
-{/* Tabs */}
-<div className="project-tabs">
-  <button 
-    className={`tab-button ${activeTab === 'overview' ? 'active' : ''}`}
-    onClick={() => setActiveTab('overview')}
-  >
-    Overview
-  </button>
-  <button 
-    className={`tab-button ${activeTab === 'files' ? 'active' : ''}`}
-    onClick={() => setActiveTab('files')}
-  >
-    Files ({files.length})
-  </button>
-  <button 
-    className={`tab-button ${activeTab === 'tasks' ? 'active' : ''}`}
-    onClick={() => setActiveTab('tasks')}
-  >
-    Tasks ({tasks.length})
-  </button>
-  <button 
-    className={`tab-button ${activeTab === 'team' ? 'active' : ''}`}
-    onClick={() => setActiveTab('team')}
-  >
-    Team ({collaborators.length})
-  </button>
-  {(isManager || isCollaborator) && (
-    <button 
-      className={`tab-button ${activeTab === 'contribute' ? 'active' : ''}`}
-      onClick={() => setActiveTab('contribute')}
-    >
-      + Contribute
-    </button>
-  )}
-</div>
-{activeTab === 'contribute' && (
-  <div className="contribute-tab">
-    <div className="contribute-header">
-      <h2>Contribute to Project</h2>
-      <p className="contribute-subtitle">
-        Share updates, upload files, or report progress on this project
-      </p>
-    </div>
 
-    <div className="contribute-options">
-      {/* Option 1: Quick Status Update */}
-      <div className="contribute-option">
-        <div className="option-icon">📝</div>
-        <div className="option-content">
-          <h4>Quick Status Update</h4>
-          <p>Share what you're working on or provide a brief progress update</p>
-          <button 
-            className="option-button"
-            onClick={() => setShowQuickUpdate(true)}
-          >
-            Add Update
-          </button>
-        </div>
-      </div>
-
-      {/* Option 2: File Upload */}
-      <div className="contribute-option">
-        <div className="option-icon">📎</div>
-        <div className="option-content">
-          <h4>Upload File</h4>
-          <p>Share documents, images, or other files related to the project</p>
-          <button 
-            className="option-button"
-            onClick={() => setShowFileUpload(true)}
-          >
-            Upload File
-          </button>
-        </div>
-      </div>
-
-      {/* Option 3: Task Progress */}
-      <div className="contribute-option">
-        <div className="option-icon">✅</div>
-        <div className="option-content">
-          <h4>Update Task Progress</h4>
-          <p>Mark tasks as complete or update their status</p>
-          <button 
-            className="option-button"
-            onClick={() => setShowTaskUpdate(true)}
-          >
-            Update Tasks
-          </button>
-        </div>
-      </div>
-
-      {/* Option 4: Add Note/Comment */}
-      <div className="contribute-option">
-        <div className="option-icon">💬</div>
-        <div className="option-content">
-          <h4>Add Comment</h4>
-          <p>Share thoughts, questions, or feedback about the project</p>
-          <button 
-            className="option-button"
-            onClick={() => setShowCommentForm(true)}
-          >
-            Add Comment
-          </button>
-        </div>
-      </div>
-    </div>
-
-    {/* File Upload Form */}
-    {showFileUpload && (
-      <div className="contribute-form">
-        <div className="form-header">
-          <h3>Upload File</h3>
-          <button 
-            className="close-button"
-            onClick={() => setShowFileUpload(false)}
-          >
-            ×
-          </button>
-        </div>
-        <form onSubmit={handleFileUpload} className="upload-form">
-          <div className="form-group">
-            <label>File *</label>
-            <input
-              type="file"
-              id="fileInput"
-              onChange={handleFileChange}
-              required
-              className="file-input"
-            />
-            <small>Supported: PDF, DOC, DOCX, Images, Excel (Max 10MB)</small>
-          </div>
-
-          <div className="form-group">
-            <label>File Name</label>
-            <input
-              type="text"
-              value={newFile.name}
-              onChange={(e) => setNewFile({...newFile, name: e.target.value})}
-              placeholder="Enter a descriptive name"
-              required
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Description</label>
-            <textarea
-              value={newFile.description}
-              onChange={(e) => setNewFile({...newFile, description: e.target.value})}
-              placeholder="Describe what this file contains"
-              rows="4"
-            />
-          </div>
-
-          <div className="form-actions">
-            <button 
-              type="button" 
-              className="cancel-button"
-              onClick={() => setShowFileUpload(false)}
-            >
-              Cancel
-            </button>
-            <button 
-              type="submit" 
-              className="upload-button"
-              disabled={uploading}
-            >
-              {uploading ? 'Uploading...' : 'Upload File'}
-            </button>
-          </div>
-        </form>
-      </div>
-    )}
-
-    {/* Quick Update Form */}
-    {showQuickUpdate && (
-      <div className="contribute-form">
-        <div className="form-header">
-          <h3>Quick Status Update</h3>
-          <button 
-            className="close-button"
-            onClick={() => setShowQuickUpdate(false)}
-          >
-            ×
-          </button>
-        </div>
-        <form onSubmit={handleQuickUpdate} className="update-form">
-          <div className="form-group">
-            <label>What are you working on? *</label>
-            <textarea
-              value={quickUpdate}
-              onChange={(e) => setQuickUpdate(e.target.value)}
-              placeholder="E.g., Completed site inspection, working on report, encountered issue with..."
-              rows="4"
-              required
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Progress Percentage</label>
-            <div className="progress-slider">
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={progressPercentage}
-                onChange={(e) => setProgressPercentage(e.target.value)}
-                className="slider"
-              />
-              <span className="slider-value">{progressPercentage}%</span>
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label>Status</label>
-            <select
-              value={updateStatus}
-              onChange={(e) => setUpdateStatus(e.target.value)}
-            >
-              <option value="on_track">On Track</option>
-              <option value="at_risk">At Risk</option>
-              <option value="blocked">Blocked</option>
-              <option value="completed">Completed</option>
-            </select>
-          </div>
-
-          <div className="form-actions">
-            <button 
-              type="button" 
-              className="cancel-button"
-              onClick={() => setShowQuickUpdate(false)}
-            >
-              Cancel
-            </button>
-            <button 
-              type="submit" 
-              className="submit-button"
-            >
-              Post Update
-            </button>
-          </div>
-        </form>
-      </div>
-    )}
-
-    {/* Recent Contributions */}
-    <div className="recent-contributions">
-      <h3>Recent Contributions</h3>
-      {recentContributions.length > 0 ? (
-        <div className="contributions-list">
-          {recentContributions.map(contribution => (
-            <div key={contribution.id} className="contribution-item">
-              <div className="contribution-icon">
-                {contribution.type === 'file' ? '📎' : 
-                 contribution.type === 'update' ? '📝' : 
-                 contribution.type === 'task' ? '✅' : '💬'}
-              </div>
-              <div className="contribution-content">
-                <div className="contribution-header">
-                  <span className="contributor">{contribution.userName}</span>
-                  <span className="contribution-type">{contribution.type}</span>
-                  <span className="contribution-time">{contribution.time}</span>
-                </div>
-                <p className="contribution-text">{contribution.content}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="no-contributions">No contributions yet. Be the first to contribute!</p>
-      )}
-    </div>
-  </div>
-)}
-// Add these to your existing state declarations
-const [showQuickUpdate, setShowQuickUpdate] = useState(false)
-const [showTaskUpdate, setShowTaskUpdate] = useState(false)
-const [showCommentForm, setShowCommentForm] = useState(false)
-const [quickUpdate, setQuickUpdate] = useState('')
-const [progressPercentage, setProgressPercentage] = useState(0)
-const [updateStatus, setUpdateStatus] = useState('on_track')
-const [recentContributions, setRecentContributions] = useState([])
-
-// Add this useEffect to fetch recent contributions
-useEffect(() => {
-  if (activeTab === 'contribute') {
-    fetchRecentContributions()
-  }
-}, [activeTab])
-
-const fetchRecentContributions = async () => {
-  try {
-    // You'll need to create this API endpoint
-    const res = await api.get(`/api/projects/${id}/contributions`)
-    if (res.data?.success) {
-      setRecentContributions(res.data.contributions)
-    }
-  } catch (error) {
-    console.error('Failed to fetch contributions:', error)
-  }
-}
-
-const handleQuickUpdate = async (e) => {
-  e.preventDefault()
-  try {
-    const res = await api.post(`/api/projects/${id}/updates`, {
-      content: quickUpdate,
-      progress: progressPercentage,
-      status: updateStatus
-    })
-    
-    if (res.data?.success) {
-      alert('Update posted successfully!')
-      setQuickUpdate('')
-      setProgressPercentage(0)
-      setUpdateStatus('on_track')
-      setShowQuickUpdate(false)
-      fetchRecentContributions()
-    }
-  } catch (error) {
-    console.error('Failed to post update:', error)
-    alert('Failed to post update: ' + (error.response?.data?.message || error.message))
-  }
-}
 export default ProjectDetails

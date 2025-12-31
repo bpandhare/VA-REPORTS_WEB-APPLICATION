@@ -1,4 +1,3 @@
-// components/ManagerProjectDashboard.jsx
 import React, { useState, useEffect } from 'react'
 import { 
   listProjects, 
@@ -10,6 +9,7 @@ import {
 import './ManagerProjectDashboard.css'
 
 const ManagerProjectDashboard = () => {
+  // State declarations
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -22,8 +22,13 @@ const ManagerProjectDashboard = () => {
   })
   const [newProject, setNewProject] = useState({
     name: '',
+    customer: '',
     description: '',
-    status: 'active'
+    status: 'active',
+    priority: 'medium',
+    startDate: '',
+    endDate: '',
+    budget: ''
   })
   const [userInfo, setUserInfo] = useState(null)
 
@@ -33,13 +38,10 @@ const ManagerProjectDashboard = () => {
 
   const fetchUserAndProjects = async () => {
     try {
-      // Get user info
       const userRes = await getUserInfo()
       if (userRes.data?.success) {
         setUserInfo(userRes.data)
       }
-
-      // Get projects
       await fetchProjects()
     } catch (error) {
       console.error('Failed to fetch data:', error)
@@ -48,38 +50,148 @@ const ManagerProjectDashboard = () => {
     }
   }
 
-  const fetchProjects = async () => {
-    try {
-      const res = await listProjects()
-      if (res.data?.success) {
-        const projectsData = res.data.projects || []
-        setProjects(projectsData)
-        
-        // Calculate stats
-        const total = projectsData.length
-        const completed = projectsData.filter(p => p.status === 'completed').length
-        const active = projectsData.filter(p => p.status === 'active').length
-        const overdue = projectsData.filter(p => p.status === 'overdue').length
-        
-        setStats({ total, completed, active, overdue })
-      }
-    } catch (error) {
-      console.error('Failed to fetch projects:', error)
+ // In ManagerProjectDashboard.jsx, update the fetchProjects function
+const fetchProjects = async () => {
+  try {
+    console.log('📡 Fetching projects...');
+    
+    // Try real API first
+    const res = await listProjects();
+    console.log('Real API response:', res.data);
+    
+    if (res.data?.success) {
+      const projectsData = res.data.projects || [];
+      console.log(`✅ Got ${projectsData.length} projects from real API`);
+      
+      // Check if any projects are missing customer field
+      const projectsWithCustomer = projectsData.map(project => ({
+        ...project,
+        customer: project.customer || 'Not specified' // Default value
+      }));
+      
+      setProjects(projectsWithCustomer);
+      
+      // Calculate stats
+      const total = projectsWithCustomer.length;
+      const completed = projectsWithCustomer.filter(p => p.status === 'completed').length;
+      const active = projectsWithCustomer.filter(p => p.status === 'active').length;
+      const overdue = projectsWithCustomer.filter(p => p.status === 'overdue').length;
+      
+      setStats({ total, completed, active, overdue });
+      
+    } else {
+      console.warn('Real API returned unsuccessful, using mock data');
+      // Fallback to showing mock data if real API fails
+      await loadMockProjects();
     }
+  } catch (error) {
+    console.error('Failed to fetch projects from real API:', error);
+    // Load mock projects as fallback
+    await loadMockProjects();
   }
+};
 
+const loadMockProjects = async () => {
+  try {
+    const mockRes = await listProjects(); // This will use mock mode now
+    if (mockRes.data?.success) {
+      const mockProjects = mockRes.data.projects || [];
+      console.log(`🛠️ Loaded ${mockProjects.length} mock projects`);
+      setProjects(mockProjects);
+      
+      // Calculate stats for mock projects
+      const total = mockProjects.length;
+      const completed = mockProjects.filter(p => p.status === 'completed').length;
+      const active = mockProjects.filter(p => p.status === 'active').length;
+      const overdue = mockProjects.filter(p => p.status === 'overdue').length;
+      
+      setStats({ total, completed, active, overdue });
+    }
+  } catch (mockError) {
+    console.error('Failed to load mock projects:', mockError);
+  }
+};
+
+// Add a button to sync mock data to real database when backend is fixed
+const syncMockToDatabase = async () => {
+  if (!window.confirm('This will attempt to save all mock projects to the real database. Continue?')) return;
+  
+  try {
+    // Get mock projects from localStorage
+    const mockProjectsStr = localStorage.getItem('mock_projects');
+    if (!mockProjectsStr) {
+      alert('No mock projects found');
+      return;
+    }
+    
+    const mockProjects = JSON.parse(mockProjectsStr);
+    
+    // Try to save each project to real database
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const project of mockProjects) {
+      try {
+        // Prepare data for real API (remove mock-only fields)
+        const { id, created_at, updated_at, ...projectData } = project;
+        await createProject(projectData);
+        successCount++;
+      } catch (error) {
+        console.error(`Failed to sync project ${project.name}:`, error);
+        failCount++;
+      }
+    }
+    
+    alert(`Sync complete:\n✅ ${successCount} projects synced\n❌ ${failCount} failed\n\nRefresh to see updated list.`);
+    
+    // Refresh the project list
+    fetchProjects();
+    
+  } catch (error) {
+    console.error('Sync failed:', error);
+    alert('Sync failed: ' + error.message);
+  }
+};
   const handleCreateProject = async (e) => {
     e.preventDefault()
     try {
-      const res = await createProject(newProject)
+      const projectData = {
+        name: newProject.name,
+        customer: newProject.customer,
+        description: newProject.description,
+        status: newProject.status,
+        priority: newProject.priority,
+        start_date: newProject.startDate || null,
+        end_date: newProject.endDate || null,
+        budget: newProject.budget || null
+      }
+      
+      console.log('Sending project data:', projectData) // Debug
+      
+      const res = await createProject(projectData)
+      console.log('Create response:', res.data) // Debug
+      
       if (res.data?.success) {
+        alert('Project created successfully!')
         setShowCreateModal(false)
-        setNewProject({ name: '', description: '', status: 'active' })
-        fetchProjects()
+        setNewProject({
+          name: '',
+          customer: '',
+          description: '',
+          status: 'active',
+          priority: 'medium',
+          startDate: '',
+          endDate: '',
+          budget: ''
+        })
+        // Refresh projects
+        await fetchProjects()
+      } else {
+        alert('Failed to create project: ' + (res.data?.message || 'Unknown error'))
       }
     } catch (error) {
       console.error('Failed to create project:', error)
-      alert('Failed to create project. Please try again.')
+      alert('Failed to create project. Please check console for details.')
     }
   }
 
@@ -113,10 +225,10 @@ const ManagerProjectDashboard = () => {
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'active': return 'var(--status-active)'
-      case 'completed': return 'var(--status-completed)'
-      case 'overdue': return 'var(--status-overdue)'
-      default: return 'var(--status-default)'
+      case 'active': return '#10B981'
+      case 'completed': return '#3B82F6'
+      case 'overdue': return '#EF4444'
+      default: return '#6B7280'
     }
   }
 
@@ -126,6 +238,39 @@ const ManagerProjectDashboard = () => {
       case 'completed': return 'COMPLETED'
       case 'overdue': return 'OVERDUE'
       default: return 'PLANNING'
+    }
+  }
+
+  const getPriorityColor = (priority) => {
+    switch(priority?.toLowerCase()) {
+      case 'low': return '#4CAF50'
+      case 'medium': return '#FF9800'
+      case 'high': return '#F44336'
+      case 'urgent': return '#9C27B0'
+      default: return '#757575'
+    }
+  }
+
+  const formatCurrency = (amount) => {
+    if (!amount) return 'Not set'
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(amount)
+  }
+
+  const formatDate = (dateString) => {
+    if (!dateString) return 'Not set'
+    try {
+      return new Date(dateString).toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+      })
+    } catch {
+      return dateString
     }
   }
 
@@ -144,7 +289,7 @@ const ManagerProjectDashboard = () => {
       <div className="dashboard-header">
         <div className="header-left">
           <h1>Welcome back, {userInfo?.username || 'Manager'}</h1>
-          <p className="subtitle">Here's what's happening with your projects today</p>
+          <p className="subtitle">Manage your projects and team</p>
         </div>
         <div className="header-right">
           <button 
@@ -164,7 +309,6 @@ const ManagerProjectDashboard = () => {
           <div className="stat-content">
             <h3>Total Projects</h3>
             <div className="stat-value">{stats.total}</div>
-            <div className="stat-subtext">of {stats.total} total</div>
           </div>
         </div>
 
@@ -173,16 +317,14 @@ const ManagerProjectDashboard = () => {
           <div className="stat-content">
             <h3>Completed</h3>
             <div className="stat-value">{stats.completed}</div>
-            <div className="stat-subtext">Completed projects</div>
           </div>
         </div>
 
         <div className="stat-card">
           <div className="stat-icon active">🔄</div>
           <div className="stat-content">
-            <h3>My Tasks</h3>
+            <h3>Active</h3>
             <div className="stat-value">{stats.active}</div>
-            <div className="stat-subtext">Assigned to me</div>
           </div>
         </div>
 
@@ -191,7 +333,6 @@ const ManagerProjectDashboard = () => {
           <div className="stat-content">
             <h3>Overdue</h3>
             <div className="stat-value">{stats.overdue}</div>
-            <div className="stat-subtext">Need attention</div>
           </div>
         </div>
       </div>
@@ -200,9 +341,15 @@ const ManagerProjectDashboard = () => {
       <div className="dashboard-main">
         <div className="projects-section">
           <div className="section-header">
-            <h2>Project Overview</h2>
+            <h2>All Projects ({projects.length})</h2>
             <div className="section-actions">
-              <button className="btn-ghost">View all</button>
+              <button 
+                className="btn-refresh"
+                onClick={() => fetchProjects()}
+                title="Refresh projects"
+              >
+                🔄 Refresh
+              </button>
             </div>
           </div>
 
@@ -252,9 +399,46 @@ const ManagerProjectDashboard = () => {
                     </div>
                   </div>
                   
+                  {/* CUSTOMER FIELD - Now always visible */}
+                  <div className="project-meta-row">
+                    <div className="meta-item">
+                      <span className="meta-icon">🏢</span>
+                      <span className="meta-label">Customer:</span>
+                      <span className="meta-value">{project.customer || 'Not specified'}</span>
+                    </div>
+                  </div>
+                  
                   <p className="project-description">
                     {project.description || 'No description provided'}
                   </p>
+                  
+                  {/* Project Details */}
+                  <div className="project-details-grid">
+                    <div className="detail-item">
+                      <span className="detail-label">Start Date:</span>
+                      <span className="detail-value">{formatDate(project.start_date)}</span>
+                    </div>
+                    <div className="detail-item">
+                      <span className="detail-label">End Date:</span>
+                      <span className="detail-value">{formatDate(project.end_date)}</span>
+                    </div>
+                    <div className="detail-item">
+                      <span className="detail-label">Budget:</span>
+                      <span className="detail-value">{formatCurrency(project.budget)}</span>
+                    </div>
+                    <div className="detail-item">
+                      <span className="detail-label">Priority:</span>
+                      <span 
+                        className="detail-value priority-badge"
+                        style={{ 
+                          color: getPriorityColor(project.priority),
+                          backgroundColor: `${getPriorityColor(project.priority)}20`
+                        }}
+                      >
+                        {project.priority?.toUpperCase() || 'MEDIUM'}
+                      </span>
+                    </div>
+                  </div>
                   
                   <div className="project-footer">
                     <div className="project-meta">
@@ -262,14 +446,14 @@ const ManagerProjectDashboard = () => {
                         👥 {project.collaborators_count || 0} members
                       </span>
                       <span className="date">
-                        📅 {new Date(project.created_at).toLocaleDateString()}
+                        📅 {formatDate(project.created_at)}
                       </span>
                     </div>
                     <div className="project-progress">
                       <div className="progress-bar">
                         <div 
                           className="progress-fill"
-                          style={{ width: project.progress ? `${project.progress}%` : '0%' }}
+                          style={{ width: `${project.progress || 0}%` }}
                         ></div>
                       </div>
                       <span className="progress-text">
@@ -285,57 +469,41 @@ const ManagerProjectDashboard = () => {
 
         {/* Sidebar */}
         <div className="dashboard-sidebar">
-          {/* Recent Activity */}
           <div className="sidebar-card">
-            <h3>Recent Activity</h3>
-            <div className="activity-list">
-              {projects.slice(0, 3).map(project => (
-                <div key={project.id} className="activity-item">
-                  <div className="activity-icon">📝</div>
-                  <div className="activity-content">
-                    <p><strong>{project.name}</strong> was updated</p>
-                    <small>2 hours ago</small>
+            <h3>Customer Summary</h3>
+            <div className="customer-summary">
+              <div className="summary-item">
+                <span>Projects with Customers:</span>
+                <span className="summary-value">
+                  {projects.filter(p => p.customer && p.customer.trim() !== '').length}
+                </span>
+              </div>
+              <div className="summary-item">
+                <span>Unique Customers:</span>
+                <span className="summary-value">
+                  {new Set(projects.filter(p => p.customer).map(p => p.customer)).size}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="sidebar-card">
+            <h3>Recent Customers</h3>
+            <div className="recent-customers">
+              {projects
+                .filter(p => p.customer)
+                .slice(0, 3)
+                .map((project, index) => (
+                  <div key={index} className="customer-item">
+                    <div className="customer-info">
+                      <span className="customer-name">{project.customer}</span>
+                      <span className="project-name">{project.name}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Quick Actions */}
-          <div className="sidebar-card">
-            <h3>Quick Actions</h3>
-            <div className="quick-actions">
-              <button className="action-btn">
-                <span className="action-icon">📊</span>
-                Generate Report
-              </button>
-              <button className="action-btn">
-                <span className="action-icon">👥</span>
-                Add Team Member
-              </button>
-              <button className="action-btn">
-                <span className="action-icon">📅</span>
-                Schedule Meeting
-              </button>
-            </div>
-          </div>
-
-          {/* Team Overview */}
-          <div className="sidebar-card">
-            <h3>Team Overview</h3>
-            <div className="team-stats">
-              <div className="team-stat">
-                <span className="stat-label">Active Members</span>
-                <span className="stat-value">12</span>
-              </div>
-              <div className="team-stat">
-                <span className="stat-label">Available</span>
-                <span className="stat-value">8</span>
-              </div>
-              <div className="team-stat">
-                <span className="stat-label">On Leave</span>
-                <span className="stat-value">2</span>
-              </div>
+                ))}
+              {projects.filter(p => p.customer).length === 0 && (
+                <p className="no-data">No customers yet</p>
+              )}
             </div>
           </div>
         </div>
@@ -356,7 +524,7 @@ const ManagerProjectDashboard = () => {
             </div>
             <form onSubmit={handleCreateProject}>
               <div className="form-group">
-                <label>Project Name</label>
+                <label>Project Name *</label>
                 <input
                   type="text"
                   value={newProject.name}
@@ -365,26 +533,110 @@ const ManagerProjectDashboard = () => {
                   required
                 />
               </div>
+
+              <div className="form-group">
+                <label>Customer Name *</label>
+                <select
+                  value={newProject.customer}
+                  onChange={(e) => setNewProject({...newProject, customer: e.target.value})}
+                  required
+                  className="customer-select"
+                >
+                  <option value="">Select Customer</option>
+                  <option value="CEE DEE">CEE DEE</option>
+                  <option value="ABC Corporation">ABC Corporation</option>
+                  <option value="XYZ Industries">XYZ Industries</option>
+                  <option value="Global Tech Solutions">Global Tech Solutions</option>
+                  <option value="Prime Construction">Prime Construction</option>
+                  <option value="Infra Builders">Infra Builders</option>
+                  <option value="Tech Innovators Ltd">Tech Innovators Ltd</option>
+                  <option value="Mega Projects Inc">Mega Projects Inc</option>
+                  <option value="City Development Authority">City Development Authority</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              {newProject.customer === 'Other' && (
+                <div className="form-group">
+                  <label>Specify Customer Name *</label>
+                  <input
+                    type="text"
+                    value={newProject.otherCustomer || ''}
+                    onChange={(e) => setNewProject({...newProject, otherCustomer: e.target.value})}
+                    placeholder="Enter customer name"
+                    required={newProject.customer === 'Other'}
+                  />
+                </div>
+              )}
+
               <div className="form-group">
                 <label>Description</label>
                 <textarea
                   value={newProject.description}
                   onChange={(e) => setNewProject({...newProject, description: e.target.value})}
-                  placeholder="Describe your project"
-                  rows="4"
+                  placeholder="Describe your project..."
+                  rows="3"
                 />
               </div>
-              <div className="form-group">
-                <label>Status</label>
-                <select
-                  value={newProject.status}
-                  onChange={(e) => setNewProject({...newProject, status: e.target.value})}
-                >
-                  <option value="active">Active</option>
-                  <option value="planning">Planning</option>
-                  <option value="on-hold">On Hold</option>
-                </select>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Status</label>
+                  <select
+                    value={newProject.status}
+                    onChange={(e) => setNewProject({...newProject, status: e.target.value})}
+                  >
+                    <option value="planning">Planning</option>
+                    <option value="active">Active</option>
+                    <option value="on-hold">On Hold</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Priority</label>
+                  <select
+                    value={newProject.priority}
+                    onChange={(e) => setNewProject({...newProject, priority: e.target.value})}
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="urgent">Urgent</option>
+                  </select>
+                </div>
               </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Start Date</label>
+                  <input
+                    type="date"
+                    value={newProject.startDate}
+                    onChange={(e) => setNewProject({...newProject, startDate: e.target.value})}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>End Date</label>
+                  <input
+                    type="date"
+                    value={newProject.endDate}
+                    onChange={(e) => setNewProject({...newProject, endDate: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Budget (₹)</label>
+                <input
+                  type="number"
+                  value={newProject.budget}
+                  onChange={(e) => setNewProject({...newProject, budget: e.target.value})}
+                  placeholder="Enter budget amount"
+                  min="0"
+                />
+              </div>
+
               <div className="modal-actions">
                 <button 
                   type="button"
@@ -425,31 +677,99 @@ const ManagerProjectDashboard = () => {
                   type="text"
                   value={editingProject.name}
                   onChange={(e) => setEditingProject({...editingProject, name: e.target.value})}
-                  placeholder="Enter project name"
                   required
                 />
               </div>
+              
+              <div className="form-group">
+                <label>Customer Name</label>
+                <select
+                  value={editingProject.customer || ''}
+                  onChange={(e) => setEditingProject({...editingProject, customer: e.target.value})}
+                  className="customer-select"
+                >
+                  <option value="">Select Customer</option>
+                  <option value="CEE DEE">CEE DEE</option>
+                  <option value="ABC Corporation">ABC Corporation</option>
+                  <option value="XYZ Industries">XYZ Industries</option>
+                  <option value="Global Tech Solutions">Global Tech Solutions</option>
+                  <option value="Prime Construction">Prime Construction</option>
+                  <option value="Infra Builders">Infra Builders</option>
+                  <option value="Tech Innovators Ltd">Tech Innovators Ltd</option>
+                  <option value="Mega Projects Inc">Mega Projects Inc</option>
+                  <option value="City Development Authority">City Development Authority</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              
               <div className="form-group">
                 <label>Description</label>
                 <textarea
                   value={editingProject.description}
                   onChange={(e) => setEditingProject({...editingProject, description: e.target.value})}
-                  placeholder="Describe your project"
-                  rows="4"
+                  rows="3"
                 />
               </div>
-              <div className="form-group">
-                <label>Status</label>
-                <select
-                  value={editingProject.status || 'active'}
-                  onChange={(e) => setEditingProject({...editingProject, status: e.target.value})}
-                >
-                  <option value="active">Active</option>
-                  <option value="completed">Completed</option>
-                  <option value="on-hold">On Hold</option>
-                  <option value="overdue">Overdue</option>
-                </select>
+              
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Status</label>
+                  <select
+                    value={editingProject.status}
+                    onChange={(e) => setEditingProject({...editingProject, status: e.target.value})}
+                  >
+                    <option value="planning">Planning</option>
+                    <option value="active">Active</option>
+                    <option value="on-hold">On Hold</option>
+                    <option value="completed">Completed</option>
+                    <option value="overdue">Overdue</option>
+                  </select>
+                </div>
+                
+                <div className="form-group">
+                  <label>Priority</label>
+                  <select
+                    value={editingProject.priority}
+                    onChange={(e) => setEditingProject({...editingProject, priority: e.target.value})}
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="urgent">Urgent</option>
+                  </select>
+                </div>
               </div>
+              
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Start Date</label>
+                  <input
+                    type="date"
+                    value={editingProject.start_date?.split('T')[0] || ''}
+                    onChange={(e) => setEditingProject({...editingProject, start_date: e.target.value})}
+                  />
+                </div>
+                
+                <div className="form-group">
+                  <label>End Date</label>
+                  <input
+                    type="date"
+                    value={editingProject.end_date?.split('T')[0] || ''}
+                    onChange={(e) => setEditingProject({...editingProject, end_date: e.target.value})}
+                  />
+                </div>
+              </div>
+              
+              <div className="form-group">
+                <label>Budget (₹)</label>
+                <input
+                  type="number"
+                  value={editingProject.budget || ''}
+                  onChange={(e) => setEditingProject({...editingProject, budget: e.target.value})}
+                  min="0"
+                />
+              </div>
+              
               <div className="modal-actions">
                 <button 
                   type="button"
@@ -471,28 +791,6 @@ const ManagerProjectDashboard = () => {
       )}
     </div>
   )
-}
-// In your dashboard component
-const [projectStats, setProjectStats] = useState({
-  total: 0,
-  completed: 0,
-  inProgress: 0,
-  pending: 0
-})
-
-useEffect(() => {
-  fetchProjectStats()
-}, [])
-
-const fetchProjectStats = async () => {
-  try {
-    const res = await getProjectStats()
-    if (res.data?.success) {
-      setProjectStats(res.data.stats)
-    }
-  } catch (error) {
-    console.error('Failed to fetch project stats:', error)
-  }
 }
 
 export default ManagerProjectDashboard

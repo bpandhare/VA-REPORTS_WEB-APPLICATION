@@ -1,454 +1,645 @@
-import React, { useState, useEffect } from 'react';
-import { useAuth } from './AuthContext';
-import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  AreaChart, Area
-} from 'recharts';
-import './PerformanceDashboard.css';
+import React, { useState, useEffect } from 'react'
+import { 
+  listProjects, 
+  createProject, 
+  updateProject, 
+  deleteProject,
+  getUserInfo 
+} from '../services/api'
+import './ManagerProjectDashboard.css'
 
-const PerformanceDashboard = () => {
-  const { token, user } = useAuth();
-  const [period, setPeriod] = useState('weekly');
-  const [loading, setLoading] = useState(true);
-  const [performanceData, setPerformanceData] = useState(null);
-  const [engineers, setEngineers] = useState([]);
-  const [selectedEngineer, setSelectedEngineer] = useState('');
-  const [isManager, setIsManager] = useState(false);
-
-  const API_URL = import.meta.env.VITE_API_URL?.replace('/api/activity', '') ?? 'http://localhost:5000';
+const ManagerProjectDashboard = () => {
+  const [projects, setProjects] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showCreateModal, setShowCreateModal] = useState(false) // ← ADD THIS LINE
+  const [editingProject, setEditingProject] = useState(null)
+  const [stats, setStats] = useState({
+    total: 0,
+    completed: 0,
+    active: 0,
+    overdue: 0
+  })
+  // ... rest of your code
+  const [newProject, setNewProject] = useState({
+    name: '',
+    customer: '', // Added customer field
+    description: '',
+    status: 'active',
+    priority: 'medium',
+    startDate: '',
+    endDate: '',
+    budget: ''
+  })
+  const [userInfo, setUserInfo] = useState(null)
 
   useEffect(() => {
-    if (user) {
-      const role = user.role?.toLowerCase() || '';
-      setIsManager(role.includes('manager') || role.includes('team leader') || role.includes('group leader'));
-      
-      if (isManager) {
-        fetchEngineers();
-      }
-    }
-  }, [user]);
+    fetchUserAndProjects()
+  }, [])
 
-  useEffect(() => {
-    fetchPerformanceData();
-  }, [period, selectedEngineer]);
-
-  const fetchEngineers = async () => {
+  const fetchUserAndProjects = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/activity/engineers-list`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setEngineers(data.engineers || []);
+      // Get user info
+      const userRes = await getUserInfo()
+      if (userRes.data?.success) {
+        setUserInfo(userRes.data)
       }
-    } catch (error) {
-      console.error('Error fetching engineers:', error);
-    }
-  };
 
-  const fetchPerformanceData = async () => {
-    setLoading(true);
-    try {
-      let url = `${API_URL}/api/activity/performance?period=${period}`;
-      if (isManager && selectedEngineer) {
-        url += `&engineerId=${selectedEngineer}`;
-      }
-      
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setPerformanceData(data.data);
-      }
+      // Get projects
+      await fetchProjects()
     } catch (error) {
-      console.error('Error fetching performance data:', error);
+      console.error('Failed to fetch data:', error)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
-  const LOCATION_COLORS = {
-    'site': '#0088FE',
-    'office': '#00C49F',
-    'leave': '#FFBB28'
-  };
+  const fetchProjects = async () => {
+    try {
+      const res = await listProjects()
+      if (res.data?.success) {
+        const projectsData = res.data.projects || []
+        setProjects(projectsData)
+        
+        // Calculate stats
+        const total = projectsData.length
+        const completed = projectsData.filter(p => p.status === 'completed').length
+        const active = projectsData.filter(p => p.status === 'active').length
+        const overdue = projectsData.filter(p => p.status === 'overdue').length
+        
+        setStats({ total, completed, active, overdue })
+      }
+    } catch (error) {
+      console.error('Failed to fetch projects:', error)
+    }
+  }
+
+  const handleCreateProject = async (e) => {
+    e.preventDefault()
+    try {
+      // Prepare project data with all fields
+      const projectData = {
+        name: newProject.name,
+        customer: newProject.customer,
+        description: newProject.description,
+        status: newProject.status,
+        priority: newProject.priority,
+        start_date: newProject.startDate || null,
+        end_date: newProject.endDate || null,
+        budget: newProject.budget || null
+      }
+      
+      const res = await createProject(projectData)
+      if (res.data?.success) {
+        setShowCreateModal(false)
+        // Reset form with all fields
+        setNewProject({
+          name: '',
+          customer: '',
+          description: '',
+          status: 'active',
+          priority: 'medium',
+          startDate: '',
+          endDate: '',
+          budget: ''
+        })
+        fetchProjects()
+      }
+    } catch (error) {
+      console.error('Failed to create project:', error)
+      alert('Failed to create project. Please try again.')
+    }
+  }
+
+  const handleUpdateProject = async (e) => {
+    e.preventDefault()
+    try {
+      const res = await updateProject(editingProject.id, editingProject)
+      if (res.data?.success) {
+        setEditingProject(null)
+        fetchProjects()
+      }
+    } catch (error) {
+      console.error('Failed to update project:', error)
+      alert('Failed to update project. Please try again.')
+    }
+  }
+
+  const handleDeleteProject = async (projectId) => {
+    if (!window.confirm('Are you sure you want to delete this project?')) return
+    
+    try {
+      const res = await deleteProject(projectId)
+      if (res.data?.success) {
+        fetchProjects()
+      }
+    } catch (error) {
+      console.error('Failed to delete project:', error)
+      alert('Failed to delete project. Please try again.')
+    }
+  }
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'active': return 'var(--status-active)'
+      case 'completed': return 'var(--status-completed)'
+      case 'overdue': return 'var(--status-overdue)'
+      default: return 'var(--status-default)'
+    }
+  }
+
+  const getStatusText = (status) => {
+    switch (status) {
+      case 'active': return 'ACTIVE'
+      case 'completed': return 'COMPLETED'
+      case 'overdue': return 'OVERDUE'
+      default: return 'PLANNING'
+    }
+  }
+
+  // Get priority color
+  const getPriorityColor = (priority) => {
+    switch(priority?.toLowerCase()) {
+      case 'low': return '#4CAF50'
+      case 'medium': return '#FF9800'
+      case 'high': return '#F44336'
+      case 'urgent': return '#9C27B0'
+      default: return '#757575'
+    }
+  }
+
+  // Format currency
+  const formatCurrency = (amount) => {
+    if (!amount) return 'Not set'
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(amount)
+  }
+
+  // Format date
+  const formatDate = (dateString) => {
+    if (!dateString) return 'Not set'
+    try {
+      return new Date(dateString).toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+      })
+    } catch {
+      return dateString
+    }
+  }
 
   if (loading) {
     return (
-      <div className="performance-dashboard loading">
-        <div className="spinner"></div>
-        <p>Loading performance data...</p>
+      <div className="dashboard-loading">
+        <div className="loading-spinner"></div>
+        <p>Loading dashboard...</p>
       </div>
-    );
-  }
-
-  if (!performanceData) {
-    return (
-      <div className="performance-dashboard">
-        <p>No performance data available</p>
-      </div>
-    );
+    )
   }
 
   return (
-    <div className="performance-dashboard">
-      {/* Header with Filters */}
+    <div className="manager-dashboard">
+      {/* Header */}
       <div className="dashboard-header">
         <div className="header-left">
-          <h2>Employee Performance Dashboard</h2>
-          <div className="period-selector">
-            <button 
-              className={period === 'weekly' ? 'active' : ''}
-              onClick={() => setPeriod('weekly')}
-            >
-              Weekly
-            </button>
-            <button 
-              className={period === 'monthly' ? 'active' : ''}
-              onClick={() => setPeriod('monthly')}
-            >
-              Monthly
-            </button>
-            <button 
-              className={period === 'yearly' ? 'active' : ''}
-              onClick={() => setPeriod('yearly')}
-            >
-              Yearly
-            </button>
+          <h1>Welcome back, {userInfo?.username || 'Manager'}</h1>
+          <p className="subtitle">Here's what's happening with your projects today</p>
+        </div>
+        <div className="header-right">
+          <button 
+            className="btn-primary"
+            onClick={() => setShowCreateModal(true)} // Now this will work
+          >
+            <span className="btn-icon">+</span>
+            New Project
+          </button>
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-icon total">📊</div>
+          <div className="stat-content">
+            <h3>Total Projects</h3>
+            <div className="stat-value">{stats.total}</div>
+            <div className="stat-subtext">of {stats.total} total</div>
           </div>
         </div>
-        
-        {isManager && engineers.length > 0 && (
-          <div className="engineer-selector">
-            <select 
-              value={selectedEngineer} 
-              onChange={(e) => setSelectedEngineer(e.target.value)}
-            >
-              <option value="">All Engineers</option>
-              {engineers.map(eng => (
-                <option key={eng.id} value={eng.id}>
-                  {eng.username} ({eng.employee_id})
-                </option>
-              ))}
-            </select>
+
+        <div className="stat-card">
+          <div className="stat-icon completed">✅</div>
+          <div className="stat-content">
+            <h3>Completed</h3>
+            <div className="stat-value">{stats.completed}</div>
+            <div className="stat-subtext">Completed projects</div>
           </div>
-        )}
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-icon active">🔄</div>
+          <div className="stat-content">
+            <h3>Active</h3>
+            <div className="stat-value">{stats.active}</div>
+            <div className="stat-subtext">Currently active</div>
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-icon overdue">⚠️</div>
+          <div className="stat-content">
+            <h3>Overdue</h3>
+            <div className="stat-value">{stats.overdue}</div>
+            <div className="stat-subtext">Need attention</div>
+          </div>
+        </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="summary-cards">
-        {period === 'weekly' && (
-          <>
-            <div className="summary-card">
-              <h3>Reports This Week</h3>
-              <div className="card-value">{performanceData.summary?.totalReports || 0}</div>
-              <div className="card-trend">
-                <span className="trend-up">↑</span>
-                <span>From last week</span>
-              </div>
+      {/* Main Content */}
+      <div className="dashboard-main">
+        <div className="projects-section">
+          <div className="section-header">
+            <h2>Project Overview</h2>
+            <div className="section-actions">
+              <button className="btn-ghost">View all</button>
             </div>
-            
-            <div className="summary-card">
-              <h3>Completion Rate</h3>
-              <div className="card-value">{performanceData.summary?.completionRate || 0}%</div>
-              <div className="card-progress">
-                <div 
-                  className="progress-bar" 
-                  style={{ width: `${performanceData.summary?.completionRate || 0}%` }}
-                ></div>
-              </div>
-            </div>
-            
-            <div className="summary-card">
-              <h3>Site Visits</h3>
-              <div className="card-value">{performanceData.summary?.siteVisits || 0}</div>
-              <div className="card-subtext">Customer visits this week</div>
-            </div>
-            
-            <div className="summary-card">
-              <h3>Productivity Score</h3>
-              <div className="card-value">{performanceData.productivityScore || 0}/100</div>
-              <div className="card-trend">
-                <span className="trend-up">↑</span>
-                <span>Based on activity</span>
-              </div>
-            </div>
-          </>
-        )}
-        
-        {period === 'monthly' && (
-          <>
-            <div className="summary-card">
-              <h3>Monthly Reports</h3>
-              <div className="card-value">{performanceData.monthlySummary?.totalReports || 0}</div>
-              <div className="card-subtext">{performanceData.month} {performanceData.year}</div>
-            </div>
-            
-            <div className="summary-card">
-              <h3>Avg Completion</h3>
-              <div className="card-value">{performanceData.monthlySummary?.avgCompletionRate || 0}%</div>
-              <div className="card-progress">
-                <div 
-                  className="progress-bar" 
-                  style={{ width: `${performanceData.monthlySummary?.avgCompletionRate || 0}%` }}
-                ></div>
-              </div>
-            </div>
-            
-            <div className="summary-card">
-              <h3>Problems Resolved</h3>
-              <div className="card-value">{performanceData.problemResolution?.resolvedProblems || 0}</div>
-              <div className="card-subtext">
-                {performanceData.problemResolution?.resolutionRate || 0}% resolution rate
-              </div>
-            </div>
-            
-            <div className="summary-card">
-              <h3>Top Customer</h3>
-              <div className="card-value">
-                {performanceData.customerStats?.[0]?.customer_name || 'N/A'}
-              </div>
-              <div className="card-subtext">
-                {performanceData.customerStats?.[0]?.visits || 0} visits
-              </div>
-            </div>
-          </>
-        )}
-        
-        {period === 'yearly' && (
-          <>
-            <div className="summary-card">
-              <h3>Yearly Reports</h3>
-              <div className="card-value">{performanceData.yearlySummary?.totalReports || 0}</div>
-              <div className="card-subtext">{performanceData.year}</div>
-            </div>
-            
-            <div className="summary-card">
-              <h3>Site Visits</h3>
-              <div className="card-value">{performanceData.yearlySummary?.totalSiteVisits || 0}</div>
-              <div className="card-trend">
-                <span className="trend-up">↑</span>
-                <span>Year to date</span>
-              </div>
-            </div>
-            
-            <div className="summary-card">
-              <h3>Office Days</h3>
-              <div className="card-value">{performanceData.yearlySummary?.totalOfficeDays || 0}</div>
-              <div className="card-subtext">Days worked from office</div>
-            </div>
-            
-            <div className="summary-card">
-              <h3>Leave Days</h3>
-              <div className="card-value">{performanceData.yearlySummary?.totalLeaveDays || 0}</div>
-              <div className="card-subtext">Total leave taken</div>
-            </div>
-          </>
-        )}
-      </div>
+          </div>
 
-      {/* Charts Section */}
-      <div className="charts-section">
-        {period === 'weekly' && (
-          <>
-            <div className="chart-container">
-              <h3>Daily Activity - This Week</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={performanceData.dailyData || []}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="day" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="reports" name="Reports" fill="#0088FE" />
-                  <Bar dataKey="siteVisits" name="Site Visits" fill="#00C49F" />
-                  <Bar dataKey="officeDays" name="Office Days" fill="#FFBB28" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            
-            <div className="chart-container">
-              <h3>Project Distribution</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={performanceData.projectDistribution || []}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="count"
-                    nameKey="project_no"
+          <div className="projects-grid">
+            {projects.length === 0 ? (
+              <div className="no-projects">
+                <div className="empty-state">
+                  <div className="empty-icon">📁</div>
+                  <h3>No projects yet</h3>
+                  <p>Create your first project to get started</p>
+                  <button 
+                    className="btn-primary"
+                    onClick={() => setShowCreateModal(true)}
                   >
-                    {performanceData.projectDistribution?.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </>
-        )}
-        
-        {period === 'monthly' && (
-          <>
-            <div className="chart-container full-width">
-              <h3>Weekly Performance - {performanceData.month} {performanceData.year}</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <AreaChart data={performanceData.weeklyBreakdown || []}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="week" />
-                  <YAxis />
-                  <Tooltip />
-                  <Area type="monotone" dataKey="reports" name="Reports" fill="#0088FE" stroke="#0088FE" />
-                  <Area type="monotone" dataKey="completionRate" name="Completion %" fill="#00C49F" stroke="#00C49F" />
-                  <Area type="monotone" dataKey="productivity" name="Productivity" fill="#FFBB28" stroke="#FFBB28" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-            
-            <div className="chart-container">
-              <h3>Top Customers</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={performanceData.customerStats || []}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="customer_name" angle={-45} textAnchor="end" height={80} />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="visits" name="Visits" fill="#8884d8" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            
-            <div className="chart-container">
-              <h3>Problem Resolution</h3>
-              <div className="problem-resolution">
-                <div className="resolution-rate">
-                  <div className="rate-circle">
-                    <span>{performanceData.problemResolution?.resolutionRate || 0}%</span>
-                  </div>
-                  <p>Resolution Rate</p>
-                </div>
-                <div className="resolution-stats">
-                  <div className="stat-item">
-                    <span className="stat-label">Total Problems:</span>
-                    <span className="stat-value">{performanceData.problemResolution?.totalProblems || 0}</span>
-                  </div>
-                  <div className="stat-item">
-                    <span className="stat-label">Resolved:</span>
-                    <span className="stat-value">{performanceData.problemResolution?.resolvedProblems || 0}</span>
-                  </div>
-                  <div className="stat-item">
-                    <span className="stat-label">Avg Time:</span>
-                    <span className="stat-value">{performanceData.problemResolution?.avgResolutionTime || 0} hours</span>
-                  </div>
+                    Create Project
+                  </button>
                 </div>
               </div>
-            </div>
-          </>
-        )}
-        
-        {period === 'yearly' && (
-          <>
-            <div className="chart-container full-width">
-              <h3>Monthly Performance - {performanceData.year}</h3>
-              <ResponsiveContainer width="100%" height={350}>
-                <BarChart data={performanceData.monthlyBreakdown || []}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis yAxisId="left" />
-                  <YAxis yAxisId="right" orientation="right" />
-                  <Tooltip />
-                  <Legend />
-                  <Bar yAxisId="left" dataKey="siteVisits" name="Site Visits" fill="#0088FE" />
-                  <Bar yAxisId="left" dataKey="officeDays" name="Office Days" fill="#00C49F" />
-                  <Line yAxisId="right" type="monotone" dataKey="completionRate" name="Completion %" stroke="#FF8042" strokeWidth={2} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            
-            <div className="chart-container">
-              <h3>Project Duration</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={performanceData.projectStatistics || []}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="project_no" angle={-45} textAnchor="end" height={80} />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="total_days" name="Days Spent" fill="#8884d8" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            
-            <div className="chart-container">
-              <h3>Leave Distribution</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={performanceData.leaveStatistics || []}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="days_taken"
-                    nameKey="leave_type"
-                  >
-                    {performanceData.leaveStatistics?.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Additional Stats */}
-      <div className="additional-stats">
-        {period === 'weekly' && performanceData.dailyData && (
-          <div className="daily-details">
-            <h3>Daily Breakdown</h3>
-            <div className="days-grid">
-              {performanceData.dailyData.map((day, index) => (
-                <div key={index} className={`day-card ${day.isToday ? 'today' : ''}`}>
-                  <div className="day-header">
-                    <span className="day-name">{day.day}</span>
-                    <span className="day-date">{day.date}</span>
+            ) : (
+              projects.map(project => (
+                <div key={project.id} className="project-card">
+                  <div className="project-header">
+                    <div className="project-title">
+                      <h3>{project.name}</h3>
+                      <span 
+                        className="project-status"
+                        style={{ backgroundColor: getStatusColor(project.status) }}
+                      >
+                        {getStatusText(project.status)}
+                      </span>
+                    </div>
+                    <div className="project-actions">
+                      <button 
+                        className="btn-icon"
+                        onClick={() => setEditingProject(project)}
+                        title="Edit"
+                      >
+                        ✏️
+                      </button>
+                      <button 
+                        className="btn-icon"
+                        onClick={() => handleDeleteProject(project.id)}
+                        title="Delete"
+                      >
+                        🗑️
+                      </button>
+                    </div>
                   </div>
-                  <div className="day-stats">
-                    <div className="day-stat">
-                      <span className="stat-label">Reports:</span>
-                      <span className="stat-value">{day.reports}</span>
+                  
+                  {/* Customer Info */}
+                  {project.customer && (
+                    <div className="project-customer">
+                      <span className="customer-label">Customer:</span>
+                      <span className="customer-name">{project.customer}</span>
                     </div>
-                    <div className="day-stat">
-                      <span className="stat-label">Site Visits:</span>
-                      <span className="stat-value">{day.siteVisits}</span>
+                  )}
+                  
+                  <p className="project-description">
+                    {project.description || 'No description provided'}
+                  </p>
+                  
+                  {/* Project Details */}
+                  <div className="project-details">
+                    {project.start_date && (
+                      <span className="project-date">Start: {formatDate(project.start_date)}</span>
+                    )}
+                    {project.end_date && (
+                      <span className="project-date">End: {formatDate(project.end_date)}</span>
+                    )}
+                    {project.budget && (
+                      <span className="project-budget">Budget: {formatCurrency(project.budget)}</span>
+                    )}
+                    {project.priority && (
+                      <span 
+                        className="project-priority" 
+                        style={{ color: getPriorityColor(project.priority) }}
+                      >
+                        {project.priority.toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  
+                  <div className="project-footer">
+                    <div className="project-meta">
+                      <span className="members">
+                        👥 {project.collaborators_count || 0} members
+                      </span>
+                      <span className="date">
+                        📅 {new Date(project.created_at).toLocaleDateString()}
+                      </span>
                     </div>
-                    <div className="day-stat">
-                      <span className="stat-label">Office:</span>
-                      <span className="stat-value">{day.officeDays}</span>
+                    <div className="project-progress">
+                      <div className="progress-bar">
+                        <div 
+                          className="progress-fill"
+                          style={{ width: project.progress ? `${project.progress}%` : '0%' }}
+                        ></div>
+                      </div>
+                      <span className="progress-text">
+                        {project.progress || 0}%
+                      </span>
                     </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Sidebar */}
+        <div className="dashboard-sidebar">
+          {/* Recent Activity */}
+          <div className="sidebar-card">
+            <h3>Recent Activity</h3>
+            <div className="activity-list">
+              {projects.slice(0, 3).map(project => (
+                <div key={project.id} className="activity-item">
+                  <div className="activity-icon">📝</div>
+                  <div className="activity-content">
+                    <p><strong>{project.name}</strong> was updated</p>
+                    <small>2 hours ago</small>
                   </div>
                 </div>
               ))}
             </div>
           </div>
-        )}
+
+          {/* Quick Actions */}
+          <div className="sidebar-card">
+            <h3>Quick Actions</h3>
+            <div className="quick-actions">
+              <button className="action-btn">
+                <span className="action-icon">📊</span>
+                Generate Report
+              </button>
+              <button className="action-btn">
+                <span className="action-icon">👥</span>
+                Add Team Member
+              </button>
+              <button className="action-btn">
+                <span className="action-icon">📅</span>
+                Schedule Meeting
+              </button>
+            </div>
+          </div>
+
+          {/* Team Overview */}
+          <div className="sidebar-card">
+            <h3>Team Overview</h3>
+            <div className="team-stats">
+              <div className="team-stat">
+                <span className="stat-label">Active Members</span>
+                <span className="stat-value">12</span>
+              </div>
+              <div className="team-stat">
+                <span className="stat-label">Available</span>
+                <span className="stat-value">8</span>
+              </div>
+              <div className="team-stat">
+                <span className="stat-label">On Leave</span>
+                <span className="stat-value">2</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Create Project Modal */}
+      {showCreateModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2>Create New Project</h2>
+              <button 
+                className="btn-close"
+                onClick={() => setShowCreateModal(false)}
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={handleCreateProject}>
+              {/* Project Name */}
+              <div className="form-group">
+                <label>Project Name *</label>
+                <input
+                  type="text"
+                  value={newProject.name}
+                  onChange={(e) => setNewProject({...newProject, name: e.target.value})}
+                  placeholder="Enter project name"
+                  required
+                />
+              </div>
+
+              {/* Customer Name Dropdown */}
+              <div className="form-group">
+                <label>Customer Name *</label>
+                <select
+                  value={newProject.customer || ''}
+                  onChange={(e) => setNewProject({...newProject, customer: e.target.value})}
+                  required
+                  className="customer-select"
+                >
+                  <option value="">Select Customer</option>
+                  <option value="CEE DEE">CEE DEE</option>
+                  <option value="ABC Corporation">ABC Corporation</option>
+                  <option value="XYZ Industries">XYZ Industries</option>
+                  <option value="Global Tech Solutions">Global Tech Solutions</option>
+                  <option value="Prime Construction">Prime Construction</option>
+                  <option value="Infra Builders">Infra Builders</option>
+                  <option value="Tech Innovators Ltd">Tech Innovators Ltd</option>
+                  <option value="Mega Projects Inc">Mega Projects Inc</option>
+                  <option value="City Development Authority">City Development Authority</option>
+                  <option value="Other">Other (Specify in Description)</option>
+                </select>
+              </div>
+
+              {/* Description */}
+              <div className="form-group">
+                <label>Description</label>
+                <textarea
+                  value={newProject.description}
+                  onChange={(e) => setNewProject({...newProject, description: e.target.value})}
+                  placeholder="Describe your project, include customer details if 'Other' is selected"
+                  rows="4"
+                />
+              </div>
+
+              {/* Project Details */}
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Status</label>
+                  <select
+                    value={newProject.status}
+                    onChange={(e) => setNewProject({...newProject, status: e.target.value})}
+                  >
+                    <option value="active">Active</option>
+                    <option value="planning">Planning</option>
+                    <option value="on-hold">On Hold</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Priority</label>
+                  <select
+                    value={newProject.priority || 'medium'}
+                    onChange={(e) => setNewProject({...newProject, priority: e.target.value})}
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="urgent">Urgent</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Additional Fields */}
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Start Date</label>
+                  <input
+                    type="date"
+                    value={newProject.startDate || ''}
+                    onChange={(e) => setNewProject({...newProject, startDate: e.target.value})}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Estimated End Date</label>
+                  <input
+                    type="date"
+                    value={newProject.endDate || ''}
+                    onChange={(e) => setNewProject({...newProject, endDate: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              {/* Budget (Optional) */}
+              <div className="form-group">
+                <label>Budget (Optional)</label>
+                <input
+                  type="number"
+                  value={newProject.budget || ''}
+                  onChange={(e) => setNewProject({...newProject, budget: e.target.value})}
+                  placeholder="Enter project budget"
+                  min="0"
+                />
+              </div>
+
+              <div className="modal-actions">
+                <button 
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setShowCreateModal(false)}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  className="btn-primary"
+                >
+                  Create Project
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Project Modal */}
+      {editingProject && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2>Edit Project</h2>
+              <button 
+                className="btn-close"
+                onClick={() => setEditingProject(null)}
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={handleUpdateProject}>
+              <div className="form-group">
+                <label>Project Name</label>
+                <input
+                  type="text"
+                  value={editingProject.name}
+                  onChange={(e) => setEditingProject({...editingProject, name: e.target.value})}
+                  placeholder="Enter project name"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Description</label>
+                <textarea
+                  value={editingProject.description}
+                  onChange={(e) => setEditingProject({...editingProject, description: e.target.value})}
+                  placeholder="Describe your project"
+                  rows="4"
+                />
+              </div>
+              <div className="form-group">
+                <label>Status</label>
+                <select
+                  value={editingProject.status || 'active'}
+                  onChange={(e) => setEditingProject({...editingProject, status: e.target.value})}
+                >
+                  <option value="active">Active</option>
+                  <option value="completed">Completed</option>
+                  <option value="on-hold">On Hold</option>
+                  <option value="overdue">Overdue</option>
+                </select>
+              </div>
+              <div className="modal-actions">
+                <button 
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setEditingProject(null)}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  className="btn-primary"
+                >
+                  Update Project
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
-  );
-};
+  )
+}
 
-export default PerformanceDashboard;
+export default ManagerProjectDashboard

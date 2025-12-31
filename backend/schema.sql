@@ -485,3 +485,34 @@ CREATE TABLE IF NOT EXISTS project_files (
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
   FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
 );
+-- Add customer column to projects table
+-- First, check if the column exists
+DESCRIBE projects;
+
+-- If customer column doesn't exist, add it
+ALTER TABLE projects 
+ADD COLUMN customer VARCHAR(255) DEFAULT NULL;
+
+-- Also add other missing columns if needed
+ALTER TABLE projects 
+ADD COLUMN status VARCHAR(50) DEFAULT 'active';
+
+ALTER TABLE projects 
+ADD COLUMN priority VARCHAR(50) DEFAULT 'medium';
+
+ALTER TABLE projects 
+ADD COLUMN start_date DATE DEFAULT NULL;
+
+ALTER TABLE projects 
+ADD COLUMN end_date DATE DEFAULT NULL;
+
+-- Add all missing columns at once
+ALTER TABLE projects 
+ADD COLUMN IF NOT EXISTS customer VARCHAR(255) DEFAULT NULL,
+ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active',
+ADD COLUMN IF NOT EXISTS priority VARCHAR(50) DEFAULT 'medium',
+ADD COLUMN IF NOT EXISTS start_date DATE DEFAULT NULL,
+ADD COLUMN IF NOT EXISTS end_date DATE DEFAULT NULL,
+ADD COLUMN IF NOT EXISTS budget DECIMAL(15,2) DEFAULT NULL,
+ADD COLUMN IF NOT EXISTS progress INT DEFAULT 0,
+ADD COLUMN IF NOT EXISTS collaborators_count INT DEFAULT 0;
