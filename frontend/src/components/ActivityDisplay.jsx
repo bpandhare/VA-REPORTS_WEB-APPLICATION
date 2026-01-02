@@ -186,110 +186,77 @@ export default function ActivityDisplay() {
   }
 
   // Fetch recent activities
-  const fetchRecentActivities = async () => {
-    if (!token) {
-      console.log('❌ No token, skipping activities fetch')
-      return
-    }
+  // const fetchRecentActivities = async () => {
+  //   if (!token) {
+  //     console.log('❌ No token, skipping activities fetch')
+  //     return
+  //   }
     
-    try {
-      console.log(`📝 Fetching recent activities`)
+  //   try {
+  //     console.log(`📝 Fetching recent activities`)
       
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 10000)
+  //     const controller = new AbortController()
+  //     const timeoutId = setTimeout(() => controller.abort(), 10000)
       
-      const response = await fetch(`${endpoints.activities}?limit=20&page=1`, {
-        headers: { 
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        signal: controller.signal
-      })
+  //     const response = await fetch(`${endpoints.activities}?limit=20&page=1`, {
+  //       headers: { 
+  //         Authorization: `Bearer ${token}`,
+  //         'Content-Type': 'application/json'
+  //       },
+  //       signal: controller.signal
+  //     })
       
-      clearTimeout(timeoutId)
+  //     clearTimeout(timeoutId)
       
-      if (!response.ok) {
-        let errorDetails = ''
-        try {
-          const errorText = await response.text()
-          errorDetails = errorText.substring(0, 200)
-        } catch (e) {
-          errorDetails = 'Could not read error response'
-        }
+  //     if (!response.ok) {
+  //       let errorDetails = ''
+  //       try {
+  //         const errorText = await response.text()
+  //         errorDetails = errorText.substring(0, 200)
+  //       } catch (e) {
+  //         errorDetails = 'Could not read error response'
+  //       }
         
-        console.error(`❌ Activities fetch failed: ${response.status} - ${errorDetails}`)
+  //       console.error(`❌ Activities fetch failed: ${response.status} - ${errorDetails}`)
         
-        // For 500 errors, use mock data
-        if (response.status === 500) {
-          console.log('🔄 Using mock activities due to server error')
-          const mockActivities = generateMockActivities()
-          setActivities(mockActivities)
-          return
-        }
+  //       // For 500 errors, use mock data
+  //       if (response.status === 500) {
+  //         console.log('🔄 Using mock activities due to server error')
+  //         const mockActivities = generateMockActivities()
+  //         setActivities(mockActivities)
+  //         return
+  //       }
         
-        setActivities([])
-        return
-      }
+  //       setActivities([])
+  //       return
+  //     }
       
-      const data = await response.json()
+  //     const data = await response.json()
       
-      if (data.success === false) {
-        console.warn(`⚠️ API error: ${data.message}`)
-        setActivities([])
-      } else if (data.activities && Array.isArray(data.activities)) {
-        setActivities(data.activities)
-      } else if (Array.isArray(data)) {
-        setActivities(data)
-      } else {
-        console.warn(`⚠️ Unexpected activities data format`)
-        setActivities([])
-      }
-    } catch (error) {
-      if (error.name === 'AbortError') {
-        console.error('❌ Activities fetch timeout')
-      } else {
-        console.error('❌ Activities fetch error:', error)
-      }
+  //     if (data.success === false) {
+  //       console.warn(`⚠️ API error: ${data.message}`)
+  //       setActivities([])
+  //     } else if (data.activities && Array.isArray(data.activities)) {
+  //       setActivities(data.activities)
+  //     } else if (Array.isArray(data)) {
+  //       setActivities(data)
+  //     } else {
+  //       console.warn(`⚠️ Unexpected activities data format`)
+  //       setActivities([])
+  //     }
+  //   } catch (error) {
+  //     if (error.name === 'AbortError') {
+  //       console.error('❌ Activities fetch timeout')
+  //     } else {
+  //       console.error('❌ Activities fetch error:', error)
+  //     }
       
-      const mockActivities = generateMockActivities()
-      setActivities(mockActivities)
-    }
-  }
+  //     const mockActivities = generateMockActivities()
+  //     setActivities(mockActivities)
+  //   }
+  // }
 
-  // Generate mock activities for fallback
-  const generateMockActivities = () => {
-    const mockActivities = []
-    const names = ['John Doe', 'Jane Smith', 'Robert Johnson', 'Sarah Williams', 'Michael Brown']
-    const projects = ['Project Alpha', 'Project Beta', 'Project Gamma', 'Project Delta']
-    const activities = [
-      'Daily standup meeting',
-      'Code review and testing',
-      'Client requirement analysis',
-      'Bug fixes and debugging',
-      'Documentation update',
-      'System deployment',
-      'Performance optimization'
-    ]
-    
-    for (let i = 0; i < 8; i++) {
-      const date = new Date()
-      date.setDate(date.getDate() - Math.floor(Math.random() * 7))
-      
-      mockActivities.push({
-        id: i + 1,
-        engineerName: names[Math.floor(Math.random() * names.length)],
-        date: date.toISOString().split('T')[0],
-        project: projects[Math.floor(Math.random() * projects.length)],
-        activityTarget: activities[Math.floor(Math.random() * activities.length)],
-        status: Math.random() > 0.3 ? 'present' : 'leave',
-        startTime: '09:00',
-        endTime: '17:00',
-        isMock: true
-      })
-    }
-    
-    return mockActivities
-  }
+  
 
   // Handle date change
   const handleDateChange = (date) => {

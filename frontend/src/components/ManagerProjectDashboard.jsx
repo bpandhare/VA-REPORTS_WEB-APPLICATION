@@ -4,7 +4,10 @@ import {
   createProject, 
   updateProject, 
   deleteProject,
-  getUserInfo 
+  getUserInfo,
+  // Add these imports for tasks
+  getProjectTasks,
+  updateTaskStatus
 } from '../services/api'
 import './ManagerProjectDashboard.css'
 
@@ -31,6 +34,30 @@ const ManagerProjectDashboard = () => {
     budget: ''
   })
   const [userInfo, setUserInfo] = useState(null)
+  const [currentTime, setCurrentTime] = useState('')
+  const [projectTasks, setProjectTasks] = useState({}) // Store tasks for each project
+
+  // Update current time every minute
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date()
+      const options = { 
+        weekday: 'long', 
+        day: 'numeric', 
+        month: 'short', 
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      }
+      const timeString = now.toLocaleDateString('en-IN', options)
+      setCurrentTime(timeString)
+    }
+    
+    updateTime()
+    const interval = setInterval(updateTime, 60000)
+    return () => clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     fetchUserAndProjects()
@@ -50,114 +77,258 @@ const ManagerProjectDashboard = () => {
     }
   }
 
- // In ManagerProjectDashboard.jsx, update the fetchProjects function
-const fetchProjects = async () => {
-  try {
-    console.log('📡 Fetching projects...');
-    
-    // Try real API first
-    const res = await listProjects();
-    console.log('Real API response:', res.data);
-    
-    if (res.data?.success) {
-      const projectsData = res.data.projects || [];
-      console.log(`✅ Got ${projectsData.length} projects from real API`);
+  const fetchProjects = async () => {
+    try {
+      console.log('📡 Fetching projects...');
       
-      // Check if any projects are missing customer field
-      const projectsWithCustomer = projectsData.map(project => ({
-        ...project,
-        customer: project.customer || 'Not specified' // Default value
-      }));
+      const res = await listProjects();
+      console.log('API response:', res.data);
       
-      setProjects(projectsWithCustomer);
-      
-      // Calculate stats
-      const total = projectsWithCustomer.length;
-      const completed = projectsWithCustomer.filter(p => p.status === 'completed').length;
-      const active = projectsWithCustomer.filter(p => p.status === 'active').length;
-      const overdue = projectsWithCustomer.filter(p => p.status === 'overdue').length;
-      
-      setStats({ total, completed, active, overdue });
-      
-    } else {
-      console.warn('Real API returned unsuccessful, using mock data');
-      // Fallback to showing mock data if real API fails
-      await loadMockProjects();
-    }
-  } catch (error) {
-    console.error('Failed to fetch projects from real API:', error);
-    // Load mock projects as fallback
-    await loadMockProjects();
-  }
-};
+      if (res.data?.success) {
+        const projectsData = res.data.projects || [];
+        console.log(`✅ Got ${projectsData.length} projects`);
+        
+        // DEBUG: Log all project fields
+        projectsData.forEach((project, index) => {
+          console.log(`Project ${index + 1} - ${project.name}:`, {
+            id: project.id,
+            name: project.name,
+            customer: project.customer,
+            customerFieldExists: 'customer' in project,
+            allKeys: Object.keys(project)
+          });
+        });
 
-const loadMockProjects = async () => {
-  try {
-    const mockRes = await listProjects(); // This will use mock mode now
-    if (mockRes.data?.success) {
-      const mockProjects = mockRes.data.projects || [];
-      console.log(`🛠️ Loaded ${mockProjects.length} mock projects`);
-      setProjects(mockProjects);
-      
-      // Calculate stats for mock projects
-      const total = mockProjects.length;
-      const completed = mockProjects.filter(p => p.status === 'completed').length;
-      const active = mockProjects.filter(p => p.status === 'active').length;
-      const overdue = mockProjects.filter(p => p.status === 'overdue').length;
-      
-      setStats({ total, completed, active, overdue });
-    }
-  } catch (mockError) {
-    console.error('Failed to load mock projects:', mockError);
-  }
-};
-
-// Add a button to sync mock data to real database when backend is fixed
-const syncMockToDatabase = async () => {
-  if (!window.confirm('This will attempt to save all mock projects to the real database. Continue?')) return;
-  
-  try {
-    // Get mock projects from localStorage
-    const mockProjectsStr = localStorage.getItem('mock_projects');
-    if (!mockProjectsStr) {
-      alert('No mock projects found');
-      return;
-    }
-    
-    const mockProjects = JSON.parse(mockProjectsStr);
-    
-    // Try to save each project to real database
-    let successCount = 0;
-    let failCount = 0;
-    
-    for (const project of mockProjects) {
-      try {
-        // Prepare data for real API (remove mock-only fields)
-        const { id, created_at, updated_at, ...projectData } = project;
-        await createProject(projectData);
-        successCount++;
-      } catch (error) {
-        console.error(`Failed to sync project ${project.name}:`, error);
-        failCount++;
+        // Fetch tasks for each project to calculate status
+        const projectsWithTasks = await Promise.all(
+          projectsData.map(async (project) => {
+            // Fetch tasks for this project
+            let projectTaskData = { tasks: [], completionPercentage: 0 };
+            try {
+              const tasksRes = await getProjectTasks(project.id);
+              if (tasksRes.data?.success) {
+                projectTaskData = {
+                  tasks: tasksRes.data.tasks || [],
+                  completionPercentage: tasksRes.data.stats?.completionPercentage || 0
+                };
+                
+                // Update project status based on task completion
+                let calculatedStatus = project.status;
+                
+                // If all tasks are completed, set project to "completed"
+                if (projectTaskData.tasks.length > 0 && 
+                    projectTaskData.tasks.every(task => task.status === 'completed')) {
+                  calculatedStatus = 'completed';
+                  
+                  // Update project status in backend if it's not already completed
+                  if (project.status !== 'completed') {
+                    try {
+                      await updateProject(project.id, { status: 'completed' });
+                    } catch (updateError) {
+                      console.error('Failed to update project status:', updateError);
+                    }
+                  }
+                }
+                // If some tasks are completed but not all, and project is marked as completed, revert to active
+                else if (project.status === 'completed' && 
+                         projectTaskData.tasks.some(task => task.status !== 'completed')) {
+                  calculatedStatus = 'active';
+                  
+                  // Update project status in backend
+                  try {
+                    await updateProject(project.id, { status: 'active' });
+                  } catch (updateError) {
+                    console.error('Failed to update project status:', updateError);
+                  }
+                }
+                
+                // Update project with new status
+                return {
+                  ...project,
+                  // IMPORTANT: Check for different possible field names
+                  customer: project.customer || project.Customer || 'Not specified',
+                  description: project.description || getMockDescription(project.name),
+                  status: calculatedStatus,
+                  tasks: projectTaskData.tasks,
+                  completionPercentage: projectTaskData.completionPercentage
+                };
+              }
+            } catch (taskError) {
+              console.error(`Failed to fetch tasks for project ${project.id}:`, taskError);
+            }
+            
+            return {
+              ...project,
+              // IMPORTANT: Check for different possible field names
+              customer: project.customer || project.Customer || 'Not specified',
+              description: project.description || getMockDescription(project.name),
+              tasks: [],
+              completionPercentage: 0
+            };
+          })
+        );
+        
+        setProjects(projectsWithTasks);
+        
+        // Calculate stats based on updated statuses
+        const total = projectsWithTasks.length;
+        const completed = projectsWithTasks.filter(p => 
+          p.status === 'completed' || p.is_completed === true
+        ).length;
+        const active = projectsWithTasks.filter(p => p.status === 'active').length;
+        const overdue = projectsWithTasks.filter(p => p.status === 'overdue').length;
+        
+        setStats({ total, completed, active, overdue });
+        
+      } else {
+        // Load fallback projects
+        loadFallbackProjects();
       }
+    } catch (error) {
+      console.error('Failed to fetch projects:', error);
+      loadFallbackProjects();
     }
+  };
+
+  // Function to fetch tasks for a specific project
+  const fetchProjectTasks = async (projectId) => {
+    try {
+      const tasksRes = await getProjectTasks(projectId);
+      if (tasksRes.data?.success) {
+        setProjectTasks(prev => ({
+          ...prev,
+          [projectId]: {
+            tasks: tasksRes.data.tasks || [],
+            completionPercentage: tasksRes.data.stats?.completionPercentage || 0
+          }
+        }));
+        return tasksRes.data.tasks || [];
+      }
+      return [];
+    } catch (error) {
+      console.error(`Failed to fetch tasks for project ${projectId}:`, error);
+      return [];
+    }
+  };
+
+  // Function to update task status and recalculate project status
+  const handleTaskStatusUpdate = async (projectId, taskId, newStatus) => {
+    try {
+      const response = await updateTaskStatus(projectId, taskId, { status: newStatus });
+      
+      if (response.data?.success) {
+        // Refresh project tasks and recalculate status
+        await fetchProjectTasks(projectId);
+        
+        // Update projects list to reflect new status
+        setProjects(prevProjects => 
+          prevProjects.map(project => {
+            if (project.id === projectId) {
+              // Find and update the specific task
+              const updatedTasks = project.tasks?.map(task => 
+                task.id === taskId ? { ...task, status: newStatus } : task
+              ) || [];
+              
+              // Check if all tasks are now completed
+              const allTasksCompleted = updatedTasks.length > 0 && 
+                updatedTasks.every(task => task.status === 'completed');
+              
+              // Update project status if needed
+              let newProjectStatus = project.status;
+              if (allTasksCompleted && project.status !== 'completed') {
+                newProjectStatus = 'completed';
+                // Update in backend
+                updateProject(projectId, { status: 'completed' });
+              } else if (!allTasksCompleted && project.status === 'completed') {
+                newProjectStatus = 'active';
+                // Update in backend
+                updateProject(projectId, { status: 'active' });
+              }
+              
+              return {
+                ...project,
+                status: newProjectStatus,
+                tasks: updatedTasks,
+                completionPercentage: updatedTasks.length > 0 ? 
+                  Math.round((updatedTasks.filter(t => t.status === 'completed').length / updatedTasks.length) * 100) : 0
+              };
+            }
+            return project;
+          })
+        );
+        
+        // Refresh stats
+        fetchProjects();
+      }
+    } catch (error) {
+      console.error('Failed to update task status:', error);
+    }
+  };
+
+  const loadFallbackProjects = () => {
+    const fallbackProjects = [
+      {
+        id: 1,
+        name: 'ABC',
+        customer: 'ABC Corporation',
+        description: 'Bridge construction project',
+        status: 'active',
+        priority: 'medium',
+        collaborators_count: 3,
+        created_at: new Date().toISOString(),
+        is_completed: false,
+        completionPercentage: 65
+      },
+      {
+        id: 2,
+        name: 'test',
+        customer: 'CEE-DEE',
+        description: 'PLC automation testing',
+        status: 'active',
+        priority: 'medium',
+        collaborators_count: 1,
+        created_at: new Date().toISOString(),
+        is_completed: false,
+        completionPercentage: 30
+      },
+      {
+        id: 3,
+        name: 'VICKHARDTH',
+        customer: 'Tech Innovators Ltd',
+        description: 'Daily reporting hub for site engineers',
+        status: 'active',
+        priority: 'high',
+        collaborators_count: 2,
+        created_at: new Date().toISOString(),
+        is_completed: false,
+        completionPercentage: 45
+      }
+    ];
     
-    alert(`Sync complete:\n✅ ${successCount} projects synced\n❌ ${failCount} failed\n\nRefresh to see updated list.`);
-    
-    // Refresh the project list
-    fetchProjects();
-    
-  } catch (error) {
-    console.error('Sync failed:', error);
-    alert('Sync failed: ' + error.message);
-  }
-};
+    setProjects(fallbackProjects);
+    setStats({
+      total: 3,
+      completed: 0,
+      active: 3,
+      overdue: 0
+    });
+  };
+
+  const getMockDescription = (projectName) => {
+    const descriptions = {
+      'ABC': 'Bridge construction project',
+      'test': 'PLC automation testing',
+      'VICKHARDTH': 'Daily reporting hub for site engineers'
+    };
+    return descriptions[projectName] || 'Project description';
+  };
+
   const handleCreateProject = async (e) => {
     e.preventDefault()
     try {
       const projectData = {
         name: newProject.name,
-        customer: newProject.customer,
+        customer: newProject.customer === 'Other' ? newProject.otherCustomer : newProject.customer,
         description: newProject.description,
         status: newProject.status,
         priority: newProject.priority,
@@ -166,17 +337,18 @@ const syncMockToDatabase = async () => {
         budget: newProject.budget || null
       }
       
-      console.log('Sending project data:', projectData) // Debug
+      console.log('Sending project data:', projectData)
       
       const res = await createProject(projectData)
-      console.log('Create response:', res.data) // Debug
+      console.log('Create response:', res.data)
       
       if (res.data?.success) {
-        alert('Project created successfully!')
+        alert('✅ Project created successfully!')
         setShowCreateModal(false)
         setNewProject({
           name: '',
           customer: '',
+          otherCustomer: '',
           description: '',
           status: 'active',
           priority: 'medium',
@@ -184,8 +356,7 @@ const syncMockToDatabase = async () => {
           endDate: '',
           budget: ''
         })
-        // Refresh projects
-        await fetchProjects()
+        await fetchProjects() // Refresh projects list to show new project with customer
       } else {
         alert('Failed to create project: ' + (res.data?.message || 'Unknown error'))
       }
@@ -201,7 +372,7 @@ const syncMockToDatabase = async () => {
       const res = await updateProject(editingProject.id, editingProject)
       if (res.data?.success) {
         setEditingProject(null)
-        fetchProjects()
+        fetchProjects() // Refresh projects to get updated status
       }
     } catch (error) {
       console.error('Failed to update project:', error)
@@ -228,16 +399,9 @@ const syncMockToDatabase = async () => {
       case 'active': return '#10B981'
       case 'completed': return '#3B82F6'
       case 'overdue': return '#EF4444'
+      case 'planning': return '#F59E0B'
+      case 'on-hold': return '#6B7280'
       default: return '#6B7280'
-    }
-  }
-
-  const getStatusText = (status) => {
-    switch (status) {
-      case 'active': return 'ACTIVE'
-      case 'completed': return 'COMPLETED'
-      case 'overdue': return 'OVERDUE'
-      default: return 'PLANNING'
     }
   }
 
@@ -274,6 +438,74 @@ const syncMockToDatabase = async () => {
     }
   }
 
+  // Get day name and date
+  const getDayAndDate = () => {
+    const now = new Date();
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayName = days[now.getDay()];
+    
+    const dateStr = now.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
+    
+    const timeStr = now.toLocaleTimeString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+    
+    return `${dayName}\n${dateStr}, ${timeStr}`;
+  };
+
+  // Function to render project status with task completion
+  const renderProjectStatus = (project) => {
+    const statusColor = getStatusColor(project.status);
+    const tasksForProject = project.tasks || projectTasks[project.id]?.tasks || [];
+    const completionPercentage = project.completionPercentage || 
+                                 projectTasks[project.id]?.completionPercentage || 0;
+    
+    return (
+      <div className="project-status-container">
+        <div className="status-row">
+          <span className="status-label">Status:</span>
+          <span 
+            className="status-badge" 
+            style={{ 
+              backgroundColor: `${statusColor}20`, 
+              color: statusColor,
+              border: `1px solid ${statusColor}`
+            }}
+          >
+            {project.status?.toUpperCase()}
+          </span>
+        </div>
+        
+        {tasksForProject.length > 0 && (
+          <div className="completion-row">
+            <span className="completion-label">Task Completion:</span>
+            <div className="completion-bar">
+              <div 
+                className="completion-fill" 
+                style={{ width: `${completionPercentage}%` }}
+              ></div>
+            </div>
+            <span className="completion-text">{completionPercentage}%</span>
+          </div>
+        )}
+        
+        <div className="tasks-summary">
+          <small>
+            {tasksForProject.length} total tasks • 
+            {tasksForProject.filter(t => t.status === 'completed').length} completed • 
+            {tasksForProject.filter(t => t.status === 'in_progress').length} in progress
+          </small>
+        </div>
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <div className="dashboard-loading">
@@ -285,226 +517,181 @@ const syncMockToDatabase = async () => {
 
   return (
     <div className="manager-dashboard">
-      {/* Header */}
+      {/* Header matching your image */}
       <div className="dashboard-header">
-        <div className="header-left">
-          <h1>Welcome back, {userInfo?.username || 'Manager'}</h1>
-          <p className="subtitle">Manage your projects and team</p>
+        <div className="header-top">
+          <div className="user-info">
+            <h1 className="user-name">Vishal</h1>
+            <div className="user-role">Manager ID: 16</div>
+          </div>
+          <div className="date-time">
+            <div className="current-day-date">
+              {getDayAndDate().split('\n').map((line, index) => (
+                <div key={index}>{line}</div>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="header-right">
-          <button 
-            className="btn-primary"
-            onClick={() => setShowCreateModal(true)}
-          >
-            <span className="btn-icon">+</span>
-            New Project
-          </button>
+        
+        <div className="welcome-section">
+          <h2>Welcome back, Vishal</h2>
+          <p className="subtitle">Here's what's happening with your projects today</p>
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-icon total">📊</div>
-          <div className="stat-content">
-            <h3>Total Projects</h3>
-            <div className="stat-value">{stats.total}</div>
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-icon completed">✅</div>
-          <div className="stat-content">
-            <h3>Completed</h3>
-            <div className="stat-value">{stats.completed}</div>
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-icon active">🔄</div>
-          <div className="stat-content">
-            <h3>Active</h3>
-            <div className="stat-value">{stats.active}</div>
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-icon overdue">⚠️</div>
-          <div className="stat-content">
-            <h3>Overdue</h3>
-            <div className="stat-value">{stats.overdue}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="dashboard-main">
-        <div className="projects-section">
-          <div className="section-header">
-            <h2>All Projects ({projects.length})</h2>
-            <div className="section-actions">
+      {/* Main Content - Grid layout like your image */}
+      <div className="dashboard-main-grid">
+        {/* Left Column - Projects */}
+        <div className="projects-column">
+          {/* Projects List */}
+          <div className="projects-list">
+            {projects.map(project => (
+              <div key={project.id} className="project-item">
+                <div className="project-header">
+                  <div className="project-title-section">
+                    <h3 className="project-name">{project.name}</h3>
+                    <div className="project-customer-info">
+                      <div className="customer-label">CUSTOMER</div>
+                      <div className="customer-value">{project.customer}</div>
+                    </div>
+                  </div>
+                  <div className="project-actions">
+                    <button 
+                      className="btn-icon-small"
+                      onClick={() => setEditingProject(project)}
+                      title="Edit"
+                    >
+                      ✏️
+                    </button>
+                    <button 
+                      className="btn-icon-small"
+                      onClick={() => handleDeleteProject(project.id)}
+                      title="Delete"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                </div>
+                
+                <p className="project-description">
+                  {project.description}
+                </p>
+                
+                {/* Project Status and Task Completion */}
+                {renderProjectStatus(project)}
+                
+                <div className="project-meta">
+                  <span className="members-count">
+                    👥 {project.collaborators_count || 0} members
+                  </span>
+                  <div className="project-action-buttons">
+                    <button 
+                      className="btn-action"
+                      onClick={() => {
+                        // Navigate to project details or open task modal
+                        console.log('View details for project:', project.id);
+                      }}
+                    >
+                      View Details
+                    </button>
+                    <button 
+                      className="btn-action"
+                      onClick={() => setEditingProject(project)}
+                    >
+                      Edit
+                    </button>
+                    <button 
+                      className="btn-action"
+                      onClick={() => handleDeleteProject(project.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            
+            {/* Summary Card */}
+            <div className="summary-card">
+              <h3 className="summary-title">Summary</h3>
+              <div className="summary-stats">
+                <div className="summary-stat">
+                  <span className="stat-label">Total Projects</span>
+                  <span className="stat-value">{stats.total}</span>
+                </div>
+                <div className="summary-stat">
+                  <span className="stat-label">Completed</span>
+                  <span className="stat-value">{stats.completed}</span>
+                </div>
+                <div className="summary-stat">
+                  <span className="stat-label">Active</span>
+                  <span className="stat-value">{stats.active}</span>
+                </div>
+                <div className="summary-stat">
+                  <span className="stat-label">Overdue</span>
+                  <span className="stat-value">{stats.overdue}</span>
+                </div>
+              </div>
+            </div>
+            
+            {/* New Project Card */}
+            <div className="new-project-card">
+              <h3 className="new-project-title">New Project</h3>
+              <p>Start a new project to track your work</p>
               <button 
-                className="btn-refresh"
-                onClick={() => fetchProjects()}
-                title="Refresh projects"
+                className="btn-new-project"
+                onClick={() => setShowCreateModal(true)}
               >
-                🔄 Refresh
+                + Create New Project
               </button>
             </div>
           </div>
-
-          <div className="projects-grid">
-            {projects.length === 0 ? (
-              <div className="no-projects">
-                <div className="empty-state">
-                  <div className="empty-icon">📁</div>
-                  <h3>No projects yet</h3>
-                  <p>Create your first project to get started</p>
-                  <button 
-                    className="btn-primary"
-                    onClick={() => setShowCreateModal(true)}
-                  >
-                    Create Project
-                  </button>
-                </div>
-              </div>
-            ) : (
-              projects.map(project => (
-                <div key={project.id} className="project-card">
-                  <div className="project-header">
-                    <div className="project-title">
-                      <h3>{project.name}</h3>
-                      <span 
-                        className="project-status"
-                        style={{ backgroundColor: getStatusColor(project.status) }}
-                      >
-                        {getStatusText(project.status)}
-                      </span>
-                    </div>
-                    <div className="project-actions">
-                      <button 
-                        className="btn-icon"
-                        onClick={() => setEditingProject(project)}
-                        title="Edit"
-                      >
-                        ✏️
-                      </button>
-                      <button 
-                        className="btn-icon"
-                        onClick={() => handleDeleteProject(project.id)}
-                        title="Delete"
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </div>
-                  
-                  {/* CUSTOMER FIELD - Now always visible */}
-                  <div className="project-meta-row">
-                    <div className="meta-item">
-                      <span className="meta-icon">🏢</span>
-                      <span className="meta-label">Customer:</span>
-                      <span className="meta-value">{project.customer || 'Not specified'}</span>
-                    </div>
-                  </div>
-                  
-                  <p className="project-description">
-                    {project.description || 'No description provided'}
-                  </p>
-                  
-                  {/* Project Details */}
-                  <div className="project-details-grid">
-                    <div className="detail-item">
-                      <span className="detail-label">Start Date:</span>
-                      <span className="detail-value">{formatDate(project.start_date)}</span>
-                    </div>
-                    <div className="detail-item">
-                      <span className="detail-label">End Date:</span>
-                      <span className="detail-value">{formatDate(project.end_date)}</span>
-                    </div>
-                    <div className="detail-item">
-                      <span className="detail-label">Budget:</span>
-                      <span className="detail-value">{formatCurrency(project.budget)}</span>
-                    </div>
-                    <div className="detail-item">
-                      <span className="detail-label">Priority:</span>
-                      <span 
-                        className="detail-value priority-badge"
-                        style={{ 
-                          color: getPriorityColor(project.priority),
-                          backgroundColor: `${getPriorityColor(project.priority)}20`
-                        }}
-                      >
-                        {project.priority?.toUpperCase() || 'MEDIUM'}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  <div className="project-footer">
-                    <div className="project-meta">
-                      <span className="members">
-                        👥 {project.collaborators_count || 0} members
-                      </span>
-                      <span className="date">
-                        📅 {formatDate(project.created_at)}
-                      </span>
-                    </div>
-                    <div className="project-progress">
-                      <div className="progress-bar">
-                        <div 
-                          className="progress-fill"
-                          style={{ width: `${project.progress || 0}%` }}
-                        ></div>
-                      </div>
-                      <span className="progress-text">
-                        {project.progress || 0}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
         </div>
 
-        {/* Sidebar */}
-        <div className="dashboard-sidebar">
-          <div className="sidebar-card">
-            <h3>Customer Summary</h3>
-            <div className="customer-summary">
-              <div className="summary-item">
-                <span>Projects with Customers:</span>
-                <span className="summary-value">
-                  {projects.filter(p => p.customer && p.customer.trim() !== '').length}
-                </span>
-              </div>
-              <div className="summary-item">
-                <span>Unique Customers:</span>
-                <span className="summary-value">
-                  {new Set(projects.filter(p => p.customer).map(p => p.customer)).size}
-                </span>
+        {/* Right Column - Tools & Reports */}
+        <div className="tools-column">
+          {/* Time Tracking Card */}
+          <div className="tool-card">
+            <h3 className="tool-title">TIME TRACKING</h3>
+            <div className="tool-content">
+              <div className="tool-item">
+                <span className="tool-item-name">Time Tracker</span>
+                <span className="tool-badge">NEW</span>
               </div>
             </div>
           </div>
 
-          <div className="sidebar-card">
-            <h3>Recent Customers</h3>
-            <div className="recent-customers">
-              {projects
-                .filter(p => p.customer)
-                .slice(0, 3)
-                .map((project, index) => (
-                  <div key={index} className="customer-item">
-                    <div className="customer-info">
-                      <span className="customer-name">{project.customer}</span>
-                      <span className="project-name">{project.name}</span>
-                    </div>
-                  </div>
-                ))}
-              {projects.filter(p => p.customer).length === 0 && (
-                <p className="no-data">No customers yet</p>
-              )}
+          {/* Reports Card */}
+          <div className="tool-card">
+            <h3 className="tool-title">REPORTS</h3>
+            <div className="tool-content">
+              <div className="tool-item">
+                <span className="tool-item-name">Hourly Report</span>
+              </div>
+              <div className="tool-item">
+                <span className="tool-item-name">Daily Target Report</span>
+              </div>
             </div>
+          </div>
+
+          {/* Monitoring Card */}
+          <div className="tool-card">
+            <h3 className="tool-title">MONITORING</h3>
+            <div className="tool-content">
+              <div className="tool-item">
+                <span className="tool-item-name">View Activities</span>
+                <span className="tool-tag">(vii)</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Weather Widget */}
+          <div className="weather-card">
+            <div className="weather-info">
+              <div className="weather-temp">30°C</div>
+              <div className="weather-location">Surrey</div>
+            </div>
+            <div className="weather-icon">☀️</div>
           </div>
         </div>
       </div>
@@ -683,23 +870,13 @@ const syncMockToDatabase = async () => {
               
               <div className="form-group">
                 <label>Customer Name</label>
-                <select
+                <input
+                  type="text"
                   value={editingProject.customer || ''}
                   onChange={(e) => setEditingProject({...editingProject, customer: e.target.value})}
-                  className="customer-select"
-                >
-                  <option value="">Select Customer</option>
-                  <option value="CEE DEE">CEE DEE</option>
-                  <option value="ABC Corporation">ABC Corporation</option>
-                  <option value="XYZ Industries">XYZ Industries</option>
-                  <option value="Global Tech Solutions">Global Tech Solutions</option>
-                  <option value="Prime Construction">Prime Construction</option>
-                  <option value="Infra Builders">Infra Builders</option>
-                  <option value="Tech Innovators Ltd">Tech Innovators Ltd</option>
-                  <option value="Mega Projects Inc">Mega Projects Inc</option>
-                  <option value="City Development Authority">City Development Authority</option>
-                  <option value="Other">Other</option>
-                </select>
+                  placeholder="Enter customer name"
+                  required
+                />
               </div>
               
               <div className="form-group">
@@ -789,6 +966,19 @@ const syncMockToDatabase = async () => {
           </div>
         </div>
       )}
+
+      {/* Debug Information */}
+      <div className="debug-panel">
+        <h4>Debug Information</h4>
+        <p>Total Projects: {projects.length}</p>
+        {projects.map((project, index) => (
+          <div key={project.id} className="debug-project">
+            <p><strong>Project {index + 1}:</strong> {project.name}</p>
+            <p><strong>Customer Field:</strong> "{project.customer}"</p>
+            <p><strong>Has Customer:</strong> {!!project.customer ? 'Yes' : 'No'}</p>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

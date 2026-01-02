@@ -686,14 +686,17 @@ router.post('/register', async (req, res) => {
   }
 })
 
+// UPDATED LOGIN ROUTE - Now validates employee_id matches the stored employee_id
 router.post('/login', async (req, res) => {
   try {
     console.log('📥 [LOGIN] Request received:', req.body)
     
-    const { username, password } = req.body
+    const { username, password, employee_id, role } = req.body
 
     console.log('🔍 [LOGIN] Parsed fields:', {
       username,
+      employee_id,
+      role,
       passwordLength: password ? password.length : 0
     })
 
@@ -706,7 +709,16 @@ router.post('/login', async (req, res) => {
       })
     }
 
-    // Find user by username (both managers and non-managers)
+    // Validate role is provided
+    if (!role) {
+      console.log('❌ [LOGIN] Role not provided')
+      return res.status(400).json({ 
+        success: false,
+        message: 'Role is required' 
+      })
+    }
+
+    // Find user by username and role
     const [rows] = await pool.execute(
       'SELECT * FROM users WHERE username = ?',
       [username]
@@ -721,6 +733,20 @@ router.post('/login', async (req, res) => {
     }
 
     const user = rows[0]
+    
+    // Verify role matches
+    if (user.role !== role) {
+      console.log('❌ [LOGIN] Role mismatch:', {
+        entered: role,
+        stored: user.role,
+        username: user.username
+      })
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid role for this user' 
+      })
+    }
+    
     console.log('🔍 [LOGIN] User found:', {
       id: user.id,
       username: user.username,
@@ -739,6 +765,59 @@ router.post('/login', async (req, res) => {
       })
     }
 
+    // CRITICAL: For non-manager roles, validate that the entered employee_id matches the stored employee_id
+    const isManager = user.role.toLowerCase().includes('manager')
+    
+    if (!isManager) {
+      // Non-manager must provide employee_id
+      if (!employee_id) {
+        console.log('❌ [LOGIN] Employee ID required for non-manager:', user.role)
+        return res.status(400).json({ 
+          success: false,
+          message: 'Employee ID is required for non-manager roles' 
+        })
+      }
+      
+      // Validate employee_id format
+      const empIdError = validateEmployeeId(employee_id)
+      if (empIdError) {
+        console.log('❌ [LOGIN] Invalid employee ID format:', empIdError)
+        return res.status(400).json({ 
+          success: false,
+          message: empIdError 
+        })
+      }
+      
+      // Check if entered employee_id matches user's employee_id in database
+      const cleanEmployeeId = employee_id.trim().toUpperCase()
+      
+      // If user doesn't have an employee_id stored (shouldn't happen for non-managers)
+      if (!user.employee_id) {
+        console.log('❌ [LOGIN] User has no employee_id stored:', user.username)
+        return res.status(400).json({ 
+          success: false,
+          message: 'User account is missing employee ID. Please contact administrator.' 
+        })
+      }
+      
+      if (user.employee_id !== cleanEmployeeId) {
+        console.log('❌ [LOGIN] Employee ID mismatch:', {
+          entered: cleanEmployeeId,
+          stored: user.employee_id,
+          username: user.username
+        })
+        return res.status(401).json({ 
+          success: false,
+          message: 'Invalid employee ID for this user' 
+        })
+      }
+      
+      console.log('✅ [LOGIN] Employee ID verified:', cleanEmployeeId)
+    } else {
+      // For managers, employee_id is optional
+      console.log('👑 [LOGIN] Manager login - employee ID validation skipped')
+    }
+
     // Create token
     const token = jwt.sign(
       {
@@ -747,7 +826,7 @@ router.post('/login', async (req, res) => {
         username: user.username,
         role: user.role,
         phone: user.phone,
-        fullName: user.username // Use username as fullName
+        fullName: user.username
       },
       JWT_SECRET,
       { expiresIn: TOKEN_TTL_SECONDS }
@@ -760,10 +839,10 @@ router.post('/login', async (req, res) => {
         id: user.id,
         employeeId: user.employee_id,
         username: user.username,
-        name: user.username, // Use username as name
+        name: user.username,
         role: user.role,
         phone: user.phone,
-        fullName: user.username // Use username as fullName
+        fullName: user.username
       },
       message: 'Login successful'
     }

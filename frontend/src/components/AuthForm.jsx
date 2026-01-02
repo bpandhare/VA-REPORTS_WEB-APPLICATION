@@ -7,7 +7,7 @@ function AuthForm() {
   const [mode, setMode] = useState('login') // 'login' | 'register'
   const [employeeId, setEmployeeId] = useState('')
   const [username, setUsername] = useState('')
-  const [fullName, setFullName] = useState('') // Changed from 'name' to 'fullName'
+  const [fullName, setFullName] = useState('')
   const [password, setPassword] = useState('')
   const [dob, setDob] = useState('')
   const [phone, setPhone] = useState('')
@@ -28,33 +28,25 @@ function AuthForm() {
   const validatePhone = (phoneNumber) => {
     if (!phoneNumber) return 'Phone number is required'
     
-    // Remove any non-digit characters
     const cleanPhone = phoneNumber.replace(/\D/g, '')
     
-    // Check if it's exactly 10 digits
     if (cleanPhone.length !== 10) {
       return 'Phone number must be 10 digits'
     }
     
-    // Check if it starts with 6-9 (Indian mobile numbers)
     if (!/^[6-9]/.test(cleanPhone)) {
       return 'Phone number must start with 6, 7, 8, or 9'
     }
     
-    return null // No error
+    return null
   }
 
   // Handle phone input with formatting
   const handlePhoneChange = (e) => {
     let value = e.target.value
-    
-    // Remove all non-digit characters
     value = value.replace(/\D/g, '')
-    
-    // Limit to 10 digits
     value = value.substring(0, 10)
     
-    // Format as 123-456-7890
     if (value.length > 6) {
       value = value.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3')
     } else if (value.length > 3) {
@@ -98,7 +90,6 @@ function AuthForm() {
       }
     }
 
-    // Debounce the check
     const timer = setTimeout(checkEmployeeId, 500)
     return () => clearTimeout(timer)
   }, [employeeId, mode, role, endpointBase])
@@ -139,7 +130,6 @@ function AuthForm() {
       }
     }
 
-    // Debounce the check
     const timer = setTimeout(checkPhone, 500)
     return () => clearTimeout(timer)
   }, [phone, mode, endpointBase])
@@ -156,32 +146,27 @@ function AuthForm() {
   const validateEmployeeId = (id) => {
     if (!id) return 'Employee ID is required'
     
-    // Format: E followed by 1-5 digits (total 2-6 characters)
-    // Examples: E001, E12345, E99999
     const empIdRegex = /^E\d{1,5}$/
     if (!empIdRegex.test(id)) {
       return 'Employee ID must be in format E001 (E followed by 1-5 digits)'
     }
     
-    // Check max 6 characters (E + up to 5 digits)
     if (id.length > 6) {
       return 'Employee ID cannot exceed 6 characters'
     }
     
-    return null // No error
+    return null
   }
 
   // Handle Employee ID input with format validation
   const handleEmployeeIdChange = (e) => {
-    const value = e.target.value.toUpperCase() // Convert to uppercase
+    const value = e.target.value.toUpperCase()
     
-    // Only allow: starts with E, then only digits, max 6 chars total
     if (value === 'E' || /^E\d{0,5}$/.test(value)) {
       setEmployeeId(value)
     } else if (value === '') {
-      setEmployeeId('') // Allow clearing the field
+      setEmployeeId('')
     }
-    // Otherwise, don't update the state (invalid input)
   }
 
   const handleSubmit = async (event) => {
@@ -190,7 +175,7 @@ function AuthForm() {
     setAlert(null)
 
     try {
-      // Prepare request body - FIXED FIELD NAMES
+      // Prepare request body
       const requestBody = {
         username: username.trim(),
         password: password,
@@ -199,11 +184,9 @@ function AuthForm() {
 
       // Add additional fields based on mode
       if (mode === 'register') {
-        // Use full_name instead of name to match database
         requestBody.full_name = fullName.trim() || username.trim()
         requestBody.dob = dob
         
-        // Clean phone number (remove dashes)
         const cleanPhone = phone.replace(/\D/g, '')
         requestBody.phone = cleanPhone
         
@@ -213,20 +196,19 @@ function AuthForm() {
         }
       } else {
         // For login: ALWAYS include employee_id if provided
+        // Backend will validate it matches the user's registered employee_id
         if (employeeId) {
           requestBody.employee_id = employeeId.trim().toUpperCase()
         }
       }
 
-      // DEBUG: Log what's being sent
       console.log('🔍 DEBUG - Request body being sent:', {
         ...requestBody,
-        password: '***' // Hide password in logs
+        password: '***'
       })
 
       // Validate fields before sending
       if (mode === 'register') {
-        // Basic validation
         if (!username || !password || !role) {
           setAlert({ type: 'error', message: 'All required fields must be filled' })
           setLoading(false)
@@ -257,7 +239,6 @@ function AuthForm() {
           return
         }
 
-        // Validate phone number
         const cleanPhone = phone.replace(/\D/g, '')
         const phoneError = validatePhone(cleanPhone)
         if (phoneError) {
@@ -266,14 +247,12 @@ function AuthForm() {
           return
         }
 
-        // Check if phone is taken
         if (isPhoneTaken) {
           setAlert({ type: 'error', message: 'This phone number is already registered' })
           setLoading(false)
           return
         }
 
-        // For non-manager registration, validate employeeId
         if (!role.includes('Manager')) {
           const empIdError = validateEmployeeId(employeeId)
           if (empIdError) {
@@ -296,7 +275,7 @@ function AuthForm() {
           return
         }
 
-        // For non-manager login: validate employeeId
+        // For non-manager login: employeeId is REQUIRED
         if (!role.includes('Manager') && !employeeId) {
           setAlert({ type: 'error', message: 'Employee ID is required for non-manager roles' })
           setLoading(false)
@@ -347,11 +326,11 @@ function AuthForm() {
       // Use the updated login function from AuthContext
       const loginSuccess = await login({ 
         token: data.token, 
-        username: data.username, 
-        name: data.full_name || data.username, // Changed to full_name
-        role: data.role,
-        employeeId: data.employee_id || null, // Changed to employee_id
-        phone: data.phone || null
+        username: data.user?.username || data.username, 
+        name: data.user?.fullName || data.user?.username || data.username,
+        role: data.user?.role || data.role,
+        employeeId: data.user?.employeeId || data.user?.employee_id || data.employee_id || null,
+        phone: data.user?.phone || data.phone || null
       })
       
       if (loginSuccess) {
@@ -370,34 +349,26 @@ function AuthForm() {
     }
   }
 
-  // Check if employee ID field should be shown
   const showEmployeeIdField = mode === 'login' || !role.includes('Manager')
   
-  // Check if employee ID field is required
   const isEmployeeIdRequired = () => {
     if (mode === 'register') {
       return !role.includes('Manager')
     } else {
-      // For login: required for non-managers only
       return !role.includes('Manager')
     }
   }
 
-  // Reset form when mode changes
   const handleModeToggle = () => {
     setMode(mode === 'login' ? 'register' : 'login')
-    // Reset form fields but keep role for login if switching to register
     if (mode === 'login') {
-      // Keep role when switching to register
       setEmployeeId('')
       setUsername('')
       setFullName('')
       setPassword('')
       setDob('')
       setPhone('')
-      // Don't reset role when switching to register
     } else {
-      // Reset everything when switching to login
       setEmployeeId('')
       setUsername('')
       setFullName('')
@@ -450,7 +421,6 @@ function AuthForm() {
               <option value="Team Leader">Team Leader</option>
               <option value="Senior Engineer">Senior Engineer</option>
               <option value="Junior Engineer">Junior Engineer</option>
-              
             </select>
             <small className="form-hint">
               Select role to determine login method
@@ -584,7 +554,6 @@ function AuthForm() {
               <option value="Team Leader">Team Leader</option>
               <option value="Senior Engineer">Senior Engineer</option>
               <option value="Junior Engineer">Junior Engineer</option>
-              
             </select>
             <small className="form-hint">
               {role.includes('Manager') 
