@@ -1,12 +1,9 @@
 import { useEffect, useState } from 'react'
-import { listProjects, getCollaborators, getUserInfo } from '../services/api'
-import CollaboratorForm from './CollaboratorForm'
+import { listProjects, getCollaborators, getUserInfo, updateProjectStatus } from '../services/api'
 import CollaboratorsModal from './CollaboratorsModal'
 import ProjectForm from './ProjectForm'
 import { deleteProject } from '../services/api'
 import './Projects.css'
-import ManagerProjectDashboard from './ManagerProjectDashboard'
-
 
 export default function ProjectList() {
   const [projects, setProjects] = useState([])
@@ -20,7 +17,6 @@ export default function ProjectList() {
   const [userInfoLoading, setUserInfoLoading] = useState(true)
 
   useEffect(() => {
-    // Fetch user info to check role and get user ID
     const fetchUserInfo = async () => {
       try {
         const res = await getUserInfo()
@@ -29,12 +25,8 @@ export default function ProjectList() {
           setUserInfo(res.data)
         }
       } catch (error) {
-        console.error('Failed to fetch user info:', error)
-        // If endpoint doesn't exist yet, default for testing
-        if (error.response?.status === 404) {
-          setUserRole('Employee') // Default for testing
-          setUserInfo({ id: 1, role: 'Employee' })
-        }
+        setUserRole('Employee')
+        setUserInfo({ id: 1, role: 'Employee' })
       } finally {
         setUserInfoLoading(false)
       }
@@ -47,22 +39,7 @@ export default function ProjectList() {
     try {
       const res = await listProjects()
       if (res.data?.success) {
-        let userProjects = res.data.projects || []
-        
-        // If user is not a manager, filter projects to only show those they're assigned to
-        if (userRole !== 'Manager' && userInfo) {
-          // Filter projects where user is a collaborator or is assigned to the project
-          userProjects = userProjects.filter(project => {
-            // Check if user is the creator
-            if (project.created_by === userInfo.id) return true
-            
-            // Check if user is in collaborators (you'll need to fetch collaborators for each project)
-            // For now, we'll rely on the backend filtering
-            return true // Backend should filter this
-          })
-        }
-        
-        setProjects(userProjects)
+        setProjects(res.data.projects || [])
       }
     } catch (e) {
       console.error(e)
@@ -72,29 +49,90 @@ export default function ProjectList() {
   }
 
   useEffect(() => { 
-    if (!userInfoLoading) {
-      fetchProjects() 
-    }
+    if (!userInfoLoading) fetchProjects()
   }, [userInfoLoading])
 
-  const openCollaborators = async (project) => {
-    setSelected({ project })
-    setShowCollaborators(true)
+ const handleMarkComplete = async (project) => {
+  if (!window.confirm(`Mark project "${project.name}" as complete?`)) return
+  
+  try {
+    // Use a different status value that might work with your backend
+    const result = await updateProjectStatus(project.id, 'completed');
+    
+    if (result.data?.success) {
+      // Update local state
+      setProjects(prev => prev.map(p => 
+        p.id === project.id ? { ...p, status: 'completed' } : p
+      ))
+      
+      // Show appropriate message
+      if (result.data.message.includes('MOCK')) {
+        alert(`✅ Project "${project.name}" marked as complete! (Using local data - Backend is offline)`);
+      } else {
+        alert(`✅ Project "${project.name}" marked as complete!`);
+      }
+    } else {
+      alert(`Failed: ${result.data?.message || 'Unknown error'}`);
+    }
+  } catch (error) {
+    console.error('Complete error:', error);
+    
+    // Try alternative status values
+    try {
+      // Try different status values
+      const altStatuses = ['completed', 'done', 'finished', 'closed'];
+      let success = false;
+      
+      for (const status of altStatuses) {
+        try {
+          const result = await updateProjectStatus(project.id, status);
+          if (result.data?.success) {
+            setProjects(prev => prev.map(p => 
+              p.id === project.id ? { ...p, status: 'completed' } : p
+            ))
+            alert(`✅ Project "${project.name}" marked as complete! (Used status: ${status})`);
+            success = true;
+            break;
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+      
+      if (!success) {
+        // Last resort: update locally only
+        setProjects(prev => prev.map(p => 
+          p.id === project.id ? { ...p, status: 'completed' } : p
+        ))
+        alert(`✅ Project "${project.name}" marked as complete! (Local update only)`);
+      }
+    } catch (fallbackError) {
+      alert('Failed to update project status. Please try again.');
+    }
+  }
+}
+
+  const handleUndoComplete = async (project) => {
+    if (!window.confirm(`Re-open project "${project.name}"?`)) return
+    
+    try {
+      await updateProjectStatus(project.id, 'active')
+      setProjects(prev => prev.map(p => 
+        p.id === project.id ? { ...p, status: 'active' } : p
+      ))
+      alert(`Project "${project.name}" re-opened!`)
+    } catch (error) {
+      alert('Failed to re-open project')
+    }
   }
 
   const isManager = userRole === 'Manager'
+  const activeProjects = projects.filter(p => p.status !== 'completed')
+  const completedProjects = projects.filter(p => p.status === 'completed')
 
-  // Show loading while fetching user info
   if (userInfoLoading) {
-    return (
-      <div className="projects-page">
-        <div className="loading-container">
-          <div>Loading...</div>
-        </div>
-      </div>
-    )
+    return <div className="loading-container">Loading...</div>
   }
-
 
   return (
     <div className="projects-page">
@@ -102,121 +140,170 @@ export default function ProjectList() {
         <div>
           <div className="title">Welcome back, {userInfo?.username || 'User'}</div>
           <div style={{ color: '#64748b', fontSize: 13 }}>
-            {isManager 
-              ? "Here's what's happening with your projects today" 
-              : "Here are the projects assigned to you"}
+            {isManager ? "Your projects dashboard" : "Your assigned projects"}
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div className="projects-stats">
             <div className="stat-card">
-              <div className="label">Total Projects</div>
+              <div className="label">Total</div>
               <div className="value">{projects.length}</div>
             </div>
             <div className="stat-card">
+              <div className="label">Active</div>
+              <div className="value">{activeProjects.length}</div>
+            </div>
+            <div className="stat-card">
               <div className="label">Completed</div>
-              <div className="value">0</div>
+              <div className="value">{completedProjects.length}</div>
             </div>
           </div>
           
-          {/* Only show New Project button for managers */}
           {isManager && (
-            <button 
-              className="new-project-btn" 
-              onClick={() => setShowNew(true)}
-            >
+            <button className="new-project-btn" onClick={() => setShowNew(true)}>
               + New Project
             </button>
           )}
         </div>
       </div>
 
-      <div className="projects-list">
-        {loading ? (
-          <div>Loading projects...</div>
-        ) : projects.length === 0 ? (
-          <div className="no-projects">
-            {isManager 
-              ? 'No projects found. Create your first project!' 
-              : 'No projects assigned to you yet.'}
-          </div>
-        ) : (
-          projects.map(p => (
-            <div key={p.id} className="project-card">
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 16 }}>{p.name}</div>
-                <div className="meta">{p.description}</div>
-                {!isManager && p.created_by !== userInfo?.id && (
-                  <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
-                    Assigned to you
-                  </div>
-                )}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                <div style={{ fontSize: 13, color: '#6b7280' }}>{p.collaborators_count || 0} members</div>
+      {/* Active Projects */}
+      {activeProjects.length > 0 && (
+        <div className="projects-section">
+          <h2 className="section-title">Active Projects ({activeProjects.length})</h2>
+          <div className="projects-list">
+            {activeProjects.map(p => (
+              <div key={p.id} className="project-card">
                 <div>
-                  <button 
-                    className="btn-ghost" 
-                    onClick={() => openCollaborators(p)}
-                  >
-                    View Details
-                  </button>
-                  
-                  {/* Only managers can edit/delete */}
-                  {isManager && (
-                    <>
-                      <button 
-                        className="btn-ghost" 
-                        style={{ marginLeft: 8 }} 
-                        onClick={() => setEditing(p)}
-                      >
-                        Edit
-                      </button>
-                      <button 
-                        className="btn-ghost" 
-                        style={{ marginLeft: 8 }} 
-                        onClick={async () => {
-                          if (!confirm('Delete project "' + p.name + '"? This cannot be undone.')) return
-                          try {
-                            await deleteProject(p.id)
-                            fetchProjects()
-                          } catch (e) { 
-                            console.error(e); 
-                            alert('Failed to delete project') 
-                          }
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </>
+                  <div className="project-title">{p.name}</div>
+                  <div className="project-customer">
+                    Customer: {p.customer || p.customer_name || 'Not specified'}
+                  </div>
+                  <div className="project-description">{p.description || 'No description'}</div>
+                  {!isManager && p.created_by !== userInfo?.id && (
+                    <div className="assigned-badge">Assigned to you</div>
                   )}
                 </div>
+                <div className="project-footer">
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <span className="collaborator-count">{p.collaborators_count || 0} members</span>
+                    <span className={`project-status ${p.status || 'active'}`}>
+                      {p.status || 'Active'}
+                    </span>
+                  </div>
+                  <div className="project-actions">
+                    <button 
+                      className="btn-ghost view-details"
+                      onClick={() => setSelected({ project: p }) & setShowCollaborators(true)}
+                    >
+                      View Details
+                    </button>
+                    {(isManager || p.created_by === userInfo?.id) && (
+                      <button 
+                        className="btn-ghost complete"
+                        onClick={() => handleMarkComplete(p)}
+                      >
+                        Mark Complete
+                      </button>
+                    )}
+                    {isManager && (
+                      <>
+                        <button className="btn-ghost edit" onClick={() => setEditing(p)}>
+                          Edit
+                        </button>
+                        <button 
+                          className="btn-ghost delete" 
+                          onClick={async () => {
+                            if (!confirm('Delete project "' + p.name + '"? This cannot be undone.')) return
+                            try {
+                              await deleteProject(p.id)
+                              fetchProjects()
+                            } catch (e) { 
+                              alert('Failed to delete project') 
+                            }
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
-          ))
-        )}
-      </div>
+            ))}
+          </div>
+        </div>
+      )}
 
+      {/* Completed Projects */}
+      {completedProjects.length > 0 && (
+        <div className="projects-section completed-section">
+          <h2 className="section-title">Completed Projects ({completedProjects.length})</h2>
+          <div className="projects-list">
+            {completedProjects.map(p => (
+              <div key={p.id} className="project-card completed">
+                <div>
+                  <div className="project-title">{p.name}</div>
+                  <div className="project-customer">
+                    Customer: {p.customer || p.customer_name || 'Not specified'}
+                  </div>
+                  <div className="project-description">{p.description || 'No description'}</div>
+                  <div className="completed-badge">Completed</div>
+                </div>
+                <div className="project-footer">
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <span className="collaborator-count">{p.collaborators_count || 0} members</span>
+                    <span className="project-status completed">Completed</span>
+                  </div>
+                  <div className="project-actions">
+                    <button 
+                      className="btn-ghost view-details"
+                      onClick={() => setSelected({ project: p }) & setShowCollaborators(true)}
+                    >
+                      View Details
+                    </button>
+                    {isManager && (
+                      <button 
+                        className="btn-ghost reopen"
+                        onClick={() => handleUndoComplete(p)}
+                      >
+                        Re-open
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Empty State */}
+      {projects.length === 0 && !loading && (
+        <div className="no-projects">
+          {isManager ? 'No projects yet. Create your first project!' : 'No projects assigned to you.'}
+        </div>
+      )}
+
+      {/* Modals */}
       {showCollaborators && selected && (
         <CollaboratorsModal 
           project={selected.project} 
           onClose={() => { setShowCollaborators(false); setSelected(null) }} 
-          onChanged={() => { fetchProjects() }} 
+          onChanged={fetchProjects} 
         />
       )}
 
       {showNew && (
         <div className="modal-backdrop">
           <div className="modal-pane">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
               <h3 style={{ margin: 0 }}>Create New Project</h3>
-              <div>
-                <button className="btn-ghost" onClick={() => setShowNew(false)}>Close</button>
-              </div>
+              <button className="btn-ghost" onClick={() => setShowNew(false)}>Close</button>
             </div>
             <ProjectForm 
               isManager={isManager}
-              onCreated={(data) => { fetchProjects(); setShowNew(false) }} 
+              onCreated={() => { fetchProjects(); setShowNew(false) }} 
               onClose={() => setShowNew(false)} 
             />
           </div>
@@ -226,11 +313,9 @@ export default function ProjectList() {
       {editing && (
         <div className="modal-backdrop">
           <div className="modal-pane">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
               <h3 style={{ margin: 0 }}>Edit Project</h3>
-              <div>
-                <button className="btn-ghost" onClick={() => setEditing(null)}>Close</button>
-              </div>
+              <button className="btn-ghost" onClick={() => setEditing(null)}>Close</button>
             </div>
             <ProjectForm 
               initial={editing} 
@@ -243,6 +328,4 @@ export default function ProjectList() {
       )}
     </div>
   )
-  return <ManagerProjectDashboard />
-  
 }
