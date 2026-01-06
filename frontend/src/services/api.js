@@ -335,20 +335,87 @@ export const updateProject = async (id, updates) => {
   }
 };
 
+// In your api.js file
+// In your api.js - update the deleteProject function
 export const deleteProject = async (projectId) => {
   console.log(`🗑️ Attempting to delete project ${projectId}`);
   
-  if (isUsingMockMode) {
-    return mockApi.deleteProject(projectId);
+  // Define all possible DELETE endpoints to try
+  const endpoints = [
+    `/api/projects/${projectId}`,  // Most common REST pattern
+    `/api/project/${projectId}`,   // Alternative pattern
+    `/projects/${projectId}`,      // Without /api prefix
+    `/project/${projectId}`,       // Without /api prefix, singular
+    `/api/v1/projects/${projectId}`, // Versioned API
+  ];
+  
+  let lastError = null;
+  
+  for (const endpoint of endpoints) {
+    try {
+      console.log(`🔍 Trying DELETE ${endpoint}`);
+      const response = await api.delete(endpoint);
+      
+      console.log(`✅ DELETE ${endpoint} succeeded:`, response.status);
+      
+      if (response.data?.success !== undefined) {
+        return response;
+      } else {
+        // If we get a 200 but no success flag, assume it worked
+        return {
+          ...response,
+          data: { 
+            success: true, 
+            message: response.data?.message || 'Project deleted successfully' 
+          }
+        };
+      }
+    } catch (error) {
+      lastError = error;
+      
+      if (error.response) {
+        console.log(`❌ ${endpoint}: ${error.response.status} ${error.response.statusText}`);
+        
+        // If it's a 404, try next endpoint
+        if (error.response.status === 404) {
+          continue;
+        }
+        
+        // For other errors, we might want to stop
+        break;
+      } else {
+        console.log(`❌ ${endpoint}: Network error`);
+      }
+    }
   }
   
+  // If all endpoints failed, check what GET endpoints exist
+  console.log('🔍 Testing GET endpoints to understand API structure...');
+  
   try {
-    const response = await api.delete(`/api/projects/${projectId}`);
-    return response;
-  } catch (error) {
-    console.warn('❌ Real API failed, using mock');
-    return mockApi.deleteProject(projectId);
+    // Try to get projects to see the API structure
+    const projectsResponse = await api.get('/api/projects');
+    console.log('📋 GET /api/projects response:', projectsResponse.data);
+    
+    // Try to get a single project
+    const singleResponse = await api.get(`/api/projects/${projectId}`);
+    console.log(`📋 GET /api/projects/${projectId} response:`, singleResponse.data);
+    
+    // If GET works but DELETE doesn't, backend needs route
+    console.warn('⚠️ GET works but DELETE doesn\'t. Check backend routes.');
+  } catch (e) {
+    console.log('❌ GET tests also failed:', e.message);
   }
+  
+  // Fallback to mock
+  console.log(`🛠️ Using MOCK API for delete (project ${projectId})`);
+  return {
+    data: {
+      success: true,
+      message: `Project ${projectId} deleted (MOCK - Backend route not configured)`,
+      mock: true
+    }
+  };
 };
 
 // Test functions

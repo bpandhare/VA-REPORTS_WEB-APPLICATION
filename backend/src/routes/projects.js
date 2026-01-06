@@ -784,19 +784,19 @@ router.get('/available-users', verifyToken, async (req, res) => {
   
   try {
     // Log everything for debugging
-    console.log('1. Checking database connection...');
+    // console.log('1. Checking database connection...');
     
     // Test database connection first
     const [dbTest] = await pool.execute('SELECT 1 as test');
-    console.log('✅ Database connection OK:', dbTest);
+    // console.log('✅ Database connection OK:', dbTest);
     
     // Check if users table exists
-    console.log('2. Checking if users table exists...');
+    // console.log('2. Checking if users table exists...');
     const [tables] = await pool.execute("SHOW TABLES LIKE 'users'");
     console.log('Tables found:', tables);
     
     if (tables.length === 0) {
-      console.log('❌ USERS TABLE DOES NOT EXIST!');
+      // console.log('❌ USERS TABLE DOES NOT EXIST!');
       return res.status(404).json({
         success: false,
         message: 'Users table not found in database',
@@ -1007,5 +1007,147 @@ router.get('/available-users', verifyToken, async (req, res) => {
     });
   }
 });
+
+// ========== DELETE PROJECT ROUTE ==========
+// Add this route after your other project routes
+
+// Delete project - MANAGER ONLY
+router.delete('/:id', verifyToken, isManager, async (req, res) => {
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    
+    const projectId = parseInt(req.params.id)
+    console.log(`🗑️ DELETE project ${projectId} requested by user ${req.user?.id} (${req.user?.role})`)
+    
+    if (!projectId || projectId <= 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid project ID' 
+      })
+    }
+
+    // 1. First check if project exists
+    const [project] = await connection.execute(
+      'SELECT id, name, created_by FROM projects WHERE id = ?',
+      [projectId]
+    )
+    
+    if (project.length === 0) {
+      await connection.rollback()
+      console.log(`❌ Project ${projectId} not found`)
+      return res.status(404).json({ 
+        success: false, 
+        message: `Project with ID ${projectId} not found`,
+        projectId
+      })
+    }
+    
+    const projectName = project[0].name
+    console.log(`✅ Project found: ${projectName} (ID: ${projectId})`)
+    
+    // 2. Optional: Check if user is creator (for extra validation)
+    // Managers can delete any project, creators can delete their own
+    const isCreator = project[0].created_by === req.user?.id
+    const isManagerUser = req.user?.role === 'Manager'
+    
+    if (!isCreator && !isManagerUser) {
+      await connection.rollback()
+      console.log(`❌ User ${req.user?.id} not authorized to delete project ${projectId}`)
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You do not have permission to delete this project' 
+      })
+    }
+    
+    console.log(`✅ User authorized: ${isCreator ? 'Creator' : 'Manager'}`)
+
+    // 3. Delete related data first (to maintain referential integrity)
+    console.log('🗑️ Deleting related data...')
+    
+    // Delete tasks associated with this project
+    try {
+      const [taskResult] = await connection.execute(
+        'DELETE FROM tasks WHERE project_id = ?',
+        [projectId]
+      )
+      console.log(`🗑️ Deleted ${taskResult.affectedRows} tasks`)
+    } catch (taskError) {
+      console.log('⚠️ No tasks table or no tasks to delete:', taskError.message)
+    }
+    
+    // Delete collaborators associated with this project
+    try {
+      const [collabResult] = await connection.execute(
+        'DELETE FROM project_collaborators WHERE project_id = ?',
+        [projectId]
+      )
+      console.log(`🗑️ Deleted ${collabResult.affectedRows} collaborators`)
+    } catch (collabError) {
+      console.log('⚠️ Error deleting collaborators:', collabError.message)
+    }
+    
+    // Delete project activity/logs if you have them
+    try {
+      await connection.execute(
+        'DELETE FROM project_activities WHERE project_id = ?',
+        [projectId]
+      )
+      console.log('🗑️ Deleted project activities')
+    } catch (activityError) {
+      console.log('⚠️ No activities table:', activityError.message)
+    }
+
+    // 4. Delete the project itself
+    console.log(`🗑️ Deleting project ${projectId}...`)
+    const [deleteResult] = await connection.execute(
+      'DELETE FROM projects WHERE id = ?',
+      [projectId]
+    )
+    
+    if (deleteResult.affectedRows === 0) {
+      await connection.rollback()
+      console.log(`❌ No rows affected - project ${projectId} may already be deleted`)
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Project not found or already deleted' 
+      })
+    }
+    
+    await connection.commit()
+    console.log(`✅ Project ${projectId} deleted successfully`)
+    
+    // 5. Send success response
+    res.json({ 
+      success: true, 
+      message: `Project "${projectName}" deleted successfully`,
+      projectId,
+      projectName
+    })
+    
+  } catch (error) {
+    await connection.rollback()
+    console.error('❌ Failed to delete project:', error)
+    
+    let errorMessage = 'Unable to delete project'
+    let statusCode = 500
+    
+    if (error.code === 'ER_ROW_IS_REFERENCED_2') {
+      errorMessage = 'Cannot delete project because it has related data. Please remove all tasks and collaborators first.'
+      statusCode = 409 // Conflict
+    } else if (error.code === 'ER_NO_SUCH_TABLE') {
+      errorMessage = 'Database table error. Projects table may not exist.'
+    }
+    
+    res.status(statusCode).json({ 
+      success: false, 
+      message: errorMessage,
+      error: error.message,
+      code: error.code
+    })
+  } finally {
+    connection.release()
+  }
+})
 
 export default router

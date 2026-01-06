@@ -3,7 +3,7 @@ import {
   getCollaborators, 
   addCollaborator, 
   deleteCollaborator, 
-  getAvailableUsers  // Make sure this is imported
+  getAvailableUsers
 } from '../services/api'
 import './CollaboratorsModal.css'
 
@@ -23,7 +23,6 @@ export default function CollaboratorsModal({ project, onClose, onChanged }) {
   useEffect(() => {
     console.log('🔍 CollaboratorsModal mounted for project:', project?.id, project?.name)
     fetchCollaborators()
-    // Auto-fetch users when modal opens
     fetchAvailableUsers()
   }, [project?.id])
 
@@ -56,68 +55,62 @@ export default function CollaboratorsModal({ project, onClose, onChanged }) {
     }
   }
 
-const fetchAvailableUsers = async () => {
-  if (hasFetchedUsers && availableUsers.length > 0) {
-    console.log('📊 Users already loaded:', availableUsers.length)
-    return
-  }
-  
-  setUsersLoading(true)
-  setMessage({ type: '', text: '' })
-  
-  try {
-    console.log('👥 Fetching REAL users from database...')
-    const res = await getAvailableUsers()
-    console.log('📦 REAL Users API response:', res.data)
+  const fetchAvailableUsers = async () => {
+    if (hasFetchedUsers && availableUsers.length > 0) {
+      console.log('📊 Users already loaded:', availableUsers.length)
+      return
+    }
     
-    if (res.data?.success) {
-      const users = res.data.users || []
+    setUsersLoading(true)
+    setMessage({ type: '', text: '' })
+    
+    try {
+      console.log('👥 Fetching REAL users from database...')
+      const res = await getAvailableUsers()
+      console.log('📦 REAL Users API response:', res.data)
       
-      setAvailableUsers(users)
-      setHasFetchedUsers(true)
-      
-      console.log(`✅ Loaded ${users.length} REAL users from database`)
-      
-      if (users.length === 0) {
-        // NO MOCK DATA - tell user to add real users
+      if (res.data?.success) {
+        const users = res.data.users || []
+        
+        setAvailableUsers(users)
+        setHasFetchedUsers(true)
+        
+        console.log(`✅ Loaded ${users.length} REAL users from database`)
+        
+        if (users.length === 0) {
+          // REMOVED ALERT: No more popup when no users found
+          // Just set to manual input mode and show a message in UI
+          setUseManualInput(true)
+          setMessage({ 
+            type: 'info', 
+            text: 'No employees found in database. Using manual input mode.' 
+          })
+        } else {
+          setMessage({ 
+            type: 'success', 
+            text: `Found ${users.length} employees` 
+          })
+        }
+        
+      } else {
+        console.error('❌ API failed:', res.data?.message)
         setMessage({ 
           type: 'error', 
-          text: 'No employees found in database. Please add employees first.' 
+          text: res.data?.message || 'Failed to load employees' 
         })
         setUseManualInput(true)
-        
-        // Show instruction to add users
-        setTimeout(() => {
-          if (window.confirm('No employees found. Would you like instructions on how to add employees to the database?')) {
-            alert('To add employees:\n1. Go to your database\n2. Run SQL: INSERT INTO users (username, employee_id, email, role, job_role) VALUES (...)\n3. Or use your user management system to create accounts');
-          }
-        }, 1000);
-      } else {
-        setMessage({ 
-          type: 'success', 
-          text: `Found ${users.length} employees` 
-        })
       }
-      
-    } else {
-      console.error('❌ API failed:', res.data?.message)
+    } catch (error) {
+      console.error('❌ Error fetching users:', error)
       setMessage({ 
         type: 'error', 
-        text: res.data?.message || 'Failed to load employees' 
+        text: 'Cannot connect to database. Please check backend.' 
       })
       setUseManualInput(true)
+    } finally {
+      setUsersLoading(false)
     }
-  } catch (error) {
-    console.error('❌ Error fetching users:', error)
-    setMessage({ 
-      type: 'error', 
-      text: 'Cannot connect to database. Please check backend.' 
-    })
-    setUseManualInput(true)
-  } finally {
-    setUsersLoading(false)
   }
-}
 
   const handleAdd = async (e) => {
     e.preventDefault()
@@ -201,25 +194,31 @@ const fetchAvailableUsers = async () => {
   }
 
   const handleRemove = async (collabId) => {
-    if (!window.confirm('Remove this collaborator?')) return
+    // REMOVED ALERT: Use a more subtle approach
+    // Instead of alert, show a confirmation message in the UI
+    setMessage({ 
+      type: 'confirm', 
+      text: 'Remove this collaborator?',
+      onConfirm: async () => {
+        try {
+          const res = await deleteCollaborator(project.id, collabId)
 
-    try {
-      const res = await deleteCollaborator(project.id, collabId)
-
-      if (res.data?.success) {
-        setMessage({ type: 'success', text: 'Collaborator removed successfully' })
-        fetchCollaborators()
-        if (onChanged) onChanged()
-      } else {
-        setMessage({ type: 'error', text: res.data?.message || 'Failed to remove collaborator' })
+          if (res.data?.success) {
+            setMessage({ type: 'success', text: 'Collaborator removed successfully' })
+            fetchCollaborators()
+            if (onChanged) onChanged()
+          } else {
+            setMessage({ type: 'error', text: res.data?.message || 'Failed to remove collaborator' })
+          }
+        } catch (error) {
+          console.error('Remove collaborator error:', error)
+          setMessage({ 
+            type: 'error', 
+            text: error.response?.data?.message || error.message || 'Failed to remove collaborator' 
+          })
+        }
       }
-    } catch (error) {
-      console.error('Remove collaborator error:', error)
-      setMessage({ 
-        type: 'error', 
-        text: error.response?.data?.message || error.message || 'Failed to remove collaborator' 
-      })
-    }
+    })
   }
 
   const clearMessage = () => {
@@ -252,6 +251,16 @@ const fetchAvailableUsers = async () => {
     }
   }, [useManualInput])
 
+  // Handle message confirmations
+  const handleMessageAction = () => {
+    if (message.type === 'confirm' && message.onConfirm) {
+      message.onConfirm()
+      setMessage({ type: '', text: '' })
+    } else {
+      clearMessage()
+    }
+  }
+
   if (!project) return null
 
   return (
@@ -265,10 +274,41 @@ const fetchAvailableUsers = async () => {
           </div>
         </div>
 
+        {/* Message display with different types */}
         {message.text && (
-          <div className={`message ${message.type}`} onClick={clearMessage}>
+          <div 
+            className={`message ${message.type}`} 
+            onClick={message.type === 'confirm' ? handleMessageAction : clearMessage}
+            style={{ cursor: 'pointer' }}
+          >
             {message.text}
-            <span className="message-close">×</span>
+            {message.type === 'confirm' ? (
+              <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+                <button 
+                  className="btn-primary btn-sm"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (message.onConfirm) {
+                      message.onConfirm()
+                      setMessage({ type: '', text: '' })
+                    }
+                  }}
+                >
+                  Yes
+                </button>
+                <button 
+                  className="btn-ghost btn-sm"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setMessage({ type: '', text: '' })
+                  }}
+                >
+                  No
+                </button>
+              </div>
+            ) : (
+              <span className="message-close">×</span>
+            )}
           </div>
         )}
 
@@ -409,7 +449,6 @@ const fetchAvailableUsers = async () => {
                     </div>
                     <div className="collaborator-details">
                       <span className="collaborator-role">{collab.role}</span>
-                      {/* Display job_role if available */}
                       {collab.job_role && (
                         <span className="collaborator-job-role">{collab.job_role}</span>
                       )}

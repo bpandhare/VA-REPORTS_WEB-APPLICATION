@@ -205,20 +205,36 @@ export default function ProjectList() {
                         <button className="btn-ghost edit" onClick={() => setEditing(p)}>
                           Edit
                         </button>
-                        <button 
-                          className="btn-ghost delete" 
-                          onClick={async () => {
-                            if (!confirm('Delete project "' + p.name + '"? This cannot be undone.')) return
-                            try {
-                              await deleteProject(p.id)
-                              fetchProjects()
-                            } catch (e) { 
-                              alert('Failed to delete project') 
-                            }
-                          }}
-                        >
-                          Delete
-                        </button>
+                      
+                       {/* // In your ProjectList component, update the delete button onClick handler: */}
+<button 
+  className="btn-ghost delete" 
+  onClick={async () => {
+    if (!confirm('Delete project "' + p.name + '"? This cannot be undone.')) return
+    try {
+      const result = await deleteProject(p.id);
+      
+      // Check if delete was successful
+      if (result.data?.success) {
+        // Remove the deleted project from state
+        setProjects(prev => prev.filter(project => project.id !== p.id));
+        
+        if (result.data.message?.includes('MOCK')) {
+          alert(`✅ Project "${p.name}" deleted! (Using local data - Backend is offline)`);
+        } else {
+          alert(`✅ Project "${p.name}" deleted successfully!`);
+        }
+      } else {
+        alert('Failed to delete project: ' + (result.data?.message || 'Unknown error'));
+      }
+    } catch (e) { 
+      console.error('Delete error:', e);
+      alert('Failed to delete project. Please try again.');
+    }
+  }}
+>
+  Delete
+</button>
                       </>
                     )}
                   </div>
