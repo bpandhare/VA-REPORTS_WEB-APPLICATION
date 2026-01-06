@@ -56,16 +56,13 @@ export default function ProjectList() {
   if (!window.confirm(`Mark project "${project.name}" as complete?`)) return
   
   try {
-    // Use a different status value that might work with your backend
     const result = await updateProjectStatus(project.id, 'completed');
     
     if (result.data?.success) {
-      // Update local state
       setProjects(prev => prev.map(p => 
         p.id === project.id ? { ...p, status: 'completed' } : p
       ))
       
-      // Show appropriate message
       if (result.data.message.includes('MOCK')) {
         alert(`✅ Project "${project.name}" marked as complete! (Using local data - Backend is offline)`);
       } else {
@@ -77,9 +74,7 @@ export default function ProjectList() {
   } catch (error) {
     console.error('Complete error:', error);
     
-    // Try alternative status values
     try {
-      // Try different status values
       const altStatuses = ['completed', 'done', 'finished', 'closed'];
       let success = false;
       
@@ -100,7 +95,6 @@ export default function ProjectList() {
       }
       
       if (!success) {
-        // Last resort: update locally only
         setProjects(prev => prev.map(p => 
           p.id === project.id ? { ...p, status: 'completed' } : p
         ))
@@ -194,7 +188,7 @@ export default function ProjectList() {
                   <div className="project-actions">
                     <button 
                       className="btn-ghost view-details"
-                      onClick={() => setSelected({ project: p }) & setShowCollaborators(true)}
+                      onClick={() => {setSelected({ project: p }); setShowCollaborators(true)}}
                     >
                       View Details
                     </button>
@@ -258,7 +252,7 @@ export default function ProjectList() {
                   <div className="project-actions">
                     <button 
                       className="btn-ghost view-details"
-                      onClick={() => setSelected({ project: p }) & setShowCollaborators(true)}
+                      onClick={() => {setSelected({ project: p }); setShowCollaborators(true)}}
                     >
                       View Details
                     </button>
@@ -302,8 +296,12 @@ export default function ProjectList() {
               <button className="btn-ghost" onClick={() => setShowNew(false)}>Close</button>
             </div>
             <ProjectForm 
-              isManager={isManager}
-              onCreated={() => { fetchProjects(); setShowNew(false) }} 
+              projectId={null}  // Null for create mode
+              initialData={null} // No initial data for create
+              onSuccess={() => { 
+                fetchProjects(); 
+                setShowNew(false); 
+              }} 
               onClose={() => setShowNew(false)} 
             />
           </div>
@@ -314,13 +312,17 @@ export default function ProjectList() {
         <div className="modal-backdrop">
           <div className="modal-pane">
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-              <h3 style={{ margin: 0 }}>Edit Project</h3>
+              <h3 style={{ margin: 0 }}>Edit Project: {editing.name}</h3>
               <button className="btn-ghost" onClick={() => setEditing(null)}>Close</button>
             </div>
             <ProjectForm 
-              initial={editing} 
-              isManager={isManager}
-              onCreated={() => { fetchProjects(); setEditing(null) }} 
+              projectId={editing.id}  // Pass project ID for edit mode
+              initialData={editing}    // Pass the entire project data
+              onSuccess={() => { 
+                fetchProjects(); 
+                setEditing(null); 
+                alert('Project updated successfully!');
+              }} 
               onClose={() => setEditing(null)} 
             />
           </div>

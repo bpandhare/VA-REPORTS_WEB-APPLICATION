@@ -129,18 +129,19 @@ function Sidebar() {
       </div>
 
       {/* Company Branding */}
-      <div className="company-brand">
-        <div className="company-logo">
-          <img src={logo} alt="Vickhardth Logo" className="logo-img" />
-          <div className="company-name">VICKHARDTH</div>
-        </div>
-        <div className="company-tagline">Daily reporting hub for site engineers</div>
-      </div>
+    {/* Company Branding */}
+<div className="company-section"> {/* Changed from company-brand */}
+  <div className="company-logo-container"> {/* Changed from company-logo */}
+    <img src={logo} alt="Vickhardth Logo" className="company-logo-img" /> {/* Changed from logo-img */}
+  </div>
+  <div className="company-title">VICKHARDTH</div> {/* Changed from company-name */}
+  <div className="company-subtitle">Daily reporting hub for site engineers</div> {/* Changed from company-tagline */}
+</div>
 
       {/* Main Navigation */}
       <nav className="main-nav">
         {/* TIME TRACKER SECTION */}
-        <div className="nav-section">
+        {/* <div className="nav-section">
           <div className="section-title">TIME TRACKING</div>
           <div className="nav-buttons">
             <button
@@ -152,7 +153,7 @@ function Sidebar() {
               <span className="btn-tag new">NEW</span>
             </button>
           </div>
-        </div>
+        </div> */}
 
         <div className="nav-section">
           <div className="section-title">REPORTS</div>

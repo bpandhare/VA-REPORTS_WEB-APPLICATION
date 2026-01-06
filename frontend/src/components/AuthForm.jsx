@@ -383,9 +383,32 @@ function AuthForm() {
 
   return (
     <section className="vh-form-shell">
+      {/* Company Header with Logo */}
+    {/* Company Header with Logo */}
+<div className="company-header">
+  <div className="company-logo-container">
+    {/* Replace SVG with your actual logo */}
+    <div className="company-logo">
+      <img 
+        src="/src/assets/logo.jpeg" 
+        alt="VickHardth Engineering Logo" 
+        style={{ 
+          width: '100%', 
+          height: '100%', 
+          objectFit: 'contain',
+          borderRadius: '15px'
+        }}
+      />
+    </div>
+    <div className="company-info">
+      <h1 className="company-name">VICKHARDTH AUTOMATION</h1>
+      <p className="company-tagline">Site Activity Monitoring System</p>
+    </div>
+  </div>
+</div>
       <header className="vh-form-header">
         <div>
-          <p className="vh-form-label">Site Activity Monitoring System</p>
+          <p className="vh-form-label">Welcome</p>
           <h2>{mode === 'login' ? 'Login to Dashboard' : 'Create New Account'}</h2>
           <p>
             {mode === 'login' 
@@ -605,6 +628,12 @@ function AuthForm() {
           >
             {mode === 'login' ? 'Need an account? Register' : 'Already have an account? Login'}
           </button>
+        </div>
+
+        {/* Company Footer */}
+        <div className="company-footer">
+          <p className="copyright">© {new Date().getFullYear()} VickHardth Engineering. All rights reserved.</p>
+          <p className="support">For support, contact: support@vickhardth.com</p>
         </div>
       </form>
     </section> 

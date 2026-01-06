@@ -51,7 +51,12 @@ const LeaveApplication = () => {
       
       if (typesResponse.ok) {
         const typesData = await typesResponse.json()
-        setLeaveTypes(typesData)
+        // Ensure all leave types require approval
+        const leaveTypesWithApproval = typesData.map(type => ({
+          ...type,
+          requiresApproval: true // Force all leave types to require approval
+        }))
+        setLeaveTypes(leaveTypesWithApproval)
       }
       
       // Fetch leave balance by type
@@ -146,9 +151,10 @@ const LeaveApplication = () => {
         if (!data.available) {
           setAlert({ type: 'warning', message: data.message })
         } else {
+          // All leaves require approval now
           setAlert({ 
-            type: 'success', 
-            message: `${data.message}. ${data.requiresApproval ? 'Requires approval.' : 'No approval required.'}` 
+            type: 'info', 
+            message: `${data.message}. Requires manager approval.` 
           })
         }
       }
@@ -160,96 +166,120 @@ const LeaveApplication = () => {
     }
   }
 
- const handleSubmit = async () => {
-  if (!formData.leaveType) {
-    setAlert({ type: 'error', message: 'Please select a leave type' })
-    return
-  }
-
-  const selectedType = leaveTypes.find(lt => lt.id === formData.leaveType)
-  if (!selectedType?.available) {
-    setAlert({ type: 'error', message: selectedType?.reason || 'This leave type is not available for you' })
-    return
-  }
-
-  if (!leaveAvailability?.available && leaveAvailability !== null) {
-    setAlert({ type: 'error', message: 'Please check leave availability first' })
-    return
-  }
-
-  setSubmitting(true)
-  setAlert(null)
-
-  try {
-    // Prepare leave application data
-    const leaveData = {
-      reportDate: formData.reportDate,
-      leaveType: formData.leaveType,
-      remark: formData.remark || `${selectedType.name} Leave Application`,
-      locationType: 'leave',
-      numberOfDays: formData.numberOfDays,
-      startDate: formData.startDate || formData.reportDate,
-      endDate: formData.endDate || formData.reportDate,
-      // Explicitly set status (backend should handle this too)
-      status: selectedType.requiresApproval ? 'pending' : 'approved'
+  const handleSubmit = async () => {
+    if (!formData.leaveType) {
+      setAlert({ type: 'error', message: 'Please select a leave type' })
+      return
     }
 
-    const response = await fetch(`${endpoint}/apply-leave`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(leaveData)
-    })
-
-    const responseData = await response.json()
-
-    if (!response.ok) {
-      throw new Error(responseData.message || 'Failed to submit leave application')
+    const selectedType = leaveTypes.find(lt => lt.id === formData.leaveType)
+    if (!selectedType?.available) {
+      setAlert({ type: 'error', message: selectedType?.reason || 'This leave type is not available for you' })
+      return
     }
 
-    // Show appropriate message based on approval requirement
-    const message = selectedType.requiresApproval 
-      ? 'Leave application submitted successfully! Waiting for manager approval.'
-      : 'Leave application submitted successfully!'
+    if (!leaveAvailability?.available && leaveAvailability !== null) {
+      setAlert({ type: 'error', message: 'Please check leave availability first' })
+      return
+    }
 
-    setAlert({ 
-      type: 'success', 
-      message: message 
-    })
-    
-    // Reset form
-    setFormData({
-      reportDate: getTodayDate(),
-      leaveType: '',
-      remark: '',
-      numberOfDays: 1,
-      startDate: '',
-      endDate: ''
-    })
-    setSelectedLeaveType(null)
-    setLeaveAvailability(null)
-    
-    // Refresh data
-    fetchLeaveData()
-    fetchLeaveHistory()
-    
-  } catch (error) {
-    setAlert({ 
-      type: 'error', 
-      message: error.message 
-    })
-  } finally {
-    setSubmitting(false)
+    setSubmitting(true)
+    setAlert(null)
+
+    try {
+      // Prepare leave application data
+      const leaveData = {
+        reportDate: formData.reportDate,
+        leaveType: formData.leaveType,
+        remark: formData.remark || `${selectedType.name} Leave Application`,
+        locationType: 'leave',
+        numberOfDays: formData.numberOfDays,
+        startDate: formData.startDate || formData.reportDate,
+        endDate: formData.endDate || formData.reportDate,
+        status: 'pending', // Always set to pending since all leaves require approval
+        requiresApproval: true // Explicitly set to true
+      }
+
+      console.log('Submitting leave application:', leaveData)
+
+      const response = await fetch(`${endpoint}/apply-leave`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(leaveData)
+      })
+
+      const responseData = await response.json()
+
+      if (!response.ok) {
+        throw new Error(responseData.message || 'Failed to submit leave application')
+      }
+
+      // Show appropriate message - all leaves now require approval
+      setAlert({ 
+        type: 'success', 
+        message: 'Leave application submitted successfully! Waiting for manager approval.'
+      })
+      
+      // Reset form
+      setFormData({
+        reportDate: getTodayDate(),
+        leaveType: '',
+        remark: '',
+        numberOfDays: 1,
+        startDate: '',
+        endDate: ''
+      })
+      setSelectedLeaveType(null)
+      setLeaveAvailability(null)
+      
+      // Refresh data
+      fetchLeaveData()
+      fetchLeaveHistory()
+      
+    } catch (error) {
+      setAlert({ 
+        type: 'error', 
+        message: error.message 
+      })
+    } finally {
+      setSubmitting(false)
+    }
   }
-}
 
   // Check if a date is a weekend (for display purposes only, not for validation)
   const isWeekend = (dateString) => {
     const date = new Date(dateString)
     const day = date.getDay()
     return day === 0 || day === 6 // 0 = Sunday, 6 = Saturday
+  }
+
+  // Function to get status badge
+  const getStatusBadge = (status) => {
+    const statusConfig = {
+      pending: { text: 'Pending', className: 'status-pending', color: '#856404', bgColor: '#fff3cd', borderColor: '#ffc107' },
+      approved: { text: 'Approved', className: 'status-approved', color: '#155724', bgColor: '#d4edda', borderColor: '#c3e6cb' },
+      rejected: { text: 'Rejected', className: 'status-rejected', color: '#721c24', bgColor: '#f8d7da', borderColor: '#f5c6cb' },
+      cancelled: { text: 'Cancelled', className: 'status-cancelled', color: '#383d41', bgColor: '#e2e3e5', borderColor: '#d6d8db' }
+    }
+    
+    const config = statusConfig[status] || { text: status, className: 'status-default', color: '#383d41', bgColor: '#e2e3e5', borderColor: '#d6d8db' }
+    
+    return (
+      <span style={{
+        padding: '0.25rem 0.5rem',
+        borderRadius: '4px',
+        background: config.bgColor,
+        color: config.color,
+        border: `1px solid ${config.borderColor}`,
+        fontSize: '0.85rem',
+        fontWeight: '500'
+      }}>
+        {config.text}
+      </span>
+    )
   }
 
   return (
@@ -260,6 +290,7 @@ const LeaveApplication = () => {
           <h2>Apply for Leave</h2>
           <p>
             Submit your leave applications and track your leave balance.
+            <br /><strong>Important:</strong> All leave applications require manager approval.
             <br /><strong>Note:</strong> Only one leave application allowed per day.
           </p>
           
@@ -338,7 +369,7 @@ const LeaveApplication = () => {
                   title={!type.available ? type.reason : type.description}
                 >
                   {type.name} {type.maxDays > 0 ? `(${type.maxDays} days/year)` : ''}
-                  {type.requiresApproval ? ' [Approval]' : ''}
+                  {type.requiresApproval ? ' [Requires Approval]' : ''}
                 </option>
               ))}
             </select>
@@ -416,7 +447,7 @@ const LeaveApplication = () => {
                 </div>
                 <div style={{ color: '#856404', fontSize: '0.9rem', marginTop: '0.25rem' }}>
                   <strong>Max Days:</strong> {selectedLeaveType.maxDays > 0 ? `${selectedLeaveType.maxDays} days/year` : 'Unlimited'} | 
-                  <strong> Approval:</strong> {selectedLeaveType.requiresApproval ? 'Required' : 'Not Required'}
+                  <strong> Approval:</strong> Required
                 </div>
                 
                 {/* Show balance for selected leave type */}
@@ -470,11 +501,9 @@ const LeaveApplication = () => {
                   }}>
                     <strong>{leaveAvailability.available ? '✓ Available' : '✗ Not Available'}</strong>
                     <div>{leaveAvailability.message}</div>
-                    {leaveAvailability.requiresApproval && leaveAvailability.available && (
-                      <div style={{ marginTop: '0.25rem', fontStyle: 'italic' }}>
-                        Note: This leave type requires manager approval
-                      </div>
-                    )}
+                    <div style={{ marginTop: '0.25rem', fontStyle: 'italic', color: '#0c5460' }}>
+                      Note: This leave application requires manager approval
+                    </div>
                   </div>
                 </div>
               )}
@@ -483,16 +512,17 @@ const LeaveApplication = () => {
 
           {/* Remark field */}
           <label className="vh-span-2">
-            <span>Reason for Leave</span>
+            <span>Reason for Leave *</span>
             <textarea
               name="remark"
               value={formData.remark}
               onChange={handleChange}
-              placeholder="Please provide a reason for your leave..."
+              placeholder="Please provide a detailed reason for your leave application..."
               rows="3"
+              required
             />
             <small style={{ color: '#6c757d', display: 'block', marginTop: '0.25rem' }}>
-              Optional: Add additional information or reason for leave
+              Required: Add detailed information or reason for leave
             </small>
           </label>
         </div>
@@ -501,9 +531,13 @@ const LeaveApplication = () => {
           <button 
             type="button" 
             onClick={handleSubmit} 
-            disabled={submitting || !formData.leaveType || leaveAvailability?.available === false}
+            disabled={submitting || !formData.leaveType || !formData.remark || leaveAvailability?.available === false}
+            style={{
+              background: '#007bff',
+              borderColor: '#007bff'
+            }}
           >
-            {submitting ? 'Submitting...' : `Apply ${formData.leaveType ? leaveTypes.find(lt => lt.id === formData.leaveType)?.name : 'Leave'}`}
+            {submitting ? 'Submitting...' : `Submit for Approval`}
           </button>
           
           <button
@@ -531,7 +565,7 @@ const LeaveApplication = () => {
 
       {/* Leave History Section */}
       <div style={{ marginTop: '2rem' }}>
-        <h3>Recent Leave Applications</h3>
+        <h3>My Leave Applications</h3>
         {loadingHistory ? (
           <p>Loading leave history...</p>
         ) : leaveHistory.length === 0 ? (
@@ -541,7 +575,7 @@ const LeaveApplication = () => {
             background: '#f8f9fa',
             borderRadius: '8px',
             border: '1px solid #dee2e6',
-            maxHeight: '300px',
+            maxHeight: '400px',
             overflowY: 'auto'
           }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -550,32 +584,72 @@ const LeaveApplication = () => {
                   <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '1px solid #dee2e6' }}>Date</th>
                   <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '1px solid #dee2e6' }}>Type</th>
                   <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '1px solid #dee2e6' }}>Status</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '1px solid #dee2e6' }}>Days</th>
                   <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '1px solid #dee2e6' }}>Remark</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'left', borderBottom: '1px solid #dee2e6' }}>Approved/Rejected By</th>
                 </tr>
               </thead>
               <tbody>
-                {leaveHistory.slice(0, 10).map(leave => (
+                {leaveHistory.map(leave => (
                   <tr key={leave.id} style={{ borderBottom: '1px solid #dee2e6' }}>
-                    <td style={{ padding: '0.75rem' }}>{leave.report_date}</td>
-                    <td style={{ padding: '0.75rem' }}>{leave.leaveTypeName || leave.leave_type}</td>
                     <td style={{ padding: '0.75rem' }}>
-                      <span style={{
-                        padding: '0.25rem 0.5rem',
-                        borderRadius: '4px',
-                        background: '#d4edda',
-                        color: '#155724',
-                        fontSize: '0.85rem'
-                      }}>
-                        Applied
-                      </span>
+                      {leave.report_date || leave.leaveDate || '-'}
                     </td>
-                    <td style={{ padding: '0.75rem' }}>{leave.remark || '-'}</td>
+                    <td style={{ padding: '0.75rem' }}>
+                      {leave.leaveTypeName || leave.leave_type || '-'}
+                    </td>
+                    <td style={{ padding: '0.75rem' }}>
+                      {getStatusBadge(leave.leave_status || 'pending')}
+                    </td>
+                    <td style={{ padding: '0.75rem' }}>
+                      {leave.number_of_days || leave.numberOfDays || '1'}
+                    </td>
+                    <td style={{ padding: '0.75rem', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {leave.remark || '-'}
+                    </td>
+                    <td style={{ padding: '0.75rem' }}>
+                      {leave.leave_approved_by ? (
+                        <div>
+                          <div>{leave.leave_approved_by}</div>
+                          {leave.leave_approved_at && (
+                            <small style={{ color: '#6c757d' }}>
+                              {new Date(leave.leave_approved_at).toLocaleDateString('en-IN')}
+                            </small>
+                          )}
+                          {leave.leave_rejection_reason && (
+                            <div style={{ color: '#721c24', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                              <strong>Reason:</strong> {leave.leave_rejection_reason}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ color: '#6c757d', fontStyle: 'italic' }}>Pending approval</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+      </div>
+
+      {/* Important Information Box */}
+      <div style={{ 
+        marginTop: '2rem',
+        padding: '1rem',
+        background: '#e7f3ff',
+        border: '1px solid #b8daff',
+        borderRadius: '8px'
+      }}>
+        <h4 style={{ color: '#004085', marginBottom: '0.5rem' }}>Important Information</h4>
+        <ul style={{ color: '#004085', margin: 0, paddingLeft: '1.5rem' }}>
+          <li>All leave applications require manager approval</li>
+          <li>You will receive notification once your leave is approved or rejected</li>
+          <li>Only one leave application is allowed per day</li>
+          <li>Please ensure you have sufficient leave balance before applying</li>
+          <li>For urgent leaves, please contact your manager directly</li>
+        </ul>
       </div>
     </section>
   )

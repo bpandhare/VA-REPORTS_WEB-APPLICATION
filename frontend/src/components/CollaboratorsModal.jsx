@@ -1,239 +1,434 @@
-import { useEffect, useState } from 'react'
-import { getCollaborators, addCollaborator, updateCollaborator, deleteCollaborator } from '../services/api'
-import './Projects.css'
+import { useState, useEffect } from 'react'
+import { 
+  getCollaborators, 
+  addCollaborator, 
+  deleteCollaborator, 
+  getAvailableUsers  // Make sure this is imported
+} from '../services/api'
+import './CollaboratorsModal.css'
 
 export default function CollaboratorsModal({ project, onClose, onChanged }) {
   const [collaborators, setCollaborators] = useState([])
+  const [availableUsers, setAvailableUsers] = useState([])
   const [loading, setLoading] = useState(true)
-  const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ employeeId: '', userId: '', role: 'Contributor' })
+  const [usersLoading, setUsersLoading] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [selectedUserId, setSelectedUserId] = useState('')
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('')
+  const [role, setRole] = useState('Contributor')
+  const [message, setMessage] = useState({ type: '', text: '' })
+  const [useManualInput, setUseManualInput] = useState(false)
+  const [hasFetchedUsers, setHasFetchedUsers] = useState(false)
 
-  const fetch = async () => {
+  useEffect(() => {
+    console.log('🔍 CollaboratorsModal mounted for project:', project?.id, project?.name)
+    fetchCollaborators()
+    // Auto-fetch users when modal opens
+    fetchAvailableUsers()
+  }, [project?.id])
+
+  const fetchCollaborators = async () => {
+    if (!project?.id) return
+    
     setLoading(true)
+    setMessage({ type: '', text: '' })
+    
     try {
+      console.log('📋 Fetching collaborators for project:', project.id)
       const res = await getCollaborators(project.id)
-      setCollaborators(res.data?.collaborators || [])
-    } catch (e) { 
-      console.error('Failed to fetch collaborators:', e) 
+      console.log('📦 Collaborators response:', res.data)
+      
+      if (res.data?.success) {
+        setCollaborators(res.data.collaborators || [])
+        console.log(`✅ Loaded ${res.data.collaborators?.length || 0} collaborators`)
+      } else {
+        console.error('❌ Failed to fetch collaborators:', res.data?.message)
+        setMessage({ type: 'error', text: res.data?.message || 'Failed to load collaborators' })
+      }
+    } catch (error) {
+      console.error('❌ Error fetching collaborators:', error)
+      setMessage({ 
+        type: 'error', 
+        text: error.response?.data?.message || error.message || 'Failed to load collaborators' 
+      })
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
-  useEffect(() => { 
-    if (project) fetch() 
-  }, [project])
+const fetchAvailableUsers = async () => {
+  if (hasFetchedUsers && availableUsers.length > 0) {
+    console.log('📊 Users already loaded:', availableUsers.length)
+    return
+  }
+  
+  setUsersLoading(true)
+  setMessage({ type: '', text: '' })
+  
+  try {
+    console.log('👥 Fetching REAL users from database...')
+    const res = await getAvailableUsers()
+    console.log('📦 REAL Users API response:', res.data)
+    
+    if (res.data?.success) {
+      const users = res.data.users || []
+      
+      setAvailableUsers(users)
+      setHasFetchedUsers(true)
+      
+      console.log(`✅ Loaded ${users.length} REAL users from database`)
+      
+      if (users.length === 0) {
+        // NO MOCK DATA - tell user to add real users
+        setMessage({ 
+          type: 'error', 
+          text: 'No employees found in database. Please add employees first.' 
+        })
+        setUseManualInput(true)
+        
+        // Show instruction to add users
+        setTimeout(() => {
+          if (window.confirm('No employees found. Would you like instructions on how to add employees to the database?')) {
+            alert('To add employees:\n1. Go to your database\n2. Run SQL: INSERT INTO users (username, employee_id, email, role, job_role) VALUES (...)\n3. Or use your user management system to create accounts');
+          }
+        }, 1000);
+      } else {
+        setMessage({ 
+          type: 'success', 
+          text: `Found ${users.length} employees` 
+        })
+      }
+      
+    } else {
+      console.error('❌ API failed:', res.data?.message)
+      setMessage({ 
+        type: 'error', 
+        text: res.data?.message || 'Failed to load employees' 
+      })
+      setUseManualInput(true)
+    }
+  } catch (error) {
+    console.error('❌ Error fetching users:', error)
+    setMessage({ 
+      type: 'error', 
+      text: 'Cannot connect to database. Please check backend.' 
+    })
+    setUseManualInput(true)
+  } finally {
+    setUsersLoading(false)
+  }
+}
 
   const handleAdd = async (e) => {
     e.preventDefault()
     
-    // Debug log
-    console.log('Adding collaborator with data:', {
-      projectId: project.id,
-      formData: form,
-      requestData: {
-        userId: form.userId || null,
-        employeeId: form.employeeId || null,
-        role: form.role
+    let employeeId = ''
+    let userId = null
+    
+    if (useManualInput) {
+      if (!selectedEmployeeId.trim()) {
+        setMessage({ type: 'error', text: 'Please enter Employee ID' })
+        return
       }
+      employeeId = selectedEmployeeId.trim()
+    } else {
+      if (!selectedUserId) {
+        setMessage({ type: 'error', text: 'Please select an employee' })
+        return
+      }
+      
+      // Find the selected user
+      const selectedUser = availableUsers.find(u => u.id === parseInt(selectedUserId))
+      if (selectedUser) {
+        userId = selectedUser.id
+        employeeId = selectedUser.employee_id || selectedUser.username
+      }
+    }
+
+    if (!employeeId) {
+      setMessage({ type: 'error', text: 'Please provide employee information' })
+      return
+    }
+
+    setAdding(true)
+    setMessage({ type: '', text: '' })
+
+    console.log('➕ Adding collaborator:', {
+      projectId: project.id,
+      userId,
+      employeeId,
+      role
+    })
+
+    try {
+      const data = { role }
+      
+      if (userId) {
+        data.userId = userId
+      } else {
+        data.collaboratorEmployeeId = employeeId
+      }
+
+      console.log('📤 Sending data:', data)
+      const res = await addCollaborator(project.id, data)
+      console.log('✅ Add response:', res.data)
+
+      if (res.data?.success) {
+        setMessage({ type: 'success', text: res.data.message || 'Collaborator added successfully' })
+        setSelectedUserId('')
+        setSelectedEmployeeId('')
+        setRole('Contributor')
+        fetchCollaborators() // Refresh list
+        if (onChanged) onChanged()
+      } else {
+        setMessage({ 
+          type: 'error', 
+          text: res.data?.message || 'Failed to add collaborator' 
+        })
+      }
+    } catch (error) {
+      console.error('❌ Add collaborator error:', error)
+      
+      let errorMessage = 'Failed to add collaborator'
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+      
+      setMessage({ type: 'error', text: errorMessage })
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  const handleRemove = async (collabId) => {
+    if (!window.confirm('Remove this collaborator?')) return
+
+    try {
+      const res = await deleteCollaborator(project.id, collabId)
+
+      if (res.data?.success) {
+        setMessage({ type: 'success', text: 'Collaborator removed successfully' })
+        fetchCollaborators()
+        if (onChanged) onChanged()
+      } else {
+        setMessage({ type: 'error', text: res.data?.message || 'Failed to remove collaborator' })
+      }
+    } catch (error) {
+      console.error('Remove collaborator error:', error)
+      setMessage({ 
+        type: 'error', 
+        text: error.response?.data?.message || error.message || 'Failed to remove collaborator' 
+      })
+    }
+  }
+
+  const clearMessage = () => {
+    setMessage({ type: '', text: '' })
+  }
+
+  const toggleInputMethod = () => {
+    setUseManualInput(!useManualInput)
+    setSelectedUserId('')
+    setSelectedEmployeeId('')
+    setMessage({ 
+      type: 'info', 
+      text: useManualInput ? 'Switched to dropdown selection' : 'Switched to manual input' 
     })
     
-    try {
-      // Send employeeId instead of collaboratorEmployeeId
-      await addCollaborator(project.id, { 
-        userId: form.userId || null, 
-        employeeId: form.employeeId || null, 
-        role: form.role 
-      })
-      setForm({ employeeId: '', userId: '', role: 'Contributor' })
-      fetch()
-      onChanged && onChanged()
-    } catch (e) { 
-      console.error('Failed to add collaborator:', e) 
-      alert('Failed to add collaborator: ' + (e.response?.data?.message || e.message))
+    if (!useManualInput && !hasFetchedUsers) {
+      fetchAvailableUsers()
     }
   }
 
-  const handleUpdate = async (c) => {
-    try {
-      await updateCollaborator(project.id, c.id, { 
-        role: c.role, 
-        userId: c.user_id || null, 
-        employeeId: c.collaborator_employee_id || null 
-      })
-      fetch()
-      onChanged && onChanged()
-      setEditing(null)
-    } catch (e) { 
-      console.error('Failed to update:', e) 
-      alert('Failed to update: ' + (e.response?.data?.message || e.message))
-    }
-  }
+  // Filter out users who are already collaborators
+  const filteredUsers = availableUsers.filter(user => 
+    !collaborators.some(collab => collab.user_id === user.id)
+  )
 
-  const handleDelete = async (c) => {
-    if (!confirm('Remove collaborator?')) return
-    try {
-      await deleteCollaborator(project.id, c.id)
-      fetch()
-      onChanged && onChanged()
-    } catch (e) { 
-      console.error('Failed to delete:', e) 
-      alert('Failed to delete: ' + (e.response?.data?.message || e.message))
+  // Auto-fetch users when dropdown is shown
+  useEffect(() => {
+    if (!useManualInput && !hasFetchedUsers && !usersLoading) {
+      fetchAvailableUsers()
     }
-  }
+  }, [useManualInput])
+
+  if (!project) return null
 
   return (
     <div className="modal-backdrop">
-      <div className="modal-pane">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <h3 style={{ margin: 0 }}>Collaborators for {project.name}</h3>
-          <div>
-            <button className="btn-ghost" onClick={() => onClose && onClose()}>Close</button>
+      <div className="modal-pane" style={{ maxWidth: 600 }}>
+        <div className="modal-header">
+          <h2>Project Collaborators</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div className="project-name">{project.name}</div>
+            <button className="btn-ghost" onClick={onClose}>Close</button>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 20 }}>
-          <div style={{ flex: 1 }}>
-            <h4>Add Collaborator</h4>
-            <form onSubmit={handleAdd}>
-              <div className="form-row">
-                <label>Employee ID *</label>
-                <input 
-                  value={form.employeeId} 
-                  onChange={e => setForm(f => ({ ...f, employeeId: e.target.value }))} 
-                  placeholder="Enter employee ID"
-                  required
-                />
-                <small style={{ color: '#666', fontSize: '12px' }}>
-                  Enter the employee ID or username
-                </small>
-              </div>
-              <div className="form-row">
-                <label>User ID (optional)</label>
-                <input 
-                  value={form.userId} 
-                  onChange={e => setForm(f => ({ ...f, userId: e.target.value }))} 
-                  placeholder="Leave empty if adding by employee ID"
-                />
-                <small style={{ color: '#666', fontSize: '12px' }}>
-                  Only fill if you know the user's database ID
-                </small>
-              </div>
-              <div className="form-row">
-                <label>Role</label>
-                <select 
-                  value={form.role} 
-                  onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-                >
-                  <option value="Contributor">Contributor</option>
-                  <option value="Developer">Developer</option>
-                  <option value="Manager">Manager</option>
-                  <option value="Reviewer">Reviewer</option>
-                  <option value="Viewer">Viewer</option>
-                </select>
-              </div>
-              <div className="form-actions">
-                <button type="button" className="btn-ghost" onClick={() => setForm({ employeeId: '', userId: '', role: 'Contributor' })}>
-                  Clear
-                </button>
-                <button type="submit" className="btn-primary">
-                  Add Collaborator
-                </button>
-              </div>
-            </form>
+        {message.text && (
+          <div className={`message ${message.type}`} onClick={clearMessage}>
+            {message.text}
+            <span className="message-close">×</span>
+          </div>
+        )}
+
+        {/* Debug info */}
+        <div style={{ 
+          backgroundColor: '#f5f5f5', 
+          padding: '8px 12px', 
+          margin: '0 20px 15px 20px',
+          borderRadius: '4px',
+          fontSize: '12px',
+          color: '#666',
+          border: '1px dashed #ddd'
+        }}>
+          <div><strong>Project ID:</strong> {project.id}</div>
+          <div><strong>Current Collaborators:</strong> {collaborators.length}</div>
+          <div><strong>Available Users:</strong> {availableUsers.length}</div>
+          <div><strong>Input Mode:</strong> {useManualInput ? 'Manual' : 'Dropdown'}</div>
+        </div>
+
+        {/* Add Collaborator Form */}
+        <div className="add-collaborator-form">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+            <h3 style={{ margin: 0 }}>Add New Collaborator</h3>
+            <button 
+              type="button" 
+              onClick={fetchAvailableUsers}
+              className="btn-ghost"
+              style={{ fontSize: '12px', padding: '4px 8px' }}
+              disabled={usersLoading}
+            >
+              {usersLoading ? 'Loading...' : 'Refresh List'}
+            </button>
+          </div>
+          
+          <div style={{ marginBottom: 15, display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <button 
+              type="button" 
+              onClick={toggleInputMethod}
+              className="btn-ghost"
+              style={{ fontSize: '12px', padding: '4px 8px' }}
+            >
+              {useManualInput ? '← Use Dropdown' : 'Use Manual Input →'}
+            </button>
+            <small style={{ color: '#666' }}>
+              {useManualInput ? 'Enter Employee ID manually' : 'Select from employee list'}
+            </small>
           </div>
 
-          <div style={{ flex: 1 }}>
-            <h4 style={{ marginTop: 0 }}>Existing Collaborators ({collaborators.length})</h4>
-            {loading ? (
-              <div>Loading collaborators...</div>
-            ) : collaborators.length === 0 ? (
-              <div style={{ 
-                textAlign: 'center', 
-                padding: '20px', 
-                color: '#666',
-                border: '1px dashed #ddd',
-                borderRadius: '8px'
-              }}>
-                No collaborators yet. Add one using the form.
-              </div>
-            ) : (
-              <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-                {collaborators.map(c => (
-                  <div key={c.id} style={{ 
-                    border: '1px solid #eef3f7', 
-                    padding: '12px', 
-                    borderRadius: '8px', 
-                    marginBottom: '8px',
-                    backgroundColor: '#f9fafb'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: '14px' }}>
-                          {c.username || c.collaborator_employee_id || `User ID: ${c.user_id}`}
-                        </div>
-                        <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                          <span>Role: {c.role || 'Contributor'}</span>
-                          {c.employee_id && <span>Emp ID: {c.employee_id}</span>}
-                          <span>Added: {new Date(c.added_at).toLocaleDateString()}</span>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button 
-                          className="btn-ghost" 
-                          onClick={() => setEditing(c)}
-                          style={{ fontSize: '12px', padding: '4px 8px' }}
-                        >
-                          Edit
-                        </button>
-                        <button 
-                          className="btn-ghost" 
-                          onClick={() => handleDelete(c)}
-                          style={{ fontSize: '12px', padding: '4px 8px', color: '#ef4444' }}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-
-                    {editing && editing.id === c.id && (
-                      <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e5e7eb' }}>
-                        <div className="form-row" style={{ marginBottom: '8px' }}>
-                          <label style={{ fontSize: '12px' }}>Role</label>
-                          <select 
-                            value={editing.role || ''} 
-                            onChange={e => setEditing(s => ({ ...s, role: e.target.value }))}
-                            style={{ fontSize: '12px', padding: '4px 8px' }}
-                          >
-                            <option value="Contributor">Contributor</option>
-                            <option value="Developer">Developer</option>
-                            <option value="Manager">Manager</option>
-                            <option value="Reviewer">Reviewer</option>
-                            <option value="Viewer">Viewer</option>
-                          </select>
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                          <button 
-                            className="btn-ghost" 
-                            onClick={() => setEditing(null)}
-                            style={{ fontSize: '12px', padding: '4px 8px' }}
-                          >
-                            Cancel
-                          </button>
-                          <button 
-                            className="btn-primary" 
-                            onClick={() => handleUpdate(editing)}
-                            style={{ fontSize: '12px', padding: '4px 8px' }}
-                          >
-                            Save
-                          </button>
-                        </div>
+          <form onSubmit={handleAdd}>
+            <div className="form-row">
+              <div className="form-group">
+                {useManualInput ? (
+                  <input
+                    type="text"
+                    value={selectedEmployeeId}
+                    onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                    placeholder="Enter Employee ID (e.g., E0001, EMP001)"
+                    disabled={adding}
+                    required
+                    style={{ width: '100%' }}
+                  />
+                ) : (
+                  <>
+                    <select
+                      value={selectedUserId}
+                      onChange={(e) => setSelectedUserId(e.target.value)}
+                      disabled={adding || usersLoading || filteredUsers.length === 0}
+                      required
+                      style={{ width: '100%' }}
+                    >
+                      <option value="">Select Employee</option>
+                      {filteredUsers.map(user => (
+                        <option key={user.id} value={user.id}>
+                          {user.username} ({user.employee_id}) - {user.job_role || 'Employee'}
+                        </option>
+                      ))}
+                    </select>
+                    {usersLoading && <div className="loading-small">Loading employees...</div>}
+                    {!usersLoading && filteredUsers.length === 0 && availableUsers.length > 0 && (
+                      <div className="hint">All employees are already collaborators</div>
+                    )}
+                    {!usersLoading && availableUsers.length === 0 && (
+                      <div className="hint">
+                        No employees found. Try <button type="button" onClick={toggleInputMethod} style={{ background: 'none', border: 'none', color: '#007bff', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>manual input</button>
                       </div>
                     )}
-                  </div>
-                ))}
+                  </>
+                )}
               </div>
-            )}
-          </div>
+              <div className="form-group" style={{ width: 150 }}>
+                <select 
+                  value={role} 
+                  onChange={(e) => setRole(e.target.value)}
+                  disabled={adding}
+                  style={{ width: '100%' }}
+                >
+                  <option value="Contributor">Contributor</option>
+                  <option value="Viewer">Viewer</option>
+                  <option value="Manager">Manager</option>
+                </select>
+              </div>
+              <button 
+                type="submit" 
+                disabled={adding || (useManualInput ? !selectedEmployeeId.trim() : !selectedUserId)}
+                className="btn-primary"
+                style={{ height: '38px', minWidth: '80px' }}
+              >
+                {adding ? 'Adding...' : 'Add'}
+              </button>
+            </div>
+            <div className="form-hint">
+              {useManualInput 
+                ? 'Enter the Employee ID or Username'
+                : `Select from ${filteredUsers.length} available employees`}
+            </div>
+          </form>
+        </div>
+
+        {/* Collaborators List */}
+        <div className="collaborators-list">
+          <h3>Current Collaborators ({collaborators.length})</h3>
+          
+          {loading ? (
+            <div className="loading">Loading collaborators...</div>
+          ) : collaborators.length === 0 ? (
+            <div className="no-collaborators">
+              No collaborators yet. Add one above.
+            </div>
+          ) : (
+            <div className="collaborators-grid">
+              {collaborators.map(collab => (
+                <div key={collab.id} className="collaborator-card">
+                  <div className="collaborator-info">
+                    <div className="collaborator-name">
+                      {collab.display_name || collab.username || 
+                       (collab.user_id ? `User ID: ${collab.user_id}` : 
+                       collab.collaborator_employee_id || 'Employee ID: ' + (collab.collaborator_employee_id || 'Unknown'))}
+                    </div>
+                    <div className="collaborator-details">
+                      <span className="collaborator-role">{collab.role}</span>
+                      {/* Display job_role if available */}
+                      {collab.job_role && (
+                        <span className="collaborator-job-role">{collab.job_role}</span>
+                      )}
+                      {collab.email && (
+                        <span className="collaborator-email">{collab.email}</span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    className="btn-ghost remove-btn"
+                    onClick={() => handleRemove(collab.id)}
+                    title="Remove collaborator"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

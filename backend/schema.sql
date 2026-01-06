@@ -519,3 +519,15 @@ ADD COLUMN IF NOT EXISTS collaborators_count INT DEFAULT 0;
 -- Run this SQL in your MySQL database
 ALTER TABLE projects 
 ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+-- Add end_customer column to projects table
+ALTER TABLE projects 
+ADD COLUMN IF NOT EXISTS end_customer VARCHAR(255) DEFAULT NULL;
+
+-- Add job_role column to users table if it doesn't exist
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS job_role VARCHAR(100) DEFAULT 'Junior Engineer';
+
+-- Update some sample job roles (optional)
+UPDATE users SET job_role = 'Senior Engineer' WHERE id IN (1, 3);
+UPDATE users SET job_role = 'Junior Engineer' WHERE id IN (2, 4);
+UPDATE users SET job_role = 'Project Manager' WHERE role = 'Manager';

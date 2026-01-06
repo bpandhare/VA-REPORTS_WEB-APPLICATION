@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react'; 
 import { useAuth } from './AuthContext';
 import './ManagerLeaveApproval.css';
 
@@ -40,6 +40,15 @@ const ManagerLeaveApproval = () => {
   console.log('🔍 [MANAGER DASHBOARD DEBUG] Is Manager?:', isManager);
   console.log('🔍 [MANAGER DASHBOARD DEBUG] User Role:', user?.role);
 
+  // Debug state changes
+  useEffect(() => {
+    console.log('🔄 Pending leaves updated:', pendingLeaves.length, pendingLeaves);
+  }, [pendingLeaves]);
+
+  useEffect(() => {
+    console.log('🔄 All leaves updated:', allLeaves.length);
+  }, [allLeaves]);
+
   useEffect(() => {
     if (!isManager) {
       console.log('❌ User is not a manager, skipping data fetch');
@@ -67,8 +76,13 @@ const ManagerLeaveApproval = () => {
         console.log('📡 Pending leaves data:', data);
         
         if (data.success) {
-          setPendingLeaves(data.pendingLeaves);
-          console.log(`✅ Found ${data.pendingLeaves.length} pending leaves`);
+          // Filter to ensure only truly pending leaves are shown
+          const trulyPendingLeaves = data.pendingLeaves?.filter(
+            leave => leave.leave_status === 'pending' || leave.status === 'pending'
+          ) || [];
+          
+          console.log(`✅ Found ${trulyPendingLeaves.length} truly pending leaves`);
+          setPendingLeaves(trulyPendingLeaves);
         } else {
           console.error('❌ API returned success: false', data.message);
         }
@@ -114,31 +128,6 @@ const ManagerLeaveApproval = () => {
       setLoading(false);
     }
   };
-
-  // ManagerApproval.jsx - Updated fetchLeaves function
-const fetchLeaves = async () => {
-  try {
-    const token = localStorage.getItem('token')
-    const endpoint = import.meta.env.VITE_API_URL?.replace('/api/activity', '/api/daily-target') ?? 'http://localhost:5000/api/daily-target'
-    
-    const response = await fetch(`${endpoint}/pending-leaves`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-    
-    if (response.ok) {
-      const data = await response.json()
-      if (data.success) {
-        // Filter to show only pending leaves
-        const pendingLeaves = data.leaves?.filter(leave => leave.status === 'pending') || []
-        setLeaves(pendingLeaves)
-      }
-    }
-  } catch (error) {
-    console.error('Error fetching leaves:', error)
-  } finally {
-    setLoading(false)
-  }
-}
 
   const fetchEmployees = async () => {
     try {
@@ -228,8 +217,36 @@ const fetchLeaves = async () => {
         const data = await response.json();
         if (data.success) {
           alert('Leave approved successfully!');
-          fetchPendingLeaves();
-          fetchAllLeaves();
+          
+          // Immediately remove from pending leaves state
+          setPendingLeaves(prevLeaves => prevLeaves.filter(leave => leave.id !== leaveId));
+          
+          // Also update all leaves state
+          setAllLeaves(prevLeaves => 
+            prevLeaves.map(leave => 
+              leave.id === leaveId 
+                ? { 
+                    ...leave, 
+                    leave_status: 'approved', 
+                    leave_approved_by: user?.name || user?.username,
+                    leave_approved_at: new Date().toISOString()
+                  } 
+                : leave
+            )
+          );
+          
+          // Update statistics
+          setStatistics(prev => ({
+            ...prev,
+            pending: Math.max(0, prev.pending - 1),
+            approved: prev.approved + 1
+          }));
+          
+          // Still refresh from server to ensure consistency
+          setTimeout(() => {
+            fetchPendingLeaves();
+            fetchAllLeaves();
+          }, 500);
         }
       } else {
         const error = await response.json();
@@ -273,10 +290,41 @@ const fetchLeaves = async () => {
         const data = await response.json();
         if (data.success) {
           alert('Leave rejected successfully!');
-          fetchPendingLeaves();
-          fetchAllLeaves();
+          
+          // Immediately remove from pending leaves state
+          setPendingLeaves(prevLeaves => prevLeaves.filter(leave => leave.id !== selectedLeave.id));
+          
+          // Update all leaves state
+          setAllLeaves(prevLeaves => 
+            prevLeaves.map(leave => 
+              leave.id === selectedLeave.id 
+                ? { 
+                    ...leave, 
+                    leave_status: 'rejected', 
+                    leave_approved_by: user?.name || user?.username,
+                    leave_approved_at: new Date().toISOString(),
+                    leave_rejection_reason: rejectionReason 
+                  } 
+                : leave
+            )
+          );
+          
+          // Update statistics
+          setStatistics(prev => ({
+            ...prev,
+            pending: Math.max(0, prev.pending - 1),
+            rejected: prev.rejected + 1
+          }));
+          
+          // Still refresh from server
+          setTimeout(() => {
+            fetchPendingLeaves();
+            fetchAllLeaves();
+          }, 500);
+          
           setShowRejectModal(false);
           setSelectedLeave(null);
+          setRejectionReason('');
         }
       } else {
         const error = await response.json();

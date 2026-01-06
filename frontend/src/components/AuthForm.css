@@ -150,3 +150,109 @@ button.loading {
   text-transform: uppercase;
   letter-spacing: 1px;
 }
+
+/* Company Header Styles */
+/* Company Header Styles - Left Aligned */
+.company-header {
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.company-logo-container {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.company-logo {
+  width: 80px;
+  height: 80px;
+  border-radius: 20px;
+  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  border: 2px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.company-info {
+  text-align: left;
+}
+
+.company-name {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 0.25rem 0;
+}
+
+.company-tagline {
+  color: #64748b;
+  font-size: 1rem;
+  margin: 0;
+  font-weight: 500;
+}
+
+/* Form Header Adjustments */
+.vh-form-header {
+  margin-top: 1rem;
+}
+
+.vh-form-header h2 {
+  margin-bottom: 0.5rem;
+}
+
+/* Company Footer */
+.company-footer {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #e2e8f0;
+  text-align: center;
+}
+
+.copyright {
+  color: #64748b;
+  font-size: 0.875rem;
+  margin: 0.25rem 0;
+}
+
+.support {
+  color: #3b82f6;
+  font-size: 0.875rem;
+  margin: 0.25rem 0;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .company-logo-container {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  
+  .company-name {
+    font-size: 1.75rem;
+  }
+  
+  .company-logo {
+    width: 70px;
+    height: 70px;
+  }
+}
+
+@media (max-width: 480px) {
+  .company-name {
+    font-size: 1.5rem;
+  }
+  
+  .company-logo {
+    width: 60px;
+    height: 60px;
+  }
+  
+  .company-tagline {
+    font-size: 0.9rem;
+  }
+}

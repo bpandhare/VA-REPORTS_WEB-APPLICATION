@@ -439,6 +439,34 @@ export const deleteCollaborator = (projectId, collabId) => {
   return api.delete(`/api/projects/${projectId}/collaborators/${collabId}`);
 };
 
+// Get all users for collaborator dropdown
+// In services/api.js - make sure this function exists:
+
+// Get all users for collaborator dropdown
+export const getAvailableUsers = async () => {
+  try {
+    console.log('👥 Fetching available users...');
+    const response = await api.get('/api/projects/available-users');
+    console.log('✅ Users fetched:', response.data);
+    return response;
+  } catch (error) {
+    console.error('❌ Error fetching users:', error);
+    
+    // Return mock data if API fails
+    return {
+      data: {
+        success: true,
+        users: [],
+        message: 'Using local data - backend unavailable'
+      }
+    };
+  }
+};
+// Get existing customers for dropdown
+export const getCustomersList = () => {
+  return api.get('/api/projects/customers/list');
+};
+
 // CORRECTED updateProjectStatus function - Fixed URL
 export const updateProjectStatus = async (projectId, status) => {
   try {
@@ -616,5 +644,7 @@ export const quickServerTest = async () => {
     return false;
   }
 };
+
+
 
 export default api;

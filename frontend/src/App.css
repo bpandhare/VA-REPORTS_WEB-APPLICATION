@@ -98,3 +98,8 @@ body {
     padding: 100px 15px 15px 15px;
   }
 }
+.sidebar-logo {
+  background: white;
+  padding: 10px;
+  border-radius: 8px;
+}

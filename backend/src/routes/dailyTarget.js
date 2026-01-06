@@ -127,15 +127,15 @@ router.get('/current-user', verifyToken, async (req, res) => {
 
 // ==================== LEAVE TYPES CONFIGURATION ====================
 
-// Define leave types with configurations
+// Define leave types with configurations - ALL LEAVES REQUIRE APPROVAL
 const LEAVE_TYPES = [
-  { id: 'casual', name: 'Casual Leave', maxDays: 12, requiresApproval: false, description: 'For personal work or urgent matters' },
-  { id: 'sick', name: 'Sick Leave', maxDays: 12, requiresApproval: false, description: 'For health issues or medical appointments' },
+  { id: 'casual', name: 'Casual Leave', maxDays: 12, requiresApproval: true, description: 'For personal work or urgent matters' },
+  { id: 'sick', name: 'Sick Leave', maxDays: 12, requiresApproval: true, description: 'For health issues or medical appointments' },
   { id: 'earned', name: 'Earned Leave', maxDays: 30, requiresApproval: true, description: 'Accumulated leave based on service period' },
   { id: 'maternity', name: 'Maternity Leave', maxDays: 180, requiresApproval: true, genderSpecific: 'female', description: 'For pregnancy and childbirth' },
   { id: 'paternity', name: 'Paternity Leave', maxDays: 15, requiresApproval: true, genderSpecific: 'male', description: 'For new fathers after childbirth' },
   { id: 'compensatory', name: 'Compensatory Leave', maxDays: 0, requiresApproval: true, description: 'Granted for working on holidays/weekends' },
-  { id: 'optional', name: 'Optional Holiday', maxDays: 3, requiresApproval: false, description: 'For religious or optional holidays' },
+  { id: 'optional', name: 'Optional Holiday', maxDays: 3, requiresApproval: true, description: 'For religious or optional holidays' },
   { id: 'unpaid', name: 'Unpaid Leave', maxDays: 0, requiresApproval: true, description: 'Leave without pay for extended absence' }
 ]
 
@@ -182,12 +182,15 @@ router.get('/check-report-date', verifyToken, async (req, res) => {
 
 // ==================== LEAVE MANAGEMENT ENDPOINTS ====================
 
-// Get all leave types
+// Get all leave types - Ensure all require approval
 router.get('/leave-types', verifyToken, (req, res) => {
   try {
     const userGender = req.user.gender || 'male'
     const leaveTypes = LEAVE_TYPES.map(type => {
       const typeCopy = { ...type }
+      // ALL leaves now require approval
+      typeCopy.requiresApproval = true
+      
       if (type.genderSpecific && type.genderSpecific !== userGender) {
         typeCopy.available = false
         typeCopy.reason = `Only available for ${type.genderSpecific} employees`
@@ -210,12 +213,13 @@ router.get('/leave-balance', verifyToken, async (req, res) => {
     const userId = req.user.id
     const currentYear = new Date().getFullYear()
     
-    // Count leave reports for current year
+    // Count APPROVED leave reports for current year (only approved leaves count toward balance)
     const [leaveCount] = await pool.execute(
       `SELECT COUNT(*) as leaveCount 
        FROM daily_target_reports 
        WHERE user_id = ? 
        AND location_type = 'leave' 
+       AND (leave_status = 'approved' OR leave_status IS NULL) 
        AND YEAR(report_date) = ?`,
       [userId, currentYear]
     )
@@ -243,12 +247,13 @@ router.get('/leave-balance-by-type', verifyToken, async (req, res) => {
     const currentYear = new Date().getFullYear()
     const userGender = req.user.gender || 'male'
     
-    // Get leave counts by type for current year
+    // Get APPROVED leave counts by type for current year (only approved leaves count)
     const [leaveCounts] = await pool.execute(
       `SELECT leave_type, COUNT(*) as count 
        FROM daily_target_reports 
        WHERE user_id = ? 
        AND location_type = 'leave' 
+       AND (leave_status = 'approved' OR leave_status IS NULL) 
        AND YEAR(report_date) = ?
        GROUP BY leave_type`,
       [userId, currentYear]
@@ -272,7 +277,7 @@ router.get('/leave-balance-by-type', verifyToken, async (req, res) => {
         maxDays: type.maxDays,
         usedDays: used,
         remainingDays: remaining,
-        requiresApproval: type.requiresApproval,
+        requiresApproval: true, // All leaves require approval
         available: isAvailable,
         description: type.description
       }
@@ -343,36 +348,34 @@ router.get('/check-leave-availability', verifyToken, async (req, res) => {
       })
     }
     
-    // Calculate actual number of days (excluding weekends)
-    const calculateWorkingDays = (start, end) => {
+    // Calculate actual number of days
+    const calculateDays = (start, end) => {
       const startDate = new Date(start)
       const endDate = end ? new Date(end) : new Date(start)
       let count = 0
       const current = new Date(startDate)
       
       while (current <= endDate) {
-        const dayOfWeek = current.getDay()
-        if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Exclude weekends for calculation only
-          count++
-        }
+        count++
         current.setDate(current.getDate() + 1)
       }
       return count
     }
     
-    const daysRequested = numberOfDays || (endDate ? calculateWorkingDays(startDate, endDate) : 1)
+    const daysRequested = numberOfDays || (endDate ? calculateDays(startDate, endDate) : 1)
     
-    // Check if leave exceeds max days for the type
+    // Check if leave exceeds max days for the type (only counting approved leaves)
     if (leaveConfig.maxDays > 0) {
       const startYear = new Date(startDate).getFullYear()
       
-      // Get used leaves of this type for the year
+      // Get used APPROVED leaves of this type for the year
       const [usedCount] = await pool.execute(
         `SELECT COUNT(*) as count 
          FROM daily_target_reports 
          WHERE user_id = ? 
          AND location_type = 'leave' 
          AND leave_type = ?
+         AND (leave_status = 'approved' OR leave_status IS NULL)
          AND YEAR(report_date) = ?`,
         [userId, leaveType, startYear]
       )
@@ -423,14 +426,11 @@ router.get('/check-leave-availability', verifyToken, async (req, res) => {
       })
     }
     
-    // REMOVED: Weekend validation check
-    // Employees can now apply for leave on any day including weekends
-    
     res.json({
       available: true,
-      message: `Leave available for ${daysRequested} day(s)`,
+      message: `Leave available for ${daysRequested} day(s). Requires manager approval.`,
       daysRequested,
-      requiresApproval: leaveConfig.requiresApproval,
+      requiresApproval: true, // All leaves require approval
       leaveTypeName: leaveConfig.name
     })
     
@@ -448,7 +448,16 @@ router.get('/leave-history', verifyToken, async (req, res) => {
     const currentYear = year || new Date().getFullYear()
     
     let query = `
-      SELECT id, report_date, leave_type, remark, created_at 
+      SELECT 
+        id, 
+        report_date, 
+        leave_type, 
+        remark, 
+        created_at,
+        leave_status,
+        leave_approved_by,
+        leave_approved_at,
+        leave_approval_remark
       FROM daily_target_reports 
       WHERE user_id = ? 
       AND location_type = 'leave' 
@@ -465,13 +474,14 @@ router.get('/leave-history', verifyToken, async (req, res) => {
     
     const [leaves] = await pool.execute(query, params)
     
-    // Enrich with leave type names
+    // Enrich with leave type names and status info
     const enrichedLeaves = leaves.map(leave => {
       const typeInfo = LEAVE_TYPES.find(lt => lt.id === leave.leave_type) || {}
       return {
         ...leave,
         leaveTypeName: typeInfo.name || leave.leave_type,
-        leaveTypeDescription: typeInfo.description || ''
+        leaveTypeDescription: typeInfo.description || '',
+        requiresApproval: true // All leaves require approval
       }
     })
     
@@ -515,7 +525,7 @@ router.get('/', verifyToken, async (req, res) => {
        reason_pending_target, problem_faced, problem_resolved,
        online_support_required, support_engineer_name,
        site_start_date, site_end_date, incharge, remark,
-       created_at, updated_at
+       created_at, updated_at, leave_status, leave_approved_by, leave_approved_at, leave_approval_remark
        FROM daily_target_reports 
        WHERE user_id = ? 
        ORDER BY report_date DESC`,
@@ -546,7 +556,7 @@ router.get('/by-date/:startDate/:endDate', verifyToken, async (req, res) => {
        reason_pending_target, problem_faced, problem_resolved,
        online_support_required, support_engineer_name,
        site_start_date, site_end_date, incharge, remark,
-       created_at, updated_at
+       created_at, updated_at, leave_status, leave_approved_by, leave_approved_at, leave_approval_remark
        FROM daily_target_reports 
        WHERE user_id = ? AND report_date BETWEEN ? AND ?
        ORDER BY report_date DESC`,
@@ -575,7 +585,7 @@ router.get('/today', verifyToken, async (req, res) => {
        reason_pending_target, problem_faced, problem_resolved,
        online_support_required, support_engineer_name,
        site_start_date, site_end_date, incharge, remark,
-       created_at, updated_at
+       created_at, updated_at, leave_status, leave_approved_by, leave_approved_at, leave_approval_remark
        FROM daily_target_reports 
        WHERE user_id = ? AND report_date = ?
        ORDER BY created_at DESC
@@ -685,7 +695,7 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
         });
       }
       
-      // Check leave balance
+      // Check leave balance (only approved leaves count)
       const reportYear = new Date(reportDate).getFullYear();
       if (leaveConfig.maxDays > 0) {
         const [leaveCount] = await pool.execute(
@@ -694,6 +704,7 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
            WHERE user_id = ? 
            AND location_type = 'leave' 
            AND leave_type = ?
+           AND (leave_status = 'approved' OR leave_status IS NULL)
            AND YEAR(report_date) = ?`,
           [userId, formData.leaveType, reportYear]
         );
@@ -723,11 +734,11 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
     }
 
     // Prepare data for database
-    // Prefer explicit actualInTime/actualOutTime if provided by frontend (employee-reported times),
-    // otherwise fall back to inTime/outTime or defaults. This ensures manager sees reported times
-    // even if the form is submitted later in the day.
     const reportedInTime = formData.actualInTime || formData.inTime || null
     const reportedOutTime = formData.actualOutTime || formData.outTime || null
+
+    // Set initial leave status: ALL LEAVES ARE PENDING FOR APPROVAL
+    const leaveStatus = formData.locationType === 'leave' ? 'pending' : null;
 
     const dbData = {
       report_date: reportDate,
@@ -760,12 +771,13 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       site_end_date: formData.siteEndDate || null,
       incharge: incharge,
       remark: formData.remark || null,
-      user_id: userId
+      user_id: userId,
+      leave_status: leaveStatus // Add leave_status field
     };
 
     console.log('📝 Data prepared for database:', dbData);
 
-    // Insert into database - FIXED: Removed leave_status column
+    // Insert into database with leave_status
     const sql = `
       INSERT INTO daily_target_reports
       (report_date, in_time, out_time, customer_name, customer_person, customer_contact,
@@ -775,8 +787,8 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
        additional_activity, who_added_activity, daily_pending_target,
        reason_pending_target, problem_faced, problem_resolved,
        online_support_required, support_engineer_name,
-       site_start_date, site_end_date, incharge, remark, user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       site_start_date, site_end_date, incharge, remark, user_id, leave_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     const params = [
@@ -810,7 +822,8 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       dbData.site_end_date,
       dbData.incharge,
       dbData.remark,
-      dbData.user_id
+      dbData.user_id,
+      dbData.leave_status
     ];
     
     console.log('📝 Executing SQL with', params.length, 'parameters');
@@ -848,8 +861,8 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
           `INSERT INTO activities (
             date, time, engineer_name, engineer_id, project, location,
             activity_target, problem, status, start_time, end_time,
-            activity_type, logged_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            activity_type, logged_at, leave_reason
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
           [
             dbData.report_date,
             isLeave ? '00:00' : dbData.in_time,
@@ -862,7 +875,8 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
             activityStatus,
             isLeave ? '00:00' : dbData.in_time,
             isLeave ? '00:00' : dbData.out_time,
-            activityType
+            activityType,
+            isLeave ? `Leave: ${LEAVE_TYPES.find(lt => lt.id === dbData.leave_type)?.name || dbData.leave_type || 'Leave'}` : null
           ]
         );
         console.log(`✅ Activity record created`);
@@ -875,11 +889,14 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
     
     res.status(201).json({
       success: true,
-      message: 'Daily target report saved successfully',
+      message: dbData.location_type === 'leave' 
+        ? 'Leave application submitted successfully! Waiting for manager approval.' 
+        : 'Daily target report saved successfully',
       id: result.insertId,
       locationType: dbData.location_type,
       leaveType: dbData.leave_type,
-      reportDate: dbData.report_date
+      reportDate: dbData.report_date,
+      leaveStatus: dbData.leave_status
     });
     
   } catch (error) {
@@ -980,7 +997,7 @@ router.post('/apply-leave', verifyToken, async (req, res) => {
       }
     }
 
-    // Check leave balance
+    // Check leave balance (only approved leaves count)
     const currentYear = new Date().getFullYear();
     const reportYear = finalReportDate ? new Date(finalReportDate).getFullYear() : currentYear;
     
@@ -991,6 +1008,7 @@ router.post('/apply-leave', verifyToken, async (req, res) => {
          WHERE user_id = ? 
          AND location_type = 'leave' 
          AND leave_type = ?
+         AND (leave_status = 'approved' OR leave_status IS NULL)
          AND YEAR(report_date) = ?`,
         [userId, leaveType, reportYear]
       );
@@ -1018,15 +1036,15 @@ router.post('/apply-leave', verifyToken, async (req, res) => {
       });
     }
 
-    // SIMPLIFIED INSERT - without leave_status column
+    // INSERT with leave_status set to 'pending' since ALL leaves require approval
     const sql = `
       INSERT INTO daily_target_reports
       (report_date, in_time, out_time, customer_name, customer_person, customer_contact,
        end_customer_name, end_customer_person, end_customer_contact,
        project_no, location_type, leave_type, site_location, 
        daily_target_planned, daily_target_achieved,
-       site_start_date, site_end_date, incharge, remark, user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       site_start_date, site_end_date, incharge, remark, user_id, leave_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     const params = [
@@ -1049,7 +1067,8 @@ router.post('/apply-leave', verifyToken, async (req, res) => {
       finalEndDate,   // site_end_date
       userInfo[0].username, // incharge
       remark || `${leaveConfig.name} Leave Application`, // remark
-      userId
+      userId,
+      'pending' // leave_status - ALL LEAVES START AS PENDING
     ];
     
     console.log('📝 Executing database insert...');
@@ -1057,20 +1076,6 @@ router.post('/apply-leave', verifyToken, async (req, res) => {
     const [result] = await pool.execute(sql, params);
     console.log('✅ Leave application inserted with ID:', result.insertId);
 
-    // If DB has leave_status column, set initial status based on whether approval is required
-    try {
-      const [cols] = await pool.execute(`SHOW COLUMNS FROM daily_target_reports LIKE 'leave_status'`);
-      if (cols && cols.length > 0) {
-        const initialStatus = leaveConfig.requiresApproval ? 'pending' : 'approved';
-        await pool.execute(
-          `UPDATE daily_target_reports SET leave_status = ? WHERE id = ?`,
-          [initialStatus, result.insertId]
-        );
-        console.log(`✅ Set leave_status='${initialStatus}' for leave id ${result.insertId}`);
-      }
-    } catch (statusErr) {
-      console.warn('⚠️ Could not set leave_status on insert:', statusErr.message);
-    }
     // Create activity record
     try {
       const activityStatus = 'leave';
@@ -1111,12 +1116,11 @@ router.post('/apply-leave', verifyToken, async (req, res) => {
     
     res.status(201).json({
       success: true,
-      message: leaveConfig.requiresApproval 
-        ? 'Leave application submitted successfully! Waiting for manager approval.'
-        : 'Leave application submitted successfully!',
+      message: 'Leave application submitted successfully! Waiting for manager approval.',
       id: result.insertId,
       leaveType: leaveType,
-      requiresApproval: leaveConfig.requiresApproval
+      requiresApproval: true,
+      leaveStatus: 'pending'
     });
     
   } catch (error) {
@@ -1154,7 +1158,7 @@ router.get('/report/:id', verifyToken, async (req, res) => {
        reason_pending_target, problem_faced, problem_resolved,
        online_support_required, support_engineer_name,
        site_start_date, site_end_date, incharge, remark,
-       created_at, updated_at
+       created_at, updated_at, leave_status, leave_approved_by, leave_approved_at, leave_approval_remark
        FROM daily_target_reports 
        WHERE id = ? AND user_id = ?`,
       [id, userId]
@@ -1351,7 +1355,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
     // Get PDF file path if uploaded, or keep existing
     let momReportPath = req.file ? req.file.path : existing[0].mom_report_path
 
-    // FIXED: Remove leave_status from UPDATE statement
+    // UPDATE statement with leave_status field
     const [result] = await pool.execute(
       `UPDATE daily_target_reports SET
        report_date = ?, in_time = ?, out_time = ?, customer_name = ?, customer_person = ?, customer_contact = ?,
@@ -1361,7 +1365,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
        additional_activity = ?, who_added_activity = ?, daily_pending_target = ?,
        reason_pending_target = ?, problem_faced = ?, problem_resolved = ?,
        online_support_required = ?, support_engineer_name = ?,
-       site_start_date = ?, site_end_date = ?, incharge = ?, remark = ?
+       site_start_date = ?, site_end_date = ?, incharge = ?, remark = ?, leave_status = ?
        WHERE id = ? AND user_id = ?`,
       [
         finalReportDate,
@@ -1394,6 +1398,7 @@ router.put('/:id', verifyToken, upload.single('momReport'), async (req, res) => 
         siteEndDate || null,
         finalIncharge,
         remark || null,
+        locationType === 'leave' ? 'pending' : null, // Set leave_status for leaves
         id,
         userId
       ]
@@ -1602,12 +1607,40 @@ router.get('/debug-leave-state', verifyToken, async (req, res) => {
       WHERE location_type = 'leave'
     `);
     
+    const [pendingLeaves] = await pool.execute(`
+      SELECT 
+        COUNT(*) as pending
+      FROM daily_target_reports 
+      WHERE location_type = 'leave' 
+      AND leave_status = 'pending'
+    `);
+    
+    const [approvedLeaves] = await pool.execute(`
+      SELECT 
+        COUNT(*) as approved
+      FROM daily_target_reports 
+      WHERE location_type = 'leave' 
+      AND leave_status = 'approved'
+    `);
+    
+    const [rejectedLeaves] = await pool.execute(`
+      SELECT 
+        COUNT(*) as rejected
+      FROM daily_target_reports 
+      WHERE location_type = 'leave' 
+      AND leave_status = 'rejected'
+    `);
+    
     res.json({
       success: true,
       columns: columns.map(c => ({ field: c.Field, type: c.Type })),
       recentLeaves,
-      statistics: totalLeaves[0],
-      note: "leave_status column not found in table"
+      statistics: {
+        total: totalLeaves[0]?.total || 0,
+        pending: pendingLeaves[0]?.pending || 0,
+        approved: approvedLeaves[0]?.approved || 0,
+        rejected: rejectedLeaves[0]?.rejected || 0
+      }
     });
     
   } catch (error) {
@@ -1636,7 +1669,7 @@ router.get('/pending-leaves', verifyToken, async (req, res) => {
     
     console.log('👨‍💼 Manager fetching pending leaves...');
     
-    // Get all leaves (since we don't have leave_status column)
+    // Get only pending leaves
     const [pendingLeaves] = await pool.execute(`
       SELECT 
         dtr.id,
@@ -1656,31 +1689,30 @@ router.get('/pending-leaves', verifyToken, async (req, res) => {
       FROM daily_target_reports dtr
       INNER JOIN users u ON dtr.user_id = u.id
       WHERE dtr.location_type = 'leave'
+      AND (dtr.leave_status = 'pending' OR dtr.leave_status IS NULL)
       ORDER BY dtr.report_date ASC, dtr.created_at ASC
     `);
     
-    console.log(`📊 Found ${pendingLeaves.length} leaves total`);
+    console.log(`📊 Found ${pendingLeaves.length} pending leaves`);
     
-    // Enrich all leave applications with leave type info and status (pending/approved)
+    // Enrich leave applications with leave type info
     const enrichedLeaves = pendingLeaves.map(leave => {
       const typeInfo = LEAVE_TYPES.find(lt => lt.id === leave.leave_type) || {};
       return {
         ...leave,
         leaveTypeName: typeInfo.name || leave.leave_type,
         leaveTypeDescription: typeInfo.description || '',
-        requiresApproval: typeInfo.requiresApproval || false,
-        // If DB has leave_status column it will be present in the row; otherwise, derive default
-        leave_status: leave.leave_status || (typeInfo.requiresApproval ? 'pending' : 'approved')
+        requiresApproval: true // All leaves require approval
       };
     });
 
-    console.log(`✅ Returning ${enrichedLeaves.length} leave applications`);
+    console.log(`✅ Returning ${enrichedLeaves.length} pending leave applications`);
 
     res.json({
       success: true,
       pendingLeaves: enrichedLeaves,
       total: enrichedLeaves.length,
-      note: "Leaves are returned for manager review. leave_status is derived when DB column missing."
+      note: "All leaves require manager approval"
     });
     
   } catch (error) {
@@ -1733,12 +1765,24 @@ router.get('/all-leaves', verifyToken, async (req, res) => {
     
     const params = [];
     
-    // Apply filters
+    // Apply status filter
+    if (status && status !== 'all') {
+      if (status === 'pending') {
+        query += ' AND (dtr.leave_status = ? OR dtr.leave_status IS NULL)';
+        params.push('pending');
+      } else {
+        query += ' AND dtr.leave_status = ?';
+        params.push(status);
+      }
+    }
+    
+    // Apply date range filter
     if (startDate && endDate) {
       query += ' AND dtr.report_date BETWEEN ? AND ?';
       params.push(startDate, endDate);
     }
     
+    // Apply employee filter
     if (employeeId) {
       query += ' AND u.id = ?';
       params.push(employeeId);
@@ -1763,9 +1807,7 @@ router.get('/all-leaves', verifyToken, async (req, res) => {
         ...leave,
         leaveTypeName: typeInfo.name || leave.leave_type,
         leaveTypeDescription: typeInfo.description || '',
-        requiresApproval: typeInfo.requiresApproval || false,
-        // Use stored leave_status if present, otherwise derive
-        leave_status: leave.leave_status || (typeInfo.requiresApproval ? 'pending' : 'approved')
+        requiresApproval: true // All leaves require approval
       };
     });
 
@@ -1774,11 +1816,10 @@ router.get('/all-leaves', verifyToken, async (req, res) => {
     // Get leave statistics
     const statistics = {
       total: enrichedLeaves.length,
-      pending: enrichedLeaves.filter(l => l.leave_status === 'pending').length,
+      pending: enrichedLeaves.filter(l => l.leave_status === 'pending' || l.leave_status === null).length,
       approved: enrichedLeaves.filter(l => l.leave_status === 'approved').length,
       rejected: enrichedLeaves.filter(l => l.leave_status === 'rejected').length,
-      cancelled: enrichedLeaves.filter(l => l.leave_status === 'cancelled').length,
-      note: 'leave_status may be derived when DB column is missing'
+      cancelled: enrichedLeaves.filter(l => l.leave_status === 'cancelled').length
     };
 
     res.json({
@@ -1796,7 +1837,7 @@ router.get('/all-leaves', verifyToken, async (req, res) => {
   }
 });
 
-// Approve leave - SIMPLIFIED (just logs approval since we don't have leave_status column)
+// Approve leave - FULLY IMPLEMENTED
 router.put('/approve-leave/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1832,21 +1873,19 @@ router.put('/approve-leave/:id', verifyToken, async (req, res) => {
     
     const leave = leaveDetails[0];
     const leaveConfig = LEAVE_TYPES.find(lt => lt.id === leave.leave_type);
-    // Try to persist approval in DB if columns exist
-    try {
-      const [cols] = await pool.execute(`SHOW COLUMNS FROM daily_target_reports LIKE 'leave_status'`);
-      if (cols && cols.length > 0) {
-        await pool.execute(
-          `UPDATE daily_target_reports SET leave_status = ?, leave_approved_by = ?, leave_approved_at = NOW(), leave_approval_remark = ? WHERE id = ?`,
-          ['approved', userName, remark || null, id]
-        );
-        console.log(`✅ leave_status updated in DB for leave ${id}`);
-      } else {
-        console.log('ℹ️ leave_status column not present; skipping DB update');
-      }
-    } catch (innerErr) {
-      console.warn('⚠️ Could not update leave_status column:', innerErr.message);
-    }
+    
+    // Update leave status to approved
+    await pool.execute(
+      `UPDATE daily_target_reports SET 
+        leave_status = ?, 
+        leave_approved_by = ?, 
+        leave_approved_at = NOW(), 
+        leave_approval_remark = ? 
+       WHERE id = ?`,
+      ['approved', userName, remark || null, id]
+    );
+    
+    console.log(`✅ Leave ${id} approved by ${userName}`);
 
     // Create an audit activity record for approval
     try {
@@ -1872,8 +1911,6 @@ router.put('/approve-leave/:id', verifyToken, async (req, res) => {
       console.warn('⚠️ Could not insert approval activity record:', actErr.message);
     }
 
-    console.log(`✅ Leave ${id} approved by ${userName}`);
-
     res.json({
       success: true,
       message: 'Leave approved successfully',
@@ -1893,7 +1930,7 @@ router.put('/approve-leave/:id', verifyToken, async (req, res) => {
   }
 });
 
-// Reject leave - SIMPLIFIED (just logs rejection)
+// Reject leave - FULLY IMPLEMENTED
 router.put('/reject-leave/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1936,21 +1973,19 @@ router.put('/reject-leave/:id', verifyToken, async (req, res) => {
     
     const leave = leaveDetails[0];
     const leaveConfig = LEAVE_TYPES.find(lt => lt.id === leave.leave_type);
-    // Try to persist rejection in DB if columns exist
-    try {
-      const [cols] = await pool.execute(`SHOW COLUMNS FROM daily_target_reports LIKE 'leave_status'`);
-      if (cols && cols.length > 0) {
-        await pool.execute(
-          `UPDATE daily_target_reports SET leave_status = ?, leave_approved_by = ?, leave_approved_at = NOW(), leave_approval_remark = ? WHERE id = ?`,
-          ['rejected', userName, rejectionReason || null, id]
-        );
-        console.log(`✅ leave_status set to rejected in DB for leave ${id}`);
-      } else {
-        console.log('ℹ️ leave_status column not present; skipping DB update for rejection');
-      }
-    } catch (innerErr) {
-      console.warn('⚠️ Could not update leave_status column:', innerErr.message);
-    }
+    
+    // Update leave status to rejected
+    await pool.execute(
+      `UPDATE daily_target_reports SET 
+        leave_status = ?, 
+        leave_approved_by = ?, 
+        leave_approved_at = NOW(), 
+        leave_approval_remark = ? 
+       WHERE id = ?`,
+      ['rejected', userName, rejectionReason || null, id]
+    );
+    
+    console.log(`❌ Leave ${id} rejected by ${userName}`);
 
     // Create an audit activity record for rejection
     try {
@@ -1976,8 +2011,6 @@ router.put('/reject-leave/:id', verifyToken, async (req, res) => {
       console.warn('⚠️ Could not insert rejection activity record:', actErr.message);
     }
 
-    console.log(`❌ Leave ${id} rejected by ${userName}: ${rejectionReason}`);
-
     res.json({
       success: true,
       message: 'Leave rejected successfully',
@@ -1998,7 +2031,7 @@ router.put('/reject-leave/:id', verifyToken, async (req, res) => {
   }
 });
 
-// Cancel leave (employee can cancel their own pending leave) - SIMPLIFIED
+// Cancel leave (employee can cancel their own pending leave) - FULLY IMPLEMENTED
 router.put('/cancel-leave/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -2009,8 +2042,10 @@ router.put('/cancel-leave/:id', verifyToken, async (req, res) => {
     
     // First, get the leave details
     const [leaveDetails] = await pool.execute(
-      `SELECT * FROM daily_target_reports 
-       WHERE id = ? AND user_id = ? AND location_type = 'leave'`,
+      `SELECT dtr.*, u.username, u.employee_id 
+       FROM daily_target_reports dtr
+       INNER JOIN users u ON dtr.user_id = u.id
+       WHERE dtr.id = ? AND dtr.user_id = ? AND dtr.location_type = 'leave'`,
       [id, userId]
     );
     
@@ -2022,22 +2057,27 @@ router.put('/cancel-leave/:id', verifyToken, async (req, res) => {
     }
     
     const leave = leaveDetails[0];
-    const leaveConfig = LEAVE_TYPES.find(lt => lt.id === leave.leave_type);
-    // Try to persist cancellation in DB if columns exist
-    try {
-      const [cols] = await pool.execute(`SHOW COLUMNS FROM daily_target_reports LIKE 'leave_status'`);
-      if (cols && cols.length > 0) {
-        await pool.execute(
-          `UPDATE daily_target_reports SET leave_status = ?, leave_approval_remark = ? WHERE id = ?`,
-          ['cancelled', cancellationReason || null, id]
-        );
-        console.log(`✅ leave_status set to cancelled in DB for leave ${id}`);
-      } else {
-        console.log('ℹ️ leave_status column not present; skipping DB update for cancellation');
-      }
-    } catch (innerErr) {
-      console.warn('⚠️ Could not update leave_status column:', innerErr.message);
+    
+    // Only allow cancellation of pending leaves
+    if (leave.leave_status === 'approved') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Cannot cancel an approved leave. Contact your manager.' 
+      });
     }
+    
+    const leaveConfig = LEAVE_TYPES.find(lt => lt.id === leave.leave_type);
+    
+    // Update leave status to cancelled
+    await pool.execute(
+      `UPDATE daily_target_reports SET 
+        leave_status = ?, 
+        leave_approval_remark = ? 
+       WHERE id = ?`,
+      ['cancelled', cancellationReason || null, id]
+    );
+    
+    console.log(`✅ Leave ${id} cancelled by user ${userId}`);
 
     // Create an audit activity record for cancellation
     try {
@@ -2062,8 +2102,6 @@ router.put('/cancel-leave/:id', verifyToken, async (req, res) => {
     } catch (actErr) {
       console.warn('⚠️ Could not insert cancellation activity record:', actErr.message);
     }
-
-    console.log(`✅ Leave ${id} cancelled by user ${userId}`);
 
     res.json({
       success: true,

@@ -69,6 +69,7 @@ const ensureColumnExists = async (connection, columnName, columnDefinition) => {
 // ========== PROJECT ROUTES ==========
 
 // Create a new project - MANAGER ONLY
+// Create a new project - MANAGER ONLY
 router.post('/', verifyToken, isManager, async (req, res) => {
   const connection = await pool.getConnection()
   try {
@@ -77,6 +78,7 @@ router.post('/', verifyToken, isManager, async (req, res) => {
     const { 
       name, 
       customer, 
+      end_customer,  // NEW FIELD
       description, 
       priority = 'medium', 
       start_date, 
@@ -91,24 +93,26 @@ router.post('/', verifyToken, isManager, async (req, res) => {
     
     // Ensure all required columns exist
     await ensureColumnExists(connection, 'customer', 'VARCHAR(255) DEFAULT NULL')
+    await ensureColumnExists(connection, 'end_customer', 'VARCHAR(255) DEFAULT NULL') // NEW
     await ensureColumnExists(connection, 'priority', "VARCHAR(50) DEFAULT 'medium'")
     await ensureColumnExists(connection, 'start_date', 'DATE DEFAULT NULL')
     await ensureColumnExists(connection, 'end_date', 'DATE DEFAULT NULL')
     await ensureColumnExists(connection, 'status', "VARCHAR(20) DEFAULT 'active'")
 
-    // Create project
+    // Create project WITH end_customer
     const [result] = await connection.execute(
       `INSERT INTO projects 
-       (name, customer, description, priority, start_date, end_date, status, created_by) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (name, customer, end_customer, description, priority, start_date, end_date, status, created_by) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name, 
         customer, 
+        end_customer || null,  // NEW
         description || '', 
         priority, 
         start_date || null, 
         end_date || null, 
-        'active',  // default status
+        'active',
         createdBy
       ]
     )
@@ -136,16 +140,19 @@ router.post('/', verifyToken, isManager, async (req, res) => {
     res.json({ 
       success: true, 
       message: 'Project created successfully',
-      project: createdProjects[0] || { id: projectId, name, customer }
+      project: createdProjects[0] || { id: projectId, name, customer, end_customer }
     })
   } catch (error) {
     await connection.rollback()
     console.error('Failed to create project:', error)
     
-    // Provide helpful error message for missing customer column
     let errorMessage = 'Unable to create project'
-    if (error.code === 'ER_BAD_FIELD_ERROR' && error.sqlMessage?.includes('customer')) {
-      errorMessage = 'Database error: Customer column is missing. Please run: ALTER TABLE projects ADD COLUMN customer VARCHAR(255) DEFAULT NULL;'
+    if (error.code === 'ER_BAD_FIELD_ERROR') {
+      if (error.sqlMessage?.includes('end_customer')) {
+        errorMessage = 'Database error: End Customer column is missing. Please run: ALTER TABLE projects ADD COLUMN end_customer VARCHAR(255) DEFAULT NULL;'
+      } else if (error.sqlMessage?.includes('customer')) {
+        errorMessage = 'Database error: Customer column is missing.'
+      }
     }
     
     res.status(500).json({ 
@@ -159,25 +166,39 @@ router.post('/', verifyToken, isManager, async (req, res) => {
 })
 
 // UPDATE PROJECT ROUTE - FIXED
+// In your backend projects.js - update the PUT /:id route
 router.put('/:id', verifyToken, async (req, res) => {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
     
     const projectId = parseInt(req.params.id)
-    if (!projectId) return res.status(400).json({ success: false, message: 'Invalid project id' })
+    console.log('📝 UPDATE PROJECT REQUEST - ID:', projectId, 'Body:', req.body)
+    
+    if (!projectId) {
+      console.log('❌ Invalid project ID')
+      return res.status(400).json({ success: false, message: 'Invalid project id' })
+    }
 
-    // Check if user is manager OR project creator
+    // Check if project exists
     const [project] = await connection.execute(
-      'SELECT created_by FROM projects WHERE id = ?',
+      'SELECT id, created_by FROM projects WHERE id = ?',
       [projectId]
     )
     
+    console.log('🔍 Project found in DB:', project.length > 0)
+    
     if (project.length === 0) {
       await connection.rollback()
-      return res.status(404).json({ success: false, message: 'Project not found' })
+      console.log('❌ Project not found in database')
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Project not found',
+        requestedId: projectId 
+      })
     }
     
+    // ... rest of your update code ...
     const isCreator = project[0].created_by === req.user?.id
     const isManager = req.user?.role === 'Manager'
     
@@ -281,6 +302,7 @@ router.put('/:id', verifyToken, async (req, res) => {
   }
 })
 // Get single project with collaborators
+// Get single project with collaborators
 router.get('/:id', verifyToken, async (req, res) => {
   const connection = await pool.getConnection()
   try {
@@ -289,6 +311,7 @@ router.get('/:id', verifyToken, async (req, res) => {
 
     // Ensure columns exist
     await ensureColumnExists(connection, 'customer', 'VARCHAR(255) DEFAULT NULL')
+    await ensureColumnExists(connection, 'end_customer', 'VARCHAR(255) DEFAULT NULL') // NEW
     await ensureColumnExists(connection, 'priority', "VARCHAR(50) DEFAULT 'medium'")
     await ensureColumnExists(connection, 'start_date', 'DATE DEFAULT NULL')
     await ensureColumnExists(connection, 'end_date', 'DATE DEFAULT NULL')
@@ -304,6 +327,7 @@ router.get('/:id', verifyToken, async (req, res) => {
               u.username, 
               u.employee_id,
               u.email,
+              u.job_role,  -- NEW: Include job_role
               CONCAT(COALESCE(u.username, pc.collaborator_employee_id), 
                      ' (', COALESCE(u.employee_id, pc.collaborator_employee_id), ')') as display_name
        FROM project_collaborators pc
@@ -537,5 +561,451 @@ router.put('/:id/complete', verifyToken, async (req, res) => {
     connection.release()
   }
 })
+// ========== COLLABORATOR ROUTES ==========
+
+// Get collaborators for a project
+router.get('/:id/collaborators', verifyToken, async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id)
+    if (!projectId) return res.status(400).json({ success: false, message: 'Invalid project id' })
+
+    const [collaborators] = await pool.execute(
+      `SELECT pc.*, 
+              u.username, 
+              u.employee_id,
+              u.email,
+              CONCAT(COALESCE(u.username, pc.collaborator_employee_id), 
+                     ' (', COALESCE(u.employee_id, pc.collaborator_employee_id), ')') as display_name
+       FROM project_collaborators pc
+       LEFT JOIN users u ON pc.user_id = u.id
+       WHERE pc.project_id = ? 
+       ORDER BY pc.added_at DESC`,
+      [projectId]
+    )
+
+    res.json({ success: true, collaborators })
+  } catch (error) {
+    console.error('Failed to fetch collaborators:', error)
+    res.status(500).json({ success: false, message: 'Unable to fetch collaborators', error: error.message })
+  }
+})
+
+// Add collaborator to a project
+router.post('/:id/collaborators', verifyToken, isManager, async (req, res) => {
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    
+    const projectId = parseInt(req.params.id)
+    if (!projectId) return res.status(400).json({ success: false, message: 'Invalid project id' })
+
+    const { 
+      userId, 
+      employeeId, 
+      collaboratorEmployeeId, 
+      role = 'Contributor' 
+    } = req.body
+    
+    const addedBy = req.user?.id || null
+
+    console.log('Adding collaborator:', {
+      projectId,
+      body: req.body,
+      userId,
+      employeeId,
+      collaboratorEmployeeId,
+      role
+    })
+
+    // Check if project exists
+    const [projects] = await connection.execute('SELECT * FROM projects WHERE id = ?', [projectId])
+    if (projects.length === 0) {
+      await connection.rollback()
+      return res.status(404).json({ success: false, message: 'Project not found' })
+    }
+
+    // Determine the actual user_id and employee_id
+    let finalUserId = null
+    let finalEmployeeId = null
+
+    // If userId is provided
+    if (userId) {
+      // Check if userId exists in users table
+      const [users] = await connection.execute('SELECT id, employee_id FROM users WHERE id = ?', [userId])
+      if (users.length > 0) {
+        finalUserId = users[0].id
+        finalEmployeeId = users[0].employee_id
+      }
+    }
+    
+    // If employeeId is provided but userId isn't found
+    if ((employeeId || collaboratorEmployeeId) && !finalUserId) {
+      const searchId = employeeId || collaboratorEmployeeId
+      const [users] = await connection.execute(
+        'SELECT id, employee_id FROM users WHERE employee_id = ? OR username = ?',
+        [searchId, searchId]
+      )
+      if (users.length > 0) {
+        finalUserId = users[0].id
+        finalEmployeeId = users[0].employee_id
+      } else {
+        // If not found in users table, store as collaborator_employee_id only
+        finalEmployeeId = searchId
+      }
+    }
+
+    if (!finalUserId && !finalEmployeeId) {
+      await connection.rollback()
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Could not identify user. Please provide a valid user ID, employee ID, or username.' 
+      })
+    }
+
+    // Check if collaborator already exists
+    const [existingCollabs] = await connection.execute(
+      'SELECT * FROM project_collaborators WHERE project_id = ? AND (user_id = ? OR collaborator_employee_id = ?)',
+      [projectId, finalUserId, finalEmployeeId]
+    )
+    
+    if (existingCollabs.length > 0) {
+      await connection.rollback()
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User is already a collaborator on this project' 
+      })
+    }
+
+    // Add collaborator
+    await connection.execute(
+      'INSERT INTO project_collaborators (project_id, user_id, collaborator_employee_id, role, added_by) VALUES (?, ?, ?, ?, ?)',
+      [projectId, finalUserId || null, finalEmployeeId || null, role, addedBy]
+    )
+
+    // Update user's assigned_project_id if we have a user_id
+    if (finalUserId) {
+      await connection.execute(
+        'UPDATE users SET assigned_project_id = ? WHERE id = ?',
+        [projectId, finalUserId]
+      )
+    }
+
+    await connection.commit()
+    
+    res.json({ success: true, message: 'Collaborator added successfully' })
+  } catch (error) {
+    await connection.rollback()
+    console.error('Failed to add collaborator:', error)
+    res.status(500).json({ 
+      success: false, 
+      message: 'Unable to add collaborator', 
+      error: error.message 
+    })
+  } finally {
+    connection.release()
+  }
+})
+
+// Delete a collaborator
+router.delete('/:projectId/collaborators/:collabId', verifyToken, isManager, async (req, res) => {
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    
+    const projectId = parseInt(req.params.projectId)
+    const collabId = parseInt(req.params.collabId)
+    if (!projectId || !collabId) return res.status(400).json({ success: false, message: 'Invalid ids' })
+
+    // Get collaborator details
+    const [collaborators] = await connection.execute(
+      'SELECT * FROM project_collaborators WHERE id = ? AND project_id = ?',
+      [collabId, projectId]
+    )
+    
+    if (collaborators.length === 0) {
+      await connection.rollback()
+      return res.status(404).json({ success: false, message: 'Collaborator not found' })
+    }
+    
+    const collaborator = collaborators[0]
+
+    // Delete collaborator
+    await connection.execute(
+      'DELETE FROM project_collaborators WHERE id = ? AND project_id = ?',
+      [collabId, projectId]
+    )
+
+    // Clear assigned_project_id if we have a user_id
+    if (collaborator.user_id) {
+      await connection.execute(
+        'UPDATE users SET assigned_project_id = NULL WHERE id = ? AND assigned_project_id = ?',
+        [collaborator.user_id, projectId]
+      )
+    }
+
+    await connection.commit()
+    
+    res.json({ success: true, message: 'Collaborator deleted' })
+  } catch (error) {
+    await connection.rollback()
+    console.error('Failed to delete collaborator:', error)
+    res.status(500).json({ success: false, message: 'Unable to delete collaborator' })
+  } finally {
+    connection.release()
+  }
+})
+
+// Update a collaborator
+router.put('/:projectId/collaborators/:collabId', verifyToken, isManager, async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.projectId)
+    const collabId = parseInt(req.params.collabId)
+    if (!projectId || !collabId) return res.status(400).json({ success: false, message: 'Invalid ids' })
+
+    const { role } = req.body
+    
+    await pool.execute(
+      'UPDATE project_collaborators SET role = ? WHERE id = ? AND project_id = ?',
+      [role || 'Collaborator', collabId, projectId]
+    )
+
+    res.json({ success: true, message: 'Collaborator updated' })
+  } catch (error) {
+    console.error('Failed to update collaborator:', error)
+    res.status(500).json({ success: false, message: 'Unable to update collaborator' })
+  }
+})
+// Get all users/employees for collaborator dropdown
+// Get all active users for collaborator dropdown
+// Get all active users for collaborator dropdown - SIMPLIFIED VERSION
+// Get all active users for collaborator dropdown - DEBUG VERSION
+router.get('/available-users', verifyToken, async (req, res) => {
+  console.log('🔍 GET /available-users - DEBUG MODE');
+  
+  try {
+    // Log everything for debugging
+    console.log('1. Checking database connection...');
+    
+    // Test database connection first
+    const [dbTest] = await pool.execute('SELECT 1 as test');
+    console.log('✅ Database connection OK:', dbTest);
+    
+    // Check if users table exists
+    console.log('2. Checking if users table exists...');
+    const [tables] = await pool.execute("SHOW TABLES LIKE 'users'");
+    console.log('Tables found:', tables);
+    
+    if (tables.length === 0) {
+      console.log('❌ USERS TABLE DOES NOT EXIST!');
+      return res.status(404).json({
+        success: false,
+        message: 'Users table not found in database',
+        error: 'TABLE_NOT_FOUND'
+      });
+    }
+    
+    // Check table structure
+    console.log('3. Checking table structure...');
+    const [columns] = await pool.execute("DESCRIBE users");
+    console.log('Users table columns:', columns.map(col => col.Field));
+    
+    // Try different queries to get users
+    console.log('4. Trying to fetch users...');
+    
+    // Query 1: Simple query
+    try {
+      const [users1] = await pool.execute('SELECT * FROM users');
+      console.log(`Query 1: Found ${users1.length} users with SELECT *`);
+    } catch (e1) {
+      console.log('Query 1 failed:', e1.message);
+    }
+    
+    // Query 2: Specific columns
+    try {
+      const [users2] = await pool.execute(`
+        SELECT id, username, employee_id,  role
+        FROM users
+      `);
+      console.log(`Query 2: Found ${users2.length} users with specific columns`);
+    } catch (e2) {
+      console.log('Query 2 failed:', e2.message);
+    }
+    
+    // Query 3: Try with LIMIT
+    try {
+      const [users3] = await pool.execute('SELECT id, username FROM users LIMIT 5');
+      console.log(`Query 3: Found ${users3.length} users with LIMIT`);
+    } catch (e3) {
+      console.log('Query 3 failed:', e3.message);
+    }
+    
+    // Main query for response
+    console.log('5. Executing final query...');
+    let users = [];
+    let queryError = null;
+    
+    try {
+      // Try with all possible columns
+      const [userRows] = await pool.execute(`
+        SELECT 
+          id,
+          COALESCE(username, 'Unknown') as username,
+          COALESCE(employee_id, CONCAT('EMP', id)) as employee_id,
+          
+          COALESCE(role, 'Employee') as role,
+          COALESCE(job_role, 'Employee') as job_role
+        FROM users
+        WHERE status IS NULL OR status = 'active' OR status = ''
+        ORDER BY username ASC
+      `);
+      
+      users = userRows;
+      console.log(`✅ FINAL QUERY: Found ${users.length} real users`);
+      
+      // Log first few users
+      if (users.length > 0) {
+        console.log('First 3 users:', users.slice(0, 3));
+      }
+      
+    } catch (error) {
+      queryError = error;
+      console.error('❌ Final query failed:', error.message);
+      
+      // Try simplest possible query
+      try {
+        const [simpleUsers] = await pool.execute('SELECT id, username FROM users');
+        users = simpleUsers.map(user => ({
+          id: user.id,
+          username: user.username || `User ${user.id}`,
+          employee_id: `EMP${user.id}`,
+        
+          role: 'Employee',
+          job_role: 'Employee'
+        }));
+        console.log(`✅ SIMPLE QUERY: Found ${users.length} users`);
+      } catch (simpleError) {
+        console.error('❌ Simple query also failed:', simpleError.message);
+      }
+    }
+    
+    // If still no users, check if table is empty
+    if (users.length === 0) {
+      const [countResult] = await pool.execute('SELECT COUNT(*) as count FROM users');
+      const totalCount = countResult[0]?.count || 0;
+      
+      console.log(`📊 Database has ${totalCount} total users in table`);
+      
+      if (totalCount > 0) {
+        // There are users but query is failing
+        console.log('⚠️ Table has users but query returns empty. Checking data...');
+        const [allData] = await pool.execute('SELECT * FROM users LIMIT 3');
+        console.log('Sample data:', allData);
+      }
+    }
+    
+    // Format response
+    const formattedUsers = users.map(user => ({
+      id: user.id,
+      label: `${user.username} (${user.employee_id}) - ${user.job_role}`,
+      username: user.username,
+      employee_id: user.employee_id,
+     
+      role: user.role,
+      job_role: user.job_role
+    }));
+    
+    // Send response
+    res.json({
+      success: true,
+      users: formattedUsers,
+      count: formattedUsers.length,
+      has_real_data: true,
+      message: `Found ${formattedUsers.length} real users`,
+      debug: {
+        table_exists: tables.length > 0,
+        total_in_table: users.length,
+        query_error: queryError?.message
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ CRITICAL ERROR in /available-users:', error);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching users',
+      error: error.message,
+      sqlMessage: error.sqlMessage,
+      code: error.code
+    });
+  }
+});
+// Get all unique customers for dropdown
+router.get('/customers/list', verifyToken, async (req, res) => {
+  try {
+    const [customers] = await pool.execute(`
+      SELECT DISTINCT customer 
+      FROM projects 
+      WHERE customer IS NOT NULL AND customer != ''
+      ORDER BY customer ASC
+    `);
+    
+    res.json({ 
+      success: true, 
+      customers: customers.map(c => c.customer)
+    });
+  } catch (error) {
+    console.error('Failed to fetch customers:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Unable to fetch customers',
+      error: error.message 
+    });
+  }
+});
+// Update the /available-users route in your backend projects.js
+router.get('/available-users', verifyToken, async (req, res) => {
+  console.log('📋 GET /available-users called');
+  console.log('User making request:', req.user);
+  
+  try {
+    // Check if user has permission (managers only)
+    if (req.user?.role !== 'Manager') {
+      console.log('❌ Non-manager trying to access available-users');
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only managers can access user list' 
+      });
+    }
+
+    const [users] = await pool.execute(`
+      SELECT id, username, employee_id, email, role 
+      FROM users 
+      WHERE status = 'active' OR status IS NULL
+      ORDER BY username ASC
+    `);
+    
+    console.log(`✅ Found ${users.length} active users`);
+    
+    res.json({ 
+      success: true, 
+      users: users.map(user => ({
+        id: user.id,
+        label: `${user.username || 'Unknown'} (${user.employee_id || 'No ID'})`,
+        username: user.username,
+        employee_id: user.employee_id,
+        email: user.email,
+        role: user.role
+      }))
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch users:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Unable to fetch users',
+      error: error.message 
+    });
+  }
+});
 
 export default router
