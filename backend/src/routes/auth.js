@@ -28,6 +28,516 @@ const validateEmployeeId = (employeeId) => {
   return null // No error
 }
 
+// Add these helper functions near other validation helpers
+const validateManagerId = (managerId) => {
+  if (!managerId || managerId.trim() === '') {
+    return 'Manager ID is required for managers'
+  }
+  
+  // Format: E followed by 1-5 digits (total 2-6 characters)
+  // Examples: E001, E12345, E99999
+  const managerIdRegex = /^E\d{1,5}$/
+  if (!managerIdRegex.test(managerId)) {
+    return 'Manager ID must be in format E001 (E followed by 1-5 digits)'
+  }
+
+  // Max 6 characters check (E + 1-5 digits)
+  if (managerId.length > 6) {
+    return 'Manager ID cannot exceed 6 characters'
+  }
+  
+  return null // No error
+}
+
+// Update the register endpoint to handle manager_id for managers
+router.post('/register', async (req, res) => {
+  try {
+    console.log('📥 [REGISTER] Request received:', req.body)
+    
+    const employeeId = req.body.employee_id || req.body.employeeId
+    const managerId = req.body.manager_id || req.body.managerId
+    const { username, password, dob, phone, role } = req.body
+
+    console.log('🔍 [REGISTER] Parsed fields:', {
+      employeeId,
+      managerId,
+      username,
+      passwordLength: password ? password.length : 0,
+      dob,
+      phone,
+      role
+    })
+
+    // Check if role is Manager/Team Leader/Senior Assistant
+    const isManagerRole = role && (
+      role.toLowerCase().includes('manager') || 
+      role.toLowerCase().includes('team leader') ||
+      role.toLowerCase().includes('senior assistant')
+    )
+    
+    console.log('👤 [REGISTER] Role:', role, 'Is Manager Role:', isManagerRole)
+    
+    if (isManagerRole) {
+      // Validate Manager ID format (M001 format) for managers
+      if (!managerId || managerId.trim() === '') {
+        console.log('❌ [REGISTER] Manager ID missing for manager')
+        return res.status(400).json({ 
+          success: false,
+          message: 'Manager ID is required for manager roles' 
+        })
+      }
+      
+      const managerIdError = validateManagerId(managerId)
+      if (managerIdError) {
+        console.log('❌ [REGISTER] Manager ID validation failed:', managerIdError)
+        return res.status(400).json({ 
+          success: false,
+          message: managerIdError 
+        })
+      }
+      
+      // Check if Manager ID already exists
+      console.log('🔍 [REGISTER] Checking if Manager ID exists:', managerId)
+      const [existingManagerId] = await pool.execute(
+        'SELECT id FROM users WHERE employee_id = ? AND role LIKE ?',
+        [managerId.toUpperCase(), '%manager%']
+      )
+      if (existingManagerId.length > 0) {
+        console.log('❌ [REGISTER] Manager ID already exists:', managerId)
+        return res.status(409).json({ 
+          success: false,
+          message: 'Manager ID already exists' 
+        })
+      }
+    } else {
+      // For non-managers: validate Employee ID
+      if (!employeeId || employeeId.trim() === '') {
+        console.log('❌ [REGISTER] Employee ID missing for non-manager')
+        return res.status(400).json({ 
+          success: false,
+          message: 'Employee ID is required for non-manager roles' 
+        })
+      }
+      
+      const employeeIdError = validateEmployeeId(employeeId)
+      if (employeeIdError) {
+        console.log('❌ [REGISTER] Employee ID validation failed:', employeeIdError)
+        return res.status(400).json({ 
+          success: false,
+          message: employeeIdError 
+        })
+      }
+      
+      // Check if Employee ID already exists
+      console.log('🔍 [REGISTER] Checking if Employee ID exists:', employeeId)
+      const [existingEmployeeId] = await pool.execute(
+        'SELECT id FROM users WHERE employee_id = ?',
+        [employeeId.toUpperCase()]
+      )
+      if (existingEmployeeId.length > 0) {
+        console.log('❌ [REGISTER] Employee ID already exists:', employeeId)
+        return res.status(409).json({ 
+          success: false,
+          message: 'Employee ID already exists' 
+        })
+      }
+    }
+
+    // Validate required fields
+    const requiredFields = ['username', 'password', 'dob', 'phone', 'role']
+    for (const field of requiredFields) {
+      if (!req.body[field] || req.body[field].trim() === '') {
+        console.log('❌ [REGISTER] Missing required field:', field)
+        return res.status(400).json({ 
+          success: false,
+          message: `${field} is required` 
+        })
+      }
+    }
+
+    // Validate DOB is a valid date and must be before today
+    const dobDate = new Date(dob)
+    if (Number.isNaN(dobDate.getTime())) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid date of birth format. Use YYYY-MM-DD' 
+      })
+    }
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    if (dobDate >= today) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Date of birth must be before today (no future dates)' 
+      })
+    }
+
+    // Validate phone number
+    const phoneError = validatePhone(phone)
+    if (phoneError) {
+      return res.status(400).json({ 
+        success: false,
+        message: phoneError 
+      })
+    }
+
+    // Clean phone number
+    const cleanPhone = phone.replace(/\D/g, '')
+
+    // Check if Phone number already exists
+    const [existingPhone] = await pool.execute(
+      'SELECT id FROM users WHERE phone = ?',
+      [cleanPhone]
+    )
+    if (existingPhone.length > 0) {
+      return res.status(409).json({ 
+        success: false,
+        message: 'Phone number already registered' 
+      })
+    }
+
+    // Check if Username already exists
+    const [existingUsername] = await pool.execute(
+      'SELECT id FROM users WHERE username = ?',
+      [username]
+    )
+    if (existingUsername.length > 0) {
+      return res.status(409).json({ 
+        success: false,
+        message: 'Username already exists' 
+      })
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10)
+    
+    // Determine which ID to use based on role
+    const finalId = isManagerRole ? managerId.toUpperCase() : employeeId.toUpperCase()
+    
+    const query = 'INSERT INTO users (employee_id, username, password_hash, dob, phone, role) VALUES (?, ?, ?, ?, ?, ?)'
+    const params = [finalId, username, passwordHash, dob, cleanPhone, role]
+    
+    console.log('📝 [REGISTER] Executing SQL:', query)
+    console.log('📝 [REGISTER] With params:', params.map(p => p === passwordHash ? '[HASHED]' : p))
+    
+    const [result] = await pool.execute(query, params)
+
+    const userId = result.insertId
+    
+    // Create JWT payload
+    const jwtPayload = { 
+      id: userId,
+      username, 
+      role,
+      phone: cleanPhone,
+      employeeId: finalId,
+      fullName: username
+    }
+    
+    const token = jwt.sign(jwtPayload, JWT_SECRET, { expiresIn: TOKEN_TTL_SECONDS })
+
+    const responseData = {
+      success: true,
+      token,
+      user: {
+        id: userId,
+        username,
+        name: username,
+        role,
+        phone: cleanPhone,
+        employeeId: finalId,
+        fullName: username
+      },
+      message: 'Registration successful'
+    }
+    
+    console.log('✅ [REGISTER] Registration successful for:', username, 'Role:', role)
+    
+    res.status(201).json(responseData)
+  } catch (error) {
+    console.error('❌ [REGISTER] Failed to register user:', error)
+    
+    if (error.code === 'ER_DUP_ENTRY') {
+      if (error.message.includes('employee_id')) {
+        return res.status(409).json({ 
+          success: false,
+          message: 'Employee/Manager ID already exists' 
+        })
+      } else if (error.message.includes('username')) {
+        return res.status(409).json({ 
+          success: false,
+          message: 'Username already exists' 
+        })
+      } else if (error.message.includes('phone')) {
+        return res.status(409).json({ 
+          success: false,
+          message: 'Phone number already registered' 
+        })
+      }
+    }
+    
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to register user. Error: ' + error.message 
+    })
+  }
+})
+
+// Update the login endpoint for Manager ID validation
+router.post('/login', async (req, res) => {
+  try {
+    console.log('📥 [LOGIN] Request received:', req.body)
+    
+    const { username, password, employee_id, manager_id, role } = req.body
+
+    console.log('🔍 [LOGIN] Parsed fields:', {
+      username,
+      employee_id,
+      manager_id,
+      role,
+      passwordLength: password ? password.length : 0
+    })
+
+    // Basic validation
+    if (!username || !password || !role) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Username, password and role are required' 
+      })
+    }
+
+    // Find user by username
+    const [rows] = await pool.execute(
+      'SELECT * FROM users WHERE username = ?',
+      [username]
+    )
+
+    if (rows.length === 0) {
+      console.log('❌ [LOGIN] User not found:', username)
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid credentials' 
+      })
+    }
+
+    const user = rows[0]
+    
+    // Verify role matches
+    if (user.role !== role) {
+      console.log('❌ [LOGIN] Role mismatch:', {
+        entered: role,
+        stored: user.role,
+        username: user.username
+      })
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid role for this user' 
+      })
+    }
+    
+    console.log('🔍 [LOGIN] User found:', {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      employeeId: user.employee_id,
+      phone: user.phone
+    })
+    
+    // Verify password
+    const ok = await bcrypt.compare(password, user.password_hash)
+    if (!ok) {
+      console.log('❌ [LOGIN] Invalid password for user:', username)
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid credentials' 
+      })
+    }
+
+    // Check if user is a manager role
+    const isManagerRole = user.role && (
+      user.role.toLowerCase().includes('manager') || 
+      user.role.toLowerCase().includes('team leader') ||
+      user.role.toLowerCase().includes('senior assistant')
+    )
+    
+    if (isManagerRole) {
+      // Manager must provide manager_id
+      if (!manager_id) {
+        console.log('❌ [LOGIN] Manager ID required for manager:', user.role)
+        return res.status(400).json({ 
+          success: false,
+          message: 'Manager ID is required for manager roles' 
+        })
+      }
+      
+      // Validate manager_id format
+      const managerIdError = validateManagerId(manager_id)
+      if (managerIdError) {
+        console.log('❌ [LOGIN] Invalid Manager ID format:', managerIdError)
+        return res.status(400).json({ 
+          success: false,
+          message: managerIdError 
+        })
+      }
+      
+      // Check if entered manager_id matches user's employee_id in database
+      const cleanManagerId = manager_id.trim().toUpperCase()
+      
+      if (user.employee_id !== cleanManagerId) {
+        console.log('❌ [LOGIN] Manager ID mismatch:', {
+          entered: cleanManagerId,
+          stored: user.employee_id,
+          username: user.username
+        })
+        return res.status(401).json({ 
+          success: false,
+          message: 'Invalid Manager ID for this user' 
+        })
+      }
+      
+      console.log('✅ [LOGIN] Manager ID verified:', cleanManagerId)
+    } else {
+      // For non-managers: employee_id validation
+      if (!employee_id) {
+        console.log('❌ [LOGIN] Employee ID required for non-manager:', user.role)
+        return res.status(400).json({ 
+          success: false,
+          message: 'Employee ID is required for non-manager roles' 
+        })
+      }
+      
+      // Validate employee_id format
+      const empIdError = validateEmployeeId(employee_id)
+      if (empIdError) {
+        console.log('❌ [LOGIN] Invalid employee ID format:', empIdError)
+        return res.status(400).json({ 
+          success: false,
+          message: empIdError 
+        })
+      }
+      
+      // Check if entered employee_id matches user's employee_id in database
+      const cleanEmployeeId = employee_id.trim().toUpperCase()
+      
+      if (user.employee_id !== cleanEmployeeId) {
+        console.log('❌ [LOGIN] Employee ID mismatch:', {
+          entered: cleanEmployeeId,
+          stored: user.employee_id,
+          username: user.username
+        })
+        return res.status(401).json({ 
+          success: false,
+          message: 'Invalid Employee ID for this user' 
+        })
+      }
+      
+      console.log('✅ [LOGIN] Employee ID verified:', cleanEmployeeId)
+    }
+
+    // Create token
+    const token = jwt.sign(
+      {
+        id: user.id,
+        employeeId: user.employee_id,
+        username: user.username,
+        role: user.role,
+        phone: user.phone,
+        fullName: user.username
+      },
+      JWT_SECRET,
+      { expiresIn: TOKEN_TTL_SECONDS }
+    )
+
+    const responseData = {
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        employeeId: user.employee_id,
+        username: user.username,
+        name: user.username,
+        role: user.role,
+        phone: user.phone,
+        fullName: user.username
+      },
+      message: 'Login successful'
+    }
+    
+    console.log('✅ [LOGIN] Login successful:', user.username)
+    
+    return res.json(responseData)
+    
+  } catch (error) {
+    console.error('❌ [LOGIN] Failed to login:', error)
+    res.status(500).json({ 
+      success: false,
+      message: 'Unable to login. Error: ' + error.message 
+    })
+  }
+});
+
+// Add endpoints to check ID availability
+router.get('/check-id/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ID is required' 
+      });
+    }
+    
+    // Check if it's a Manager ID or Employee ID
+    const isManagerId = id.startsWith('E');
+    
+    const [rows] = await pool.execute(
+      'SELECT id FROM users WHERE employee_id = ?',
+      [id.toUpperCase()]
+    );
+    
+    res.json({
+      success: true,
+      available: rows.length === 0,
+      idType: isManagerId ? 'manager' : 'employee'
+    });
+  } catch (error) {
+    console.error('❌ [CHECK-ID] Failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to check ID availability' 
+    });
+  }
+});
+
+router.get('/check-phone/:phone', async (req, res) => {
+  try {
+    const { phone } = req.params;
+    
+    if (!phone) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Phone number is required' 
+      });
+    }
+    
+    const [rows] = await pool.execute(
+      'SELECT id FROM users WHERE phone = ?',
+      [phone]
+    );
+    
+    res.json({
+      success: true,
+      available: rows.length === 0
+    });
+  } catch (error) {
+    console.error('❌ [CHECK-PHONE] Failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to check phone availability' 
+    });
+  }
+});
 // Phone number validation helper
 const validatePhone = (phone) => {
   if (!phone || phone.trim() === '') {

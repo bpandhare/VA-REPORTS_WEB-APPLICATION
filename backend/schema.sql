@@ -531,3 +531,61 @@ ADD COLUMN IF NOT EXISTS job_role VARCHAR(100) DEFAULT 'Junior Engineer';
 UPDATE users SET job_role = 'Senior Engineer' WHERE id IN (1, 3);
 UPDATE users SET job_role = 'Junior Engineer' WHERE id IN (2, 4);
 UPDATE users SET job_role = 'Project Manager' WHERE role = 'Manager';
+
+-- Drop existing table and recreate with new structure (if starting fresh)
+DROP TABLE IF EXISTS users;
+
+CREATE TABLE users (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    
+    -- For Employees: E001, E002, etc.
+    -- For Managers: M001, M002, etc.
+    user_code VARCHAR(10) UNIQUE NOT NULL,
+    
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(50) NOT NULL,
+    
+    -- Personal info
+    full_name VARCHAR(100),
+    dob DATE NOT NULL,
+    phone VARCHAR(15) UNIQUE NOT NULL,
+    
+    -- Timestamps
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    -- Status
+    is_active BOOLEAN DEFAULT TRUE,
+    
+    -- Constraints
+    CONSTRAINT check_user_code_format 
+    CHECK (user_code REGEXP '^(E|M)[0-9]{1,5}$'),
+    
+    CONSTRAINT check_role_code_match 
+    CHECK (
+        (user_code LIKE 'E%' AND role NOT LIKE '%Manager%' AND role NOT LIKE '%Team Leader%' AND role NOT LIKE '%Senior Assistant%') OR
+        (user_code LIKE 'M%' AND (role LIKE '%Manager%' OR role LIKE '%Team Leader%' OR role LIKE '%Senior Assistant%'))
+    ),
+    
+    CONSTRAINT check_phone_format 
+    CHECK (phone REGEXP '^[0-9]{10}$')
+);
+
+-- Create indexes for performance
+CREATE INDEX idx_username ON users(username);
+CREATE INDEX idx_user_code ON users(user_code);
+CREATE INDEX idx_role ON users(role);
+CREATE INDEX idx_phone ON users(phone);
+CREATE INDEX idx_is_active ON users(is_active);
+
+-- If activities table references employee_id
+ALTER TABLE activities 
+CHANGE COLUMN engineer_id user_code VARCHAR(10),
+MODIFY COLUMN engineer_name VARCHAR(100);
+
+-- Add foreign key constraint
+ALTER TABLE activities
+ADD CONSTRAINT fk_activities_user_code
+FOREIGN KEY (user_code) REFERENCES users(user_code)
+ON DELETE SET NULL;

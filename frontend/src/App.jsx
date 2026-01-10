@@ -17,7 +17,7 @@ import TimeTracker from './components/TimeTracker'
 import ProjectDetails from './components/ProjectDetails'
 
 function AppContent() {
-  const [currentPage, setCurrentPage] = useState('hourly')
+  const [currentPage, setCurrentPage] = useState('daily')
   const { token, user } = useAuth()
   
   console.log('Auth state:', { token, user, hasToken: !!token, role: user?.role })
@@ -54,8 +54,8 @@ function AppContent() {
             )}
             
             {/* Default route */}
-            <Route path="/" element={<Navigate to="/hourly" replace />} />
-            <Route path="*" element={<Navigate to="/hourly" replace />} />
+            <Route path="/" element={<Navigate to="/daily" replace />} />
+            <Route path="*" element={<Navigate to="/daily" replace />} />
           </Routes>
         </main>
       </div>

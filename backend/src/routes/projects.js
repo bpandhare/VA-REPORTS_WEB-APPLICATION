@@ -70,6 +70,30 @@ const ensureColumnExists = async (connection, columnName, columnDefinition) => {
 
 // Create a new project - MANAGER ONLY
 // Create a new project - MANAGER ONLY
+// Add this to your backend routes
+router.get('/api/employees/list', async (req, res) => {
+  try {
+    // Query your database for employees
+    // Example with SQL:
+    const employees = await db.query(`
+      SELECT id, name, employee_id, email, role, department 
+      FROM users 
+      WHERE role IN ('Employee', 'Manager', 'Engineer', 'Staff')
+      ORDER BY name
+    `);
+    
+    res.json({
+      success: true,
+      employees: employees.rows
+    });
+  } catch (error) {
+    console.error('Error fetching employees:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch employees'
+    });
+  }
+});
 router.post('/', verifyToken, isManager, async (req, res) => {
   const connection = await pool.getConnection()
   try {

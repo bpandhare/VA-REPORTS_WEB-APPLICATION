@@ -1,11 +1,12 @@
 import { useMemo, useState, useEffect } from 'react'
-import { useAuth } from './AuthContext'
+import { useAuth } from './AuthContext'  // Make sure this path is correct
 import './AuthForm.css'
 
 function AuthForm() {
   const { login } = useAuth()
-  const [mode, setMode] = useState('login') // 'login' | 'register'
+  const [mode, setMode] = useState('login')
   const [employeeId, setEmployeeId] = useState('')
+  const [managerId, setManagerId] = useState('')
   const [username, setUsername] = useState('')
   const [fullName, setFullName] = useState('')
   const [password, setPassword] = useState('')
@@ -14,15 +15,57 @@ function AuthForm() {
   const [role, setRole] = useState('')
   const [loading, setLoading] = useState(false)
   const [alert, setAlert] = useState(null)
-  const [isEmployeeIdTaken, setIsEmployeeIdTaken] = useState(false)
-  const [checkingEmployeeId, setCheckingEmployeeId] = useState(false)
+  const [isIdTaken, setIsIdTaken] = useState(false)
+  const [checkingId, setCheckingId] = useState(false)
   const [checkingPhone, setCheckingPhone] = useState(false)
   const [isPhoneTaken, setIsPhoneTaken] = useState(false)
-   
+  
+  // Get API endpoint base URL
   const endpointBase = useMemo(
     () => import.meta.env.VITE_API_URL?.replace('/api/activity', '/api/auth') ?? '/api/auth',
     []
   )
+  
+  // Determine if current role is a manager role
+  const isManagerRole = useMemo(() => {
+    return role && (
+      role.toLowerCase().includes('manager') || 
+      role.toLowerCase().includes('team leader') ||
+      role.toLowerCase().includes('senior assistant')
+    )
+  }, [role])
+
+  // Function to validate Employee ID format: E001 (E + 1-5 digits, max 6 chars)
+  const validateEmployeeId = (id) => {
+    if (!id) return 'Employee ID is required'
+    
+    const empIdRegex = /^E\d{1,5}$/
+    if (!empIdRegex.test(id)) {
+      return 'Employee ID must be in format E001 (E followed by 1-5 digits)'
+    }
+    
+    if (id.length > 6) {
+      return 'Employee ID cannot exceed 6 characters'
+    }
+    
+    return null
+  }
+
+  // Function to validate Manager ID format: M001 (M + 1-5 digits, max 6 chars)
+  const validateManagerId = (id) => {
+    if (!id) return 'Manager ID is required'
+    
+    const managerIdRegex = /^E\d{1,5}$/
+    if (!managerIdRegex.test(id)) {
+      return 'Manager ID must be in format E001 (E followed by 1-5 digits)'
+    }
+    
+    if (id.length > 6) {
+      return 'Manager ID cannot exceed 6 characters'
+    }
+    
+    return null
+  }
 
   // Phone number validation
   const validatePhone = (phoneNumber) => {
@@ -41,6 +84,28 @@ function AuthForm() {
     return null
   }
 
+  // Handle Manager ID input with format validation
+  const handleManagerIdChange = (e) => {
+    const value = e.target.value.toUpperCase()
+    
+    if (value === 'E' || /^E\d{0,5}$/.test(value)) {
+      setManagerId(value)
+    } else if (value === '') {
+      setManagerId('')
+    }
+  }
+
+  // Handle Employee ID input with format validation
+  const handleEmployeeIdChange = (e) => {
+    const value = e.target.value.toUpperCase()
+    
+    if (value === 'E' || /^E\d{0,5}$/.test(value)) {
+      setEmployeeId(value)
+    } else if (value === '') {
+      setEmployeeId('')
+    }
+  }
+
   // Handle phone input with formatting
   const handlePhoneChange = (e) => {
     let value = e.target.value
@@ -56,43 +121,52 @@ function AuthForm() {
     setPhone(value)
   }
 
-  // Check if employee ID is already taken when user stops typing
+  // Check if ID (Employee ID or Manager ID) is already taken
   useEffect(() => {
-    const checkEmployeeId = async () => {
-      if (mode === 'register' && employeeId && !role.includes('Manager')) {
-        const empIdError = validateEmployeeId(employeeId)
-        if (empIdError) {
-          setIsEmployeeIdTaken(false)
+    const checkId = async () => {
+      const currentId = isManagerRole ? managerId : employeeId
+      
+      if (mode === 'register' && currentId && role) {
+        let idError = null
+        
+        if (isManagerRole) {
+          idError = validateManagerId(currentId)
+        } else {
+          idError = validateEmployeeId(currentId)
+        }
+        
+        if (idError) {
+          setIsIdTaken(false)
           return
         }
 
-        setCheckingEmployeeId(true)
+        setCheckingId(true)
         try {
-          const response = await fetch(`${endpointBase}/check-employee-id/${employeeId}`, {
+          const response = await fetch(`${endpointBase}/check-id/${currentId}`, {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' },
           })
 
           if (response.ok) {
             const data = await response.json()
-            setIsEmployeeIdTaken(!data.available)
+            setIsIdTaken(!data.available)
           } else {
-            setIsEmployeeIdTaken(false)
+            setIsIdTaken(false)
           }
         } catch (error) {
-          console.error('Error checking employee ID:', error)
-          setIsEmployeeIdTaken(false)
+          console.error('Error checking ID:', error)
+          setIsIdTaken(false)
         } finally {
-          setCheckingEmployeeId(false)
+          setCheckingId(false)
         }
       } else {
-        setIsEmployeeIdTaken(false)
+        setIsIdTaken(false)
       }
     }
 
-    const timer = setTimeout(checkEmployeeId, 500)
+    const timer = setTimeout(checkId, 500)
     return () => clearTimeout(timer)
-  }, [employeeId, mode, role, endpointBase])
+  }, [employeeId, managerId, mode, role, isManagerRole, endpointBase])
 
   // Check if phone number is already taken when user stops typing
   useEffect(() => {
@@ -134,40 +208,15 @@ function AuthForm() {
     return () => clearTimeout(timer)
   }, [phone, mode, endpointBase])
 
-  // Reset employee ID and validation when role changes
+  // Reset IDs when role changes
   useEffect(() => {
-    if (role.includes('Manager')) {
+    if (isManagerRole) {
       setEmployeeId('')
-      setIsEmployeeIdTaken(false)
+    } else {
+      setManagerId('')
     }
-  }, [role])
-
-  // Function to validate Employee ID format: E001 (E + 1-5 digits, max 6 chars)
-  const validateEmployeeId = (id) => {
-    if (!id) return 'Employee ID is required'
-    
-    const empIdRegex = /^E\d{1,5}$/
-    if (!empIdRegex.test(id)) {
-      return 'Employee ID must be in format E001 (E followed by 1-5 digits)'
-    }
-    
-    if (id.length > 6) {
-      return 'Employee ID cannot exceed 6 characters'
-    }
-    
-    return null
-  }
-
-  // Handle Employee ID input with format validation
-  const handleEmployeeIdChange = (e) => {
-    const value = e.target.value.toUpperCase()
-    
-    if (value === 'E' || /^E\d{0,5}$/.test(value)) {
-      setEmployeeId(value)
-    } else if (value === '') {
-      setEmployeeId('')
-    }
-  }
+    setIsIdTaken(false)
+  }, [role, isManagerRole])
 
   const handleSubmit = async (event) => {
     event.preventDefault()
@@ -190,14 +239,17 @@ function AuthForm() {
         const cleanPhone = phone.replace(/\D/g, '')
         requestBody.phone = cleanPhone
         
-        // Only include employee_id for non-manager roles
-        if (!role.includes('Manager') && employeeId) {
+        // Add appropriate ID based on role
+        if (isManagerRole && managerId) {
+          requestBody.manager_id = managerId.trim().toUpperCase()
+        } else if (!isManagerRole && employeeId) {
           requestBody.employee_id = employeeId.trim().toUpperCase()
         }
       } else {
-        // For login: ALWAYS include employee_id if provided
-        // Backend will validate it matches the user's registered employee_id
-        if (employeeId) {
+        // For login: add appropriate ID based on role
+        if (isManagerRole && managerId) {
+          requestBody.manager_id = managerId.trim().toUpperCase()
+        } else if (!isManagerRole && employeeId) {
           requestBody.employee_id = employeeId.trim().toUpperCase()
         }
       }
@@ -253,19 +305,28 @@ function AuthForm() {
           return
         }
 
-        if (!role.includes('Manager')) {
+        // Validate ID based on role
+        if (isManagerRole) {
+          const managerIdError = validateManagerId(managerId)
+          if (managerIdError) {
+            setAlert({ type: 'error', message: managerIdError })
+            setLoading(false)
+            return
+          }
+        } else {
           const empIdError = validateEmployeeId(employeeId)
           if (empIdError) {
             setAlert({ type: 'error', message: empIdError })
             setLoading(false)
             return
           }
+        }
 
-          if (isEmployeeIdTaken) {
-            setAlert({ type: 'error', message: 'This Employee ID is already taken' })
-            setLoading(false)
-            return
-          }
+        if (isIdTaken) {
+          const idType = isManagerRole ? 'Manager ID' : 'Employee ID'
+          setAlert({ type: 'error', message: `This ${idType} is already taken` })
+          setLoading(false)
+          return
         }
       } else {
         // For login: basic validation
@@ -275,14 +336,27 @@ function AuthForm() {
           return
         }
 
-        // For non-manager login: employeeId is REQUIRED
-        if (!role.includes('Manager') && !employeeId) {
-          setAlert({ type: 'error', message: 'Employee ID is required for non-manager roles' })
-          setLoading(false)
-          return
-        }
-
-        if (!role.includes('Manager') && employeeId) {
+        // Validate ID based on role
+        if (isManagerRole) {
+          if (!managerId) {
+            setAlert({ type: 'error', message: 'Manager ID is required for manager roles' })
+            setLoading(false)
+            return
+          }
+          
+          const managerIdError = validateManagerId(managerId)
+          if (managerIdError) {
+            setAlert({ type: 'error', message: managerIdError })
+            setLoading(false)
+            return
+          }
+        } else {
+          if (!employeeId) {
+            setAlert({ type: 'error', message: 'Employee ID is required for non-manager roles' })
+            setLoading(false)
+            return
+          }
+          
           const empIdError = validateEmployeeId(employeeId)
           if (empIdError) {
             setAlert({ type: 'error', message: empIdError })
@@ -349,75 +423,63 @@ function AuthForm() {
     }
   }
 
-  const showEmployeeIdField = mode === 'login' || !role.includes('Manager')
+  // Show appropriate ID field based on role
+  const showIdField = mode === 'login' || (mode === 'register' && role)
   
-  const isEmployeeIdRequired = () => {
-    if (mode === 'register') {
-      return !role.includes('Manager')
-    } else {
-      return !role.includes('Manager')
-    }
+  const isIdRequired = () => {
+    return true // Both Employee ID and Manager ID are required for their respective roles
   }
 
   const handleModeToggle = () => {
     setMode(mode === 'login' ? 'register' : 'login')
-    if (mode === 'login') {
-      setEmployeeId('')
-      setUsername('')
-      setFullName('')
-      setPassword('')
-      setDob('')
-      setPhone('')
-    } else {
-      setEmployeeId('')
-      setUsername('')
-      setFullName('')
-      setPassword('')
-      setDob('')
-      setPhone('')
-      setRole('')
-    }
-    setIsEmployeeIdTaken(false)
+    setEmployeeId('')
+    setManagerId('')
+    setUsername('')
+    setFullName('')
+    setPassword('')
+    setDob('')
+    setPhone('')
+    setRole('')
+    setIsIdTaken(false)
     setIsPhoneTaken(false)
   }
 
   return (
     <section className="vh-form-shell">
       {/* Company Header with Logo */}
-    {/* Company Header with Logo */}
-<div className="company-header">
-  <div className="company-logo-container">
-    {/* Replace SVG with your actual logo */}
-    <div className="company-logo">
-      <img 
-        src="/src/assets/logo.jpeg" 
-        alt="VickHardth Engineering Logo" 
-        style={{ 
-          width: '100%', 
-          height: '100%', 
-          objectFit: 'contain',
-          borderRadius: '15px'
-        }}
-      />
-    </div>
-    <div className="company-info">
-      <h1 className="company-name">VICKHARDTH AUTOMATION</h1>
-      <p className="company-tagline">Site Activity Monitoring System</p>
-    </div>
-  </div>
-</div>
+      <div className="company-header">
+        <div className="company-logo-container">
+          <div className="company-logo">
+            <img 
+              src="/src/assets/logo.jpeg" 
+              alt="VickHardth Engineering Logo" 
+              style={{ 
+                width: '100%', 
+                height: '100%', 
+                objectFit: 'contain',
+                borderRadius: '15px'
+              }}
+            />
+          </div>
+          <div className="company-info">
+            <h1 className="company-name">VICKHARDTH AUTOMATION</h1>
+            <p className="company-tagline">Site Activity Monitoring System</p>
+          </div>
+        </div>
+      </div>
+
       <header className="vh-form-header">
         <div>
           <p className="vh-form-label">Welcome</p>
           <h2>{mode === 'login' ? 'Login to Dashboard' : 'Create New Account'}</h2>
           <p>
             {mode === 'login' 
-              ? role.includes('Manager') 
-                ? 'Managers: Login with username and password'
-                : 'Use Employee ID (format: E001), username and password'
-              : role.includes('Manager') 
-                ? 'Manager accounts don\'t require Employee ID'
-                : 'Create account with unique Employee ID (format: E001)'
+              ? isManagerRole
+                ? 'Managers: Login with Manager ID (E001), username and password'
+                : 'Employees: Login with Employee ID (E001), username and password'
+              : isManagerRole
+                ? 'Managers: Create account with Manager ID (format: E001)'
+                : 'Employees: Create account with Employee ID (format: E001)'
             }
           </p>
         </div>
@@ -430,61 +492,62 @@ function AuthForm() {
       )}
 
       <form className="vh-form" onSubmit={handleSubmit}>
-        {/* Role Selection for Login */}
-        {mode === 'login' && (
-          <label>
-            <span>Your Role *</span>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              required
-            >
-              <option value="">-- Select your role --</option>
-              <option value="Manager">Manager</option>
-              <option value="Team Leader">Team Leader</option>
-              <option value="Senior Engineer">Senior Engineer</option>
-              <option value="Junior Engineer">Junior Engineer</option>
-            </select>
-            <small className="form-hint">
-              Select role to determine login method
-            </small>
-          </label>
-        )}
+        {/* Role Selection */}
+        <label>
+          <span>Your Role *</span>
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            required
+          >
+            <option value="">-- Select your role --</option>
+            <option value="Manager">Manager</option>
+            <option value="Team Leader">Team Leader</option>
+            
+            <option value="Senior Engineer">Senior Engineer</option>
+            <option value=" Engineer"> Engineer</option>
+          </select>
+          <small className="form-hint">
+            Select role to determine login method
+          </small>
+        </label>
 
-        {/* Employee ID Field - Conditionally shown */}
-        {showEmployeeIdField && (
+        {/* ID Field - Conditionally shown based on role */}
+        {showIdField && role && (
           <label>
-            <span>Employee ID {isEmployeeIdRequired() ? '*' : ''}</span>
+            <span>{isManagerRole ? 'Manager ID' : 'Employee ID'} *</span>
             <div className="input-with-status">
               <input
                 type="text"
-                value={employeeId}
-                onChange={handleEmployeeIdChange}
-                placeholder={mode === 'register' ? "E001, E002, E12345" : "Enter Employee ID"}
-                required={isEmployeeIdRequired()}
-                title={isEmployeeIdRequired() ? "Format: E followed by 1-5 digits (e.g., E001, E12345)" : "Optional for Managers"}
+                value={isManagerRole ? managerId : employeeId}
+                onChange={isManagerRole ? handleManagerIdChange : handleEmployeeIdChange}
+                placeholder={isManagerRole ? 
+                  (mode === 'register' ? "E001, E002, E12345" : "Enter Manager ID") : 
+                  (mode === 'register' ? "E001, E002, E12345" : "Enter Employee ID")
+                }
+                required={isIdRequired()}
+                title={isManagerRole ? 
+                  "Format: E followed by 1-5 digits (e.g., E001, E12345)" : 
+                  "Format: E followed by 1-5 digits (e.g., E001, E12345)"
+                }
                 maxLength="6"
                 style={{ textTransform: 'uppercase' }}
-                disabled={checkingEmployeeId}
+                disabled={checkingId}
               />
-              {checkingEmployeeId && (
+              {checkingId && (
                 <span className="checking-status">Checking...</span>
               )}
-              {isEmployeeIdTaken && !checkingEmployeeId && (
+              {isIdTaken && !checkingId && (
                 <span className="error-status">Already taken</span>
               )}
-              {!isEmployeeIdTaken && employeeId && !checkingEmployeeId && mode === 'register' && (
+              {!isIdTaken && (isManagerRole ? managerId : employeeId) && !checkingId && mode === 'register' && (
                 <span className="success-status">Available</span>
               )}
             </div>
             <small className="form-hint">
-              {mode === 'register' 
-                ? role.includes('Manager')
-                  ? 'Managers do not require an Employee ID'
-                  : 'Format: E followed by 1-5 digits (e.g., E001, E12345)'
-                : role.includes('Manager')
-                  ? 'Optional for Managers'
-                  : 'Enter your assigned Employee ID'
+              {isManagerRole ? 
+                'Format: E followed by 1-5 digits (e.g., E001, E12345)' : 
+                'Format: E followed by 1-5 digits (e.g., E001, E12345)'
               }
             </small>
           </label>
@@ -563,30 +626,6 @@ function AuthForm() {
           </label>
         )}
 
-        {/* Role Selection for Registration */}
-        {mode === 'register' && (
-          <label>
-            <span>Role *</span>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              required
-            >
-              <option value="">-- Select your role --</option>
-              <option value="Manager">Manager</option>
-              <option value="Team Leader">Team Leader</option>
-              <option value="Senior Engineer">Senior Engineer</option>
-              <option value="Junior Engineer">Junior Engineer</option>
-            </select>
-            <small className="form-hint">
-              {role.includes('Manager') 
-                ? 'Managers have full access to all features'
-                : 'Role determines access level and permissions'
-              }
-            </small>
-          </label>
-        )}
-
         {/* Date of Birth - Only for registration */}
         {mode === 'register' && (
           <label>
@@ -607,7 +646,9 @@ function AuthForm() {
         <div className="vh-form-actions">
           <button 
             type="submit" 
-            disabled={loading || (mode === 'register' && !role.includes('Manager') && isEmployeeIdTaken) || (mode === 'register' && isPhoneTaken)}
+            disabled={loading || 
+              (mode === 'register' && isIdTaken) || 
+              (mode === 'register' && isPhoneTaken)}
             className={loading ? 'loading' : ''}
           >
             {loading ? (
@@ -632,11 +673,11 @@ function AuthForm() {
 
         {/* Company Footer */}
         <div className="company-footer">
-          <p className="copyright">© {new Date().getFullYear()} VickHardth Engineering. All rights reserved.</p>
+          <p className="copyright">© {new Date().getFullYear()} VickHardth Automation. All rights reserved.</p>
           <p className="support">For support, contact: support@vickhardth.com</p>
         </div>
       </form>
-    </section> 
+    </section>
   )
 }
 

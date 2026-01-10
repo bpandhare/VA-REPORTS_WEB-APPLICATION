@@ -158,19 +158,20 @@ function Sidebar() {
         <div className="nav-section">
           <div className="section-title">REPORTS</div>
           <div className="nav-buttons">
-            <button
-              className={`nav-btn ${activePage === 'hourly' ? 'active' : ''}`}
-              onClick={() => handleNavigation('hourly')}
-            >
-              <span className="btn-icon">⏰</span>
-              <span className="btn-text">Hourly Report</span>
-            </button>
+
             <button
               className={`nav-btn ${activePage === 'daily' ? 'active' : ''}`}
               onClick={() => handleNavigation('daily')}
             >
               <span className="btn-icon">📋</span>
               <span className="btn-text">Daily Target Report</span>
+            </button>
+                        <button
+              className={`nav-btn ${activePage === 'hourly' ? 'active' : ''}`}
+              onClick={() => handleNavigation('hourly')}
+            >
+              <span className="btn-icon">⏰</span>
+              <span className="btn-text">Hourly Report</span>
             </button>
           </div>
         </div>

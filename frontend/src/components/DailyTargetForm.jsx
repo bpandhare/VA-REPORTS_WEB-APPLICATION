@@ -22,9 +22,11 @@ const defaultPayload = () => {
     customerName: '',
     customerPerson: '',
     customerContact: '',
+    customerCountryCode: '+91', // Default country code for India
     endCustomerName: '',
     endCustomerPerson: '',
     endCustomerContact: '',
+    endCustomerCountryCode: '+91', // Default country code for India
     projectNo: '',
     locationType: '', // 'site', 'office', 'leave'
     leaveType: '', // Leave type ID
@@ -68,6 +70,45 @@ function DailyTargetForm() {
   const [leaveAvailability, setLeaveAvailability] = useState(null)
   const [checkingAvailability, setCheckingAvailability] = useState(false)
   const [checkingExistingReport, setCheckingExistingReport] = useState(false)
+  
+  // Auto-save states
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(true)
+  const [lastSaved, setLastSaved] = useState(null)
+  const [isDirty, setIsDirty] = useState(false)
+  const [savedData, setSavedData] = useState(null)
+
+  // Country code options
+  const countryCodes = [
+    { code: '+91', name: 'India', flag: '🇮🇳' },
+    { code: '+1', name: 'USA/Canada', flag: '🇺🇸' },
+    { code: '+44', name: 'UK', flag: '🇬🇧' },
+    { code: '+61', name: 'Australia', flag: '🇦🇺' },
+    { code: '+971', name: 'UAE', flag: '🇦🇪' },
+    { code: '+65', name: 'Singapore', flag: '🇸🇬' },
+    { code: '+60', name: 'Malaysia', flag: '🇲🇾' },
+    { code: '+966', name: 'Saudi Arabia', flag: '🇸🇦' },
+    { code: '+973', name: 'Bahrain', flag: '🇧🇭' },
+    { code: '+968', name: 'Oman', flag: '🇴🇲' },
+    { code: '+974', name: 'Qatar', flag: '🇶🇦' },
+    { code: '+964', name: 'Iraq', flag: '🇮🇶' },
+    { code: '+98', name: 'Iran', flag: '🇮🇷' },
+    { code: '+92', name: 'Pakistan', flag: '🇵🇰' },
+    { code: '+93', name: 'Afghanistan', flag: '🇦🇫' },
+    { code: '+880', name: 'Bangladesh', flag: '🇧🇩' },
+    { code: '+94', name: 'Sri Lanka', flag: '🇱🇰' },
+    { code: '+95', name: 'Myanmar', flag: '🇲🇲' },
+    { code: '+977', name: 'Nepal', flag: '🇳🇵' },
+    { code: '+81', name: 'Japan', flag: '🇯🇵' },
+    { code: '+82', name: 'South Korea', flag: '🇰🇷' },
+    { code: '+86', name: 'China', flag: '🇨🇳' },
+    { code: '+33', name: 'France', flag: '🇫🇷' },
+    { code: '+49', name: 'Germany', flag: '🇩🇪' },
+    { code: '+39', name: 'Italy', flag: '🇮🇹' },
+    { code: '+34', name: 'Spain', flag: '🇪🇸' },
+    { code: '+7', name: 'Russia', flag: '🇷🇺' },
+    { code: '+55', name: 'Brazil', flag: '🇧🇷' },
+    { code: '+27', name: 'South Africa', flag: '🇿🇦' },
+  ]
 
   const endpoint = useMemo(
     () => import.meta.env.VITE_API_URL?.replace('/api/activity', '/api/daily-target') ?? 'http://localhost:5000/api/daily-target',
@@ -125,6 +166,40 @@ function DailyTargetForm() {
     fetchLeaveData()
   }, [user, token, endpoint])
 
+  // Load auto-saved data on component mount
+  useEffect(() => {
+    const loadAutoSavedData = () => {
+      const saved = localStorage.getItem(`daily-report-auto-save-${user?.id}`)
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved)
+          // Only load if it's from today
+          if (parsed.date === new Date().toISOString().slice(0, 10)) {
+            setSavedData(parsed)
+            setLastSaved(parsed.timestamp)
+          }
+        } catch (error) {
+          console.error('Failed to parse auto-saved data:', error)
+        }
+      }
+    }
+
+    if (user?.id) {
+      loadAutoSavedData()
+    }
+  }, [user])
+
+  // Auto-save timer
+  useEffect(() => {
+    if (!autoSaveEnabled || !isDirty) return
+
+    const autoSaveTimer = setTimeout(() => {
+      performAutoSave()
+    }, 5000) // Auto-save after 5 seconds of inactivity
+
+    return () => clearTimeout(autoSaveTimer)
+  }, [formData, autoSaveEnabled, isDirty])
+
   // Get user's location when site location is selected
   useEffect(() => {
     try {
@@ -141,9 +216,11 @@ function DailyTargetForm() {
           customerName: '',
           customerPerson: '',
           customerContact: '',
+          customerCountryCode: '+91',
           endCustomerName: '',
           endCustomerPerson: '',
           endCustomerContact: '',
+          endCustomerCountryCode: '+91',
           projectNo: '',
           siteLocation: '',
           locationLat: '',
@@ -510,6 +587,9 @@ function DailyTargetForm() {
   const handleChange = async (event) => {
     const { name, value, type, files } = event.target
 
+    // Mark form as dirty
+    setIsDirty(true)
+
     if (type === 'file') {
       setFormData((prev) => ({ ...prev, [name]: files[0] || null }))
       return
@@ -528,9 +608,55 @@ function DailyTargetForm() {
       return
     }
 
+    // Handle country code changes
+    if (name === 'customerCountryCode' || name === 'endCustomerCountryCode') {
+      setFormData((prev) => ({ ...prev, [name]: value }))
+      return
+    }
+
+    // Handle contact number changes with validation
     if (name === 'customerContact' || name === 'endCustomerContact') {
       const digits = (value ?? '').toString().replace(/\D/g, '')
-      setFormData((prev) => ({ ...prev, [name]: digits }))
+      
+      // Validate based on country code
+      const countryCode = name === 'customerContact' 
+        ? formData.customerCountryCode 
+        : formData.endCustomerCountryCode
+      
+      let maxDigits = 10 // Default for most countries
+      
+      // Adjust max digits based on country code
+      switch (countryCode) {
+        case '+91': // India
+          maxDigits = 10
+          break
+        case '+1': // USA/Canada
+          maxDigits = 10
+          break
+        case '+44': // UK
+          maxDigits = 10
+          break
+        case '+971': // UAE
+          maxDigits = 9
+          break
+        case '+966': // Saudi Arabia
+          maxDigits = 9
+          break
+        case '+7': // Russia
+          maxDigits = 10
+          break
+        case '+86': // China
+          maxDigits = 11
+          break
+        case '+81': // Japan
+          maxDigits = 10
+          break
+        default:
+          maxDigits = 15 // Generic max for international numbers
+      }
+      
+      const trimmedDigits = digits.substring(0, maxDigits)
+      setFormData((prev) => ({ ...prev, [name]: trimmedDigits }))
       return
     }
 
@@ -580,14 +706,110 @@ function DailyTargetForm() {
     setFormData((prev) => ({ ...prev, [name]: value }))
   }
 
+  // Auto-save functions
+  const performAutoSave = () => {
+    if (!user?.id || !isDirty) return
+
+    try {
+      const saveData = {
+        ...formData,
+        date: formData.reportDate,
+        timestamp: new Date().toISOString(),
+        userId: user.id
+      }
+
+      localStorage.setItem(`daily-report-auto-save-${user.id}`, JSON.stringify(saveData))
+      setSavedData(saveData)
+      setLastSaved(new Date().toISOString())
+      setIsDirty(false)
+      
+      // Show auto-save notification
+      setAlert({
+        type: 'info',
+        message: 'Progress auto-saved',
+        autoClear: true
+      })
+      
+      // Auto-clear notification after 3 seconds
+      setTimeout(() => {
+        setAlert(null)
+      }, 3000)
+
+    } catch (error) {
+      console.error('Auto-save failed:', error)
+    }
+  }
+
+  const handleManualSave = () => {
+    performAutoSave()
+    setAlert({
+      type: 'success',
+      message: 'Progress saved successfully'
+    })
+  }
+
+  const loadAutoSavedData = () => {
+    if (savedData) {
+      setFormData(prev => ({
+        ...prev,
+        customerName: savedData.customerName || prev.customerName,
+        customerPerson: savedData.customerPerson || prev.customerPerson,
+        customerContact: savedData.customerContact || prev.customerContact,
+        customerCountryCode: savedData.customerCountryCode || prev.customerCountryCode,
+        endCustomerName: savedData.endCustomerName || prev.endCustomerName,
+        endCustomerPerson: savedData.endCustomerPerson || prev.endCustomerPerson,
+        endCustomerContact: savedData.endCustomerContact || prev.endCustomerContact,
+        endCustomerCountryCode: savedData.endCustomerCountryCode || prev.endCustomerCountryCode,
+        projectNo: savedData.projectNo || prev.projectNo,
+        locationType: savedData.locationType || prev.locationType,
+        leaveType: savedData.leaveType || prev.leaveType,
+        siteLocation: savedData.siteLocation || prev.siteLocation,
+        dailyTargetPlanned: savedData.dailyTargetPlanned || prev.dailyTargetPlanned,
+        dailyTargetAchieved: savedData.dailyTargetAchieved || prev.dailyTargetAchieved,
+        additionalActivity: savedData.additionalActivity || prev.additionalActivity,
+        whoAddedActivity: savedData.whoAddedActivity || prev.whoAddedActivity,
+        dailyPendingTarget: savedData.dailyPendingTarget || prev.dailyPendingTarget,
+        reasonPendingTarget: savedData.reasonPendingTarget || prev.reasonPendingTarget,
+        problemFaced: savedData.problemFaced || prev.problemFaced,
+        problemResolved: savedData.problemResolved || prev.problemResolved,
+        onlineSupportRequired: savedData.onlineSupportRequired || prev.onlineSupportRequired,
+        supportEngineerName: savedData.supportEngineerName || prev.supportEngineerName,
+        siteStartDate: savedData.siteStartDate || prev.siteStartDate,
+        siteEndDate: savedData.siteEndDate || prev.siteEndDate,
+        incharge: savedData.incharge || prev.incharge,
+        remark: savedData.remark || prev.remark
+      }))
+      setIsDirty(false)
+      setAlert({
+        type: 'info',
+        message: 'Auto-saved data loaded'
+      })
+    }
+  }
+
+  const clearAutoSavedData = () => {
+    if (user?.id) {
+      localStorage.removeItem(`daily-report-auto-save-${user.id}`)
+      setSavedData(null)
+      setLastSaved(null)
+      setIsDirty(false)
+      setAlert({
+        type: 'info',
+        message: 'Auto-saved data cleared'
+      })
+    }
+  }
+
   const handleInTimeAuto = () => {
     const inTime = getIndianTime()
     setFormData((prev) => ({ ...prev, inTime }))
+    setIsDirty(true)
   }
 
   const handleOutTimeAuto = () => {
     const outTime = getIndianTime()
     setFormData((prev) => ({ ...prev, outTime }))
+    setIsDirty(true)
   }
 
   // Check leave availability
@@ -627,278 +849,383 @@ function DailyTargetForm() {
     }
   }
 
-const handleSubmit = async () => {
-  console.log('=== FORM SUBMISSION STARTED ===')
-  console.log('Location type:', formData.locationType)
-  console.log('Leave type:', formData.leaveType)
-  console.log('Form data:', formData)
-
-  setSubmitting(true)
-  setAlert(null)
-
-  // IMPORTANT: Validate locationType for leave applications
-  if (formData.leaveType && formData.locationType !== 'leave') {
-    console.log('⚠️ WARNING: leaveType is set but locationType is not "leave". Setting locationType to "leave"');
-    formData.locationType = 'leave';
+  // Format phone number for display
+  const formatPhoneNumber = (countryCode, phoneNumber) => {
+    if (!phoneNumber) return ''
+    return `${countryCode} ${phoneNumber}`
   }
 
-  // Check if report already exists for this date (for all location types)
-  const existingReport = await checkExistingReport(formData.reportDate, isEditMode ? submittedData?.id : null)
-  
-  if (existingReport && (!isEditMode || (isEditMode && existingReport.id !== submittedData?.id))) {
-    const reportType = existingReport.locationType === 'leave' 
-      ? `leave (${existingReport.leaveType || 'leave'})` 
-      : `${existingReport.locationType} report`
-    
-    setAlert({ 
-      type: 'error', 
-      message: `You already have a ${reportType} for ${formData.reportDate}. Please edit the existing report instead.` 
-    })
-    setSubmitting(false)
-    return
-  }
-
-  // Check leave balance when applying for leave
-  if (formData.locationType === 'leave') {
-    if (!formData.leaveType) {
-      setAlert({ type: 'error', message: 'Please select a leave type' })
-      setSubmitting(false)
-      return
+  // Validate phone number based on country code
+  const validatePhoneNumber = (countryCode, phoneNumber) => {
+    if (!phoneNumber || phoneNumber.trim() === '') {
+      return 'Phone number is required'
     }
     
-    const selectedType = leaveTypes.find(lt => lt.id === formData.leaveType)
-    if (!selectedType?.available) {
-      setAlert({ type: 'error', message: selectedType?.reason || 'This leave type is not available for you' })
-      setSubmitting(false)
-      return
+    const digits = phoneNumber.replace(/\D/g, '')
+    
+    // Set min and max lengths based on country code
+    let minLength, maxLength
+    
+    switch (countryCode) {
+      case '+91': // India
+        minLength = 10
+        maxLength = 10
+        break
+      case '+1': // USA/Canada
+        minLength = 10
+        maxLength = 10
+        break
+      case '+44': // UK
+        minLength = 10
+        maxLength = 11
+        break
+      case '+971': // UAE
+        minLength = 9
+        maxLength = 9
+        break
+      case '+966': // Saudi Arabia
+        minLength = 9
+        maxLength = 9
+        break
+      case '+7': // Russia
+        minLength = 10
+        maxLength = 11
+        break
+      case '+86': // China
+        minLength = 11
+        maxLength = 11
+        break
+      case '+81': // Japan
+        minLength = 10
+        maxLength = 11
+        break
+      default:
+        minLength = 5
+        maxLength = 15
     }
-
-    // Validate leave date
-    const validation = await validateLeaveDate(formData.reportDate)
-    if (!validation.valid) {
-      setAlert({ type: 'error', message: validation.message })
-      setSubmitting(false)
-      return
+    
+    if (digits.length < minLength) {
+      return `Phone number must be at least ${minLength} digits for ${countryCode}`
     }
-
-    // Check if availability was checked and is available
-    if (!leaveAvailability?.available && leaveAvailability !== null) {
-      setAlert({ type: 'error', message: 'Please check leave availability first or select different dates' })
-      setSubmitting(false)
-      return
+    
+    if (digits.length > maxLength) {
+      return `Phone number cannot exceed ${maxLength} digits for ${countryCode}`
     }
+    
+    // Additional validation for specific countries
+    if (countryCode === '+91' && !/^[6-9]/.test(digits)) {
+      return 'Indian mobile numbers must start with 6, 7, 8, or 9'
+    }
+    
+    if (countryCode === '+1' && !/^[2-9]/.test(digits.substring(0, 3))) {
+      return 'US/Canada area code must start with 2-9'
+    }
+    
+    return null // No error
   }
 
-  // Validate PDF upload for site location
-  if (formData.locationType === 'site' && !locationAccess && !(isEditMode && formData.locationLat && formData.locationLng)) {
-    setAlert({ type: 'error', message: 'Please allow location access to upload MOM report' })
-    setSubmitting(false)
-    return
-  }
+  const handleSubmit = async () => {
+    console.log('=== FORM SUBMISSION STARTED ===')
+    console.log('Location type:', formData.locationType)
+    console.log('Leave type:', formData.leaveType)
+    console.log('Form data:', formData)
 
-  try {
-    const formDataToSend = new FormData()
+    setSubmitting(true)
+    setAlert(null)
 
-    // Prepare data with proper leave handling
-    const dataToSubmit = {
-      ...formData,
-      problemFaced: formData.locationType === 'leave' 
-        ? (formData.problemFaced || `Leave Application: ${leaveTypes.find(lt => lt.id === formData.leaveType)?.name || formData.leaveType}`) 
-        : formData.problemFaced
+    // Validate contact numbers based on country codes
+    if (formData.locationType !== 'leave') {
+      const customerPhoneError = validatePhoneNumber(formData.customerCountryCode, formData.customerContact)
+      const endCustomerPhoneError = validatePhoneNumber(formData.endCustomerCountryCode, formData.endCustomerContact)
+      
+      if (customerPhoneError) {
+        setAlert({ type: 'error', message: `Customer Contact: ${customerPhoneError}` })
+        setSubmitting(false)
+        return
+      }
+      
+      if (endCustomerPhoneError) {
+        setAlert({ type: 'error', message: `End Customer Contact: ${endCustomerPhoneError}` })
+        setSubmitting(false)
+        return
+      }
     }
 
-    // For leave, set proper leave-related fields and clear work fields
+    // IMPORTANT: Validate locationType for leave applications
+    if (formData.leaveType && formData.locationType !== 'leave') {
+      console.log('⚠️ WARNING: leaveType is set but locationType is not "leave". Setting locationType to "leave"')
+      formData.locationType = 'leave'
+    }
+
+    // Check if report already exists for this date (for all location types)
+    const existingReport = await checkExistingReport(formData.reportDate, isEditMode ? submittedData?.id : null)
+    
+    if (existingReport && (!isEditMode || (isEditMode && existingReport.id !== submittedData?.id))) {
+      const reportType = existingReport.locationType === 'leave' 
+        ? `leave (${existingReport.leaveType || 'leave'})` 
+        : `${existingReport.locationType} report`
+      
+      setAlert({ 
+        type: 'error', 
+        message: `You already have a ${reportType} for ${formData.reportDate}. Please edit the existing report instead.` 
+      })
+      setSubmitting(false)
+      return
+    }
+
+    // Check leave balance when applying for leave
     if (formData.locationType === 'leave') {
-      // Clear time fields for leave
-      dataToSubmit.inTime = ''
-      dataToSubmit.outTime = ''
-      
-      // Set leave-specific defaults
-      dataToSubmit.siteLocation = 'Leave'
-      dataToSubmit.problemFaced = dataToSubmit.problemFaced || `Leave Application: ${leaveTypes.find(lt => lt.id === formData.leaveType)?.name || formData.leaveType}`
-      dataToSubmit.remark = dataToSubmit.remark || `${leaveTypes.find(lt => lt.id === formData.leaveType)?.name || formData.leaveType} Leave Application`
-      
-      // Clear work-related fields that should be empty for leave
-      dataToSubmit.customerName = ''
-      dataToSubmit.customerPerson = ''
-      dataToSubmit.customerContact = ''
-      dataToSubmit.endCustomerName = ''
-      dataToSubmit.endCustomerPerson = ''
-      dataToSubmit.endCustomerContact = ''
-      dataToSubmit.projectNo = ''
-      dataToSubmit.dailyTargetPlanned = ''
-      dataToSubmit.dailyTargetAchieved = ''
-      dataToSubmit.additionalActivity = ''
-      dataToSubmit.whoAddedActivity = ''
-      dataToSubmit.dailyPendingTarget = ''
-      dataToSubmit.reasonPendingTarget = ''
-      dataToSubmit.problemResolved = ''
-      dataToSubmit.onlineSupportRequired = ''
-      dataToSubmit.supportEngineerName = ''
-      dataToSubmit.siteStartDate = ''
-      dataToSubmit.siteEndDate = ''
-      dataToSubmit.incharge = ''
-    }
-
-    // Debug: Log what we're sending
-    console.log('🔍 Sending data with locationType:', formData.locationType)
-    console.log('🔍 Leave type:', formData.leaveType)
-    console.log('🔍 Data being sent keys:', Object.keys(dataToSubmit))
-
-    // Append all fields to FormData
-    Object.keys(dataToSubmit).forEach((key) => {
-      if (key === 'momReport' && dataToSubmit.momReport) {
-        console.log(`📎 Appending file: ${key} = ${dataToSubmit.momReport.name}`)
-        formDataToSend.append('momReport', dataToSubmit.momReport)
-      } else if (key !== 'momReport') {
-        console.log(`📝 Appending field: ${key} = ${dataToSubmit[key] || '(empty)'}`)
-        formDataToSend.append(key, dataToSubmit[key] || '')
+      if (!formData.leaveType) {
+        setAlert({ type: 'error', message: 'Please select a leave type' })
+        setSubmitting(false)
+        return
       }
-    })
+      
+      const selectedType = leaveTypes.find(lt => lt.id === formData.leaveType)
+      if (!selectedType?.available) {
+        setAlert({ type: 'error', message: selectedType?.reason || 'This leave type is not available for you' })
+        setSubmitting(false)
+        return
+      }
 
-    const updateEndpoint = isEditMode ? `${endpoint}/${submittedData.id}` : endpoint
-    console.log('📤 Sending to:', updateEndpoint)
-    console.log('📤 Method:', isEditMode ? 'PUT' : 'POST')
-    console.log('📤 Token available:', !!token)
-    
-    const headers = {}
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`
-      console.log('📤 Authorization header set')
+      // Validate leave date
+      const validation = await validateLeaveDate(formData.reportDate)
+      if (!validation.valid) {
+        setAlert({ type: 'error', message: validation.message })
+        setSubmitting(false)
+        return
+      }
+
+      // Check if availability was checked and is available
+      if (!leaveAvailability?.available && leaveAvailability !== null) {
+        setAlert({ type: 'error', message: 'Please check leave availability first or select different dates' })
+        setSubmitting(false)
+        return
+      }
     }
 
-    const response = await fetch(updateEndpoint, {
-      method: isEditMode ? 'PUT' : 'POST',
-      headers: headers,
-      body: formDataToSend,
-    })
+    // Validate PDF upload for site location
+    if (formData.locationType === 'site' && !locationAccess && !(isEditMode && formData.locationLat && formData.locationLng)) {
+      setAlert({ type: 'error', message: 'Please allow location access to upload MOM report' })
+      setSubmitting(false)
+      return
+    }
 
-    console.log('📥 Response status:', response.status)
-    console.log('📥 Response status text:', response.statusText)
-    
-    // Get the raw response text first
-    const responseText = await response.text()
-    console.log('📥 Raw response length:', responseText.length)
-    
-    let responseData
-    let errorMessage = 'Unable to save daily target report'
-    
     try {
-      // Try to parse as JSON
-      if (responseText.trim()) {
-        responseData = JSON.parse(responseText)
-        console.log('📥 Parsed response data:', responseData)
-      } else {
-        console.log('📥 Response is empty')
-        responseData = {}
+      // Clear auto-saved data before submission
+      if (user?.id) {
+        localStorage.removeItem(`daily-report-auto-save-${user.id}`)
+        setIsDirty(false)
       }
-    } catch (parseError) {
-      console.error('❌ Failed to parse response as JSON:', parseError)
-      
-      // If it's not JSON, it might be HTML error page or plain text
-      if (responseText.includes('<!DOCTYPE') || responseText.includes('<html')) {
-        errorMessage = 'Server returned HTML error page. Check if backend is running correctly.'
-      } else if (responseText.includes('Cannot POST') || responseText.includes('Cannot PUT')) {
-        errorMessage = `Endpoint not found: ${updateEndpoint}`
-      } else if (responseText) {
-        errorMessage = `Server error: ${responseText.substring(0, 200)}`
-      }
-      
-      throw new Error(errorMessage)
-    }
 
-    if (!response.ok) {
-      console.error('❌ Server returned error response:', {
-        status: response.status,
-        statusText: response.statusText,
-        data: responseData
+      const formDataToSend = new FormData()
+
+      // Prepare data with proper leave handling
+      const dataToSubmit = {
+        ...formData,
+        problemFaced: formData.locationType === 'leave' 
+          ? (formData.problemFaced || `Leave Application: ${leaveTypes.find(lt => lt.id === formData.leaveType)?.name || formData.leaveType}`) 
+          : formData.problemFaced
+      }
+
+      // For leave, set proper leave-related fields and clear work fields
+      if (formData.locationType === 'leave') {
+        // Clear time fields for leave
+        dataToSubmit.inTime = ''
+        dataToSubmit.outTime = ''
+        
+        // Set leave-specific defaults
+        dataToSubmit.siteLocation = 'Leave'
+        dataToSubmit.problemFaced = dataToSubmit.problemFaced || `Leave Application: ${leaveTypes.find(lt => lt.id === formData.leaveType)?.name || formData.leaveType}`
+        dataToSubmit.remark = dataToSubmit.remark || `${leaveTypes.find(lt => lt.id === formData.leaveType)?.name || formData.leaveType} Leave Application`
+        
+        // Clear work-related fields that should be empty for leave
+        dataToSubmit.customerName = ''
+        dataToSubmit.customerPerson = ''
+        dataToSubmit.customerContact = ''
+        dataToSubmit.customerCountryCode = '+91'
+        dataToSubmit.endCustomerName = ''
+        dataToSubmit.endCustomerPerson = ''
+        dataToSubmit.endCustomerContact = ''
+        dataToSubmit.endCustomerCountryCode = '+91'
+        dataToSubmit.projectNo = ''
+        dataToSubmit.dailyTargetPlanned = ''
+        dataToSubmit.dailyTargetAchieved = ''
+        dataToSubmit.additionalActivity = ''
+        dataToSubmit.whoAddedActivity = ''
+        dataToSubmit.dailyPendingTarget = ''
+        dataToSubmit.reasonPendingTarget = ''
+        dataToSubmit.problemResolved = ''
+        dataToSubmit.onlineSupportRequired = ''
+        dataToSubmit.supportEngineerName = ''
+        dataToSubmit.siteStartDate = ''
+        dataToSubmit.siteEndDate = ''
+        dataToSubmit.incharge = ''
+      }
+
+      // Debug: Log what we're sending
+      console.log('🔍 Sending data with locationType:', formData.locationType)
+      console.log('🔍 Leave type:', formData.leaveType)
+      console.log('🔍 Customer contact:', formatPhoneNumber(dataToSubmit.customerCountryCode, dataToSubmit.customerContact))
+      console.log('🔍 End customer contact:', formatPhoneNumber(dataToSubmit.endCustomerCountryCode, dataToSubmit.endCustomerContact))
+
+      // Append all fields to FormData
+      Object.keys(dataToSubmit).forEach((key) => {
+        if (key === 'momReport' && dataToSubmit.momReport) {
+          console.log(`📎 Appending file: ${key} = ${dataToSubmit.momReport.name}`)
+          formDataToSend.append('momReport', dataToSubmit.momReport)
+        } else if (key !== 'momReport') {
+          console.log(`📝 Appending field: ${key} = ${dataToSubmit[key] || '(empty)'}`)
+          formDataToSend.append(key, dataToSubmit[key] || '')
+        }
+      })
+
+      const updateEndpoint = isEditMode ? `${endpoint}/${submittedData.id}` : endpoint
+      console.log('📤 Sending to:', updateEndpoint)
+      console.log('📤 Method:', isEditMode ? 'PUT' : 'POST')
+      console.log('📤 Token available:', !!token)
+      
+      const headers = {}
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+        console.log('📤 Authorization header set')
+      }
+
+      const response = await fetch(updateEndpoint, {
+        method: isEditMode ? 'PUT' : 'POST',
+        headers: headers,
+        body: formDataToSend,
+      })
+
+      console.log('📥 Response status:', response.status)
+      console.log('📥 Response status text:', response.statusText)
+      
+      // Get the raw response text first
+      const responseText = await response.text()
+      console.log('📥 Raw response length:', responseText.length)
+      
+      let responseData
+      let errorMessage = 'Unable to save daily target report'
+      
+      try {
+        // Try to parse as JSON
+        if (responseText.trim()) {
+          responseData = JSON.parse(responseText)
+          console.log('📥 Parsed response data:', responseData)
+        } else {
+          console.log('📥 Response is empty')
+          responseData = {}
+        }
+      } catch (parseError) {
+        console.error('❌ Failed to parse response as JSON:', parseError)
+        
+        // If it's not JSON, it might be HTML error page or plain text
+        if (responseText.includes('<!DOCTYPE') || responseText.includes('<html')) {
+          errorMessage = 'Server returned HTML error page. Check if backend is running correctly.'
+        } else if (responseText.includes('Cannot POST') || responseText.includes('Cannot PUT')) {
+          errorMessage = `Endpoint not found: ${updateEndpoint}`
+        } else if (responseText) {
+          errorMessage = `Server error: ${responseText.substring(0, 200)}`
+        }
+        
+        throw new Error(errorMessage)
+      }
+
+      if (!response.ok) {
+        console.error('❌ Server returned error response:', {
+          status: response.status,
+          statusText: response.statusText,
+          data: responseData
+        })
+        
+        // Handle different error status codes
+        if (response.status === 401) {
+          errorMessage = 'Authentication failed. Please log in again.'
+        } else if (response.status === 403) {
+          errorMessage = 'You do not have permission to perform this action.'
+        } else if (response.status === 404) {
+          errorMessage = 'Endpoint not found. Check if the backend server is running.'
+        } else if (response.status === 409) {
+          errorMessage = responseData.message || 'A report already exists for this date.'
+        } else if (response.status === 422) {
+          errorMessage = responseData.message || 'Invalid data submitted.'
+        } else if (response.status === 500) {
+          errorMessage = responseData.message || 'Server internal error. Please try again later.'
+          
+          // Add more details if available
+          if (responseData.error) {
+            errorMessage += ` (${responseData.error})`
+          }
+        }
+        
+        throw new Error(errorMessage)
+      }
+
+      console.log('✅ Success! Response:', responseData)
+
+      // Store submitted data
+      const submittedFormData = {
+        ...dataToSubmit,
+        id: isEditMode ? submittedData.id : responseData.id,
+        submittedAt: isEditMode ? submittedData.submittedAt : new Date().toISOString(),
+        momReportName: dataToSubmit.momReport ? dataToSubmit.momReport.name : (isEditMode ? submittedData.momReportName : null),
+        locationName: locationName || dataToSubmit.siteLocation || '',
+      }
+      setSubmittedData(submittedFormData)
+      setIsEditMode(false)
+      
+      setAlert({ 
+        type: 'success', 
+        message: isEditMode ? 'Report updated successfully!' : 
+          formData.locationType === 'leave' ? 'Leave application submitted successfully!' : 
+          'Daily target report saved successfully! You can now view and edit it below.' 
       })
       
-      // Handle different error status codes
-      if (response.status === 401) {
-        errorMessage = 'Authentication failed. Please log in again.'
-      } else if (response.status === 403) {
-        errorMessage = 'You do not have permission to perform this action.'
-      } else if (response.status === 404) {
-        errorMessage = 'Endpoint not found. Check if the backend server is running.'
-      } else if (response.status === 409) {
-        errorMessage = responseData.message || 'A report already exists for this date.'
-      } else if (response.status === 422) {
-        errorMessage = responseData.message || 'Invalid data submitted.'
-      } else if (response.status === 500) {
-        errorMessage = responseData.message || 'Server internal error. Please try again later.'
-        
-        // Add more details if available
-        if (responseData.error) {
-          errorMessage += ` (${responseData.error})`
+      // Reset form
+      const newFormData = defaultPayload()
+      setFormData(newFormData)
+      setLocationAccess(false)
+      setLocationError('')
+      setSelectedLeaveType(null)
+      setLeaveAvailability(null)
+      setSavedData(null)
+      setLastSaved(null)
+
+      // Reset file input
+      setTimeout(() => {
+        const fileInput = document.querySelector('input[name="momReport"]')
+        if (fileInput) {
+          fileInput.value = ''
         }
+      }, 100)
+      
+    } catch (error) {
+      console.error('❌ Error in handleSubmit:', error)
+      console.error('❌ Error name:', error.name)
+      console.error('❌ Error message:', error.message)
+      
+      let errorMessage = error.message || 'Unable to save daily target report'
+      
+      // Handle specific error types
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        errorMessage = 'Network error. Please check if the backend server is running at http://localhost:5000'
+      } else if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
+        errorMessage = 'Cannot connect to server. Please check: 1) Backend is running, 2) No CORS issues, 3) Network connection'
+      } else if (error.message.includes('JSON')) {
+        errorMessage = 'Server returned an invalid response. The backend might have crashed.'
+      } else if (error.message.includes('Unexpected token')) {
+        errorMessage = 'Server error. Please check backend console for syntax errors.'
       }
       
-      throw new Error(errorMessage)
+      setAlert({ 
+        type: 'error', 
+        message: errorMessage 
+      })
+    } finally {
+      setSubmitting(false)
     }
-
-    console.log('✅ Success! Response:', responseData)
-
-    // Store submitted data
-    const submittedFormData = {
-      ...dataToSubmit,
-      id: isEditMode ? submittedData.id : responseData.id,
-      submittedAt: isEditMode ? submittedData.submittedAt : new Date().toISOString(),
-      momReportName: dataToSubmit.momReport ? dataToSubmit.momReport.name : (isEditMode ? submittedData.momReportName : null),
-      locationName: locationName || dataToSubmit.siteLocation || '',
-    }
-    setSubmittedData(submittedFormData)
-    setIsEditMode(false)
-    
-    setAlert({ 
-      type: 'success', 
-      message: isEditMode ? 'Report updated successfully!' : 
-        formData.locationType === 'leave' ? 'Leave application submitted successfully!' : 
-        'Daily target report saved successfully! You can now view and edit it below.' 
-    })
-    
-    // Reset form
-    const newFormData = defaultPayload()
-    setFormData(newFormData)
-    setLocationAccess(false)
-    setLocationError('')
-    setSelectedLeaveType(null)
-    setLeaveAvailability(null)
-
-    // Reset file input
-    setTimeout(() => {
-      const fileInput = document.querySelector('input[name="momReport"]')
-      if (fileInput) {
-        fileInput.value = ''
-      }
-    }, 100)
-    
-  } catch (error) {
-    console.error('❌ Error in handleSubmit:', error)
-    console.error('❌ Error name:', error.name)
-    console.error('❌ Error message:', error.message)
-    
-    let errorMessage = error.message || 'Unable to save daily target report'
-    
-    // Handle specific error types
-    if (error.name === 'TypeError' && error.message.includes('fetch')) {
-      errorMessage = 'Network error. Please check if the backend server is running at http://localhost:5000'
-    } else if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
-      errorMessage = 'Cannot connect to server. Please check: 1) Backend is running, 2) No CORS issues, 3) Network connection'
-    } else if (error.message.includes('JSON')) {
-      errorMessage = 'Server returned an invalid response. The backend might have crashed.'
-    } else if (error.message.includes('Unexpected token')) {
-      errorMessage = 'Server error. Please check backend console for syntax errors.'
-    }
-    
-    setAlert({ 
-      type: 'error', 
-      message: errorMessage 
-    })
-  } finally {
-    setSubmitting(false)
   }
-}
+
   const canUploadPDF = formData.locationType === 'site' && locationAccess
 
   return (
@@ -962,6 +1289,106 @@ const handleSubmit = async () => {
           )}
         </div>
       </header>
+
+      {/* Auto-save status bar */}
+      <div style={{ 
+        marginBottom: '1rem',
+        padding: '0.75rem',
+        background: '#f0f9ff',
+        borderRadius: '8px',
+        border: '1px solid #2ad1ff',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <input
+              type="checkbox"
+              id="autoSaveToggle"
+              checked={autoSaveEnabled}
+              onChange={(e) => setAutoSaveEnabled(e.target.checked)}
+              style={{ margin: 0 }}
+            />
+            <label htmlFor="autoSaveToggle" style={{ margin: 0, fontSize: '0.9rem' }}>
+              Auto-save progress
+            </label>
+          </div>
+          
+          {lastSaved && (
+            <div style={{ fontSize: '0.8rem', color: '#6c757d' }}>
+              Last saved: {new Date(lastSaved).toLocaleTimeString()}
+            </div>
+          )}
+          
+          {isDirty && (
+            <div style={{ 
+              background: '#ffc107',
+              color: '#856404',
+              padding: '0.25rem 0.5rem',
+              borderRadius: '4px',
+              fontSize: '0.8rem'
+            }}>
+              Unsaved changes
+            </div>
+          )}
+        </div>
+        
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {savedData && (
+            <button
+              type="button"
+              onClick={loadAutoSavedData}
+              style={{
+                padding: '0.5rem 1rem',
+                background: '#06c167',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.85rem'
+              }}
+            >
+              Load Auto-saved
+            </button>
+          )}
+          
+          <button
+            type="button"
+            onClick={handleManualSave}
+            disabled={!isDirty}
+            style={{
+              padding: '0.5rem 1rem',
+              background: isDirty ? '#2ad1ff' : '#f5f5f5',
+              color: isDirty ? 'white' : '#6c757d',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: isDirty ? 'pointer' : 'not-allowed',
+              fontSize: '0.85rem'
+            }}
+          >
+            Save Progress
+          </button>
+          
+          {savedData && (
+            <button
+              type="button"
+              onClick={clearAutoSavedData}
+              style={{
+                padding: '0.5rem 1rem',
+                background: '#f5f5f5',
+                color: '#092544',
+                border: '1px solid #d5e0f2',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.85rem'
+              }}
+            >
+              Clear Auto-saved
+            </button>
+          )}
+        </div>
+      </div>
 
       {alert && (
         <div className={`vh-alert ${alert.type}`}>
@@ -1082,6 +1509,11 @@ const handleSubmit = async () => {
                 <strong>Customer:</strong> {submittedData.customerName}
               </div>
             )}
+            {submittedData.customerContact && (
+              <div>
+                <strong>Customer Contact:</strong> {formatPhoneNumber(submittedData.customerCountryCode || '+91', submittedData.customerContact)}
+              </div>
+            )}
             {submittedData.submittedAt && (
               <div>
                 <strong>Submitted At:</strong> {new Date(submittedData.submittedAt).toLocaleString()}
@@ -1114,14 +1546,14 @@ const handleSubmit = async () => {
           </label>
 
           <label className="vh-span-2">
-            <span>Site Location / Office / Leave</span>
+            <span>Site / Office / Leave</span>
             <select
               name="locationType"
               value={formData.locationType}
               onChange={handleChange}
             >
               <option value="">Select location type</option>
-              <option value="site">Site Location</option>
+              <option value="site">Site </option>
               <option value="office">Office</option>
               <option value="leave">Leave</option>
             </select>
@@ -1215,17 +1647,41 @@ const handleSubmit = async () => {
                 />
               </label>
 
-              <label>
+              <label style={{ gridColumn: 'span 2' }}>
                 <span>Customer Contact *</span>
-                <input
-                  type="tel"
-                  name="customerContact"
-                  value={formData.customerContact}
-                  onChange={handleChange}
-                  placeholder="10-digit mobile"
-                  maxLength="10"
-                  required={formData.locationType !== 'leave'}
-                />
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <select
+                    name="customerCountryCode"
+                    value={formData.customerCountryCode}
+                    onChange={handleChange}
+                    style={{ 
+                      width: '120px',
+                      padding: '0.75rem',
+                      border: '1px solid #d5e0f2',
+                      borderRadius: '8px',
+                      background: 'white'
+                    }}
+                    required={formData.locationType !== 'leave'}
+                  >
+                    {countryCodes.map(country => (
+                      <option key={country.code} value={country.code}>
+                        {country.flag} {country.code}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="tel"
+                    name="customerContact"
+                    value={formData.customerContact}
+                    onChange={handleChange}
+                    placeholder="Enter phone number"
+                    style={{ flex: 1 }}
+                    required={formData.locationType !== 'leave'}
+                  />
+                </div>
+                <small style={{ color: '#6c757d', display: 'block', marginTop: '0.25rem' }}>
+                  Current: {formatPhoneNumber(formData.customerCountryCode, formData.customerContact)}
+                </small>
               </label>
 
               <label className="vh-span-2">
@@ -1252,17 +1708,41 @@ const handleSubmit = async () => {
                 />
               </label>
 
-              <label>
+              <label style={{ gridColumn: 'span 2' }}>
                 <span>End Customer Contact *</span>
-                <input
-                  type="tel"
-                  name="endCustomerContact"
-                  value={formData.endCustomerContact}
-                  onChange={handleChange}
-                  placeholder="10-digit mobile"
-                  maxLength="10"
-                  required={formData.locationType !== 'leave'}
-                />
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <select
+                    name="endCustomerCountryCode"
+                    value={formData.endCustomerCountryCode}
+                    onChange={handleChange}
+                    style={{ 
+                      width: '120px',
+                      padding: '0.75rem',
+                      border: '1px solid #d5e0f2',
+                      borderRadius: '8px',
+                      background: 'white'
+                    }}
+                    required={formData.locationType !== 'leave'}
+                  >
+                    {countryCodes.map(country => (
+                      <option key={country.code} value={country.code}>
+                        {country.flag} {country.code}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="tel"
+                    name="endCustomerContact"
+                    value={formData.endCustomerContact}
+                    onChange={handleChange}
+                    placeholder="Enter phone number"
+                    style={{ flex: 1 }}
+                    required={formData.locationType !== 'leave'}
+                  />
+                </div>
+                <small style={{ color: '#6c757d', display: 'block', marginTop: '0.25rem' }}>
+                  Current: {formatPhoneNumber(formData.endCustomerCountryCode, formData.endCustomerContact)}
+                </small>
               </label>
 
               <label className="vh-span-2">
@@ -1650,6 +2130,7 @@ const handleSubmit = async () => {
                 setLocationError('')
                 setSelectedLeaveType(null)
                 setLeaveAvailability(null)
+                setIsDirty(false)
               }}
               style={{
                 padding: '0.75rem 1.5rem',
@@ -1677,6 +2158,9 @@ const handleSubmit = async () => {
               setIsEditMode(false)
               setSelectedLeaveType(null)
               setLeaveAvailability(null)
+              setIsDirty(false)
+              setSavedData(null)
+              setLastSaved(null)
               const fileInput = document.querySelector('input[name="momReport"]')
               if (fileInput) {
                 fileInput.value = ''

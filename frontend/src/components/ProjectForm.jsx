@@ -5,7 +5,8 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
   const [formState, setFormState] = useState({
     name: "",
     customer: "",
-    end_customer: "",  // NEW FIELD
+    end_customer: "",
+    assigned_employee: "",  // NEW: Will accept ID or username
     newCustomer: "",
     newEndCustomer: "",
     description: "",
@@ -38,15 +39,11 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
   const fetchCustomers = async () => {
     setLoadingCustomers(true);
     try {
-      // Fetch regular customers
       const response = await getCustomersList();
       if (response.data?.success) {
         setCustomers(response.data.customers || []);
+        setEndCustomers(response.data.customers || []);
       }
-      
-      // You might want a separate endpoint for end customers
-      // For now, use the same list
-      setEndCustomers(response.data.customers || []);
     } catch (error) {
       console.error("Failed to fetch customers:", error);
     } finally {
@@ -54,17 +51,16 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
     }
   };
 
-  // Load initial data when component mounts
   useEffect(() => {
     if (initialData && projectId) {
       console.log("Loading initial data for edit:", {
         id: initialData.id,
         name: initialData.name,
         customer: initialData.customer,
-        end_customer: initialData.end_customer
+        end_customer: initialData.end_customer,
+        assigned_employee: initialData.assigned_employee || initialData.employee_id || ""  // NEW
       });
       
-      // Format dates for input fields
       const formatDate = (dateString) => {
         if (!dateString) return "";
         try {
@@ -78,7 +74,8 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
       setFormState({
         name: initialData.name || "",
         customer: initialData.customer || "",
-        end_customer: initialData.end_customer || "",  // NEW
+        end_customer: initialData.end_customer || "",
+        assigned_employee: initialData.assigned_employee || initialData.employee_id || "",  // NEW
         newCustomer: "",
         newEndCustomer: "",
         description: initialData.description || "",
@@ -88,22 +85,20 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
         end_date: formatDate(initialData.end_date),
       });
       
-      // Check if customer exists in the list
       if (initialData.customer && !customers.includes(initialData.customer)) {
         setShowNewCustomer(true);
       }
       
-      // Check if end customer exists in the list
       if (initialData.end_customer && !endCustomers.includes(initialData.end_customer)) {
         setShowNewEndCustomer(true);
       }
     } else {
       console.log("Setting up for create mode");
-      // Reset form for create mode
       setFormState({
         name: "",
         customer: "",
         end_customer: "",
+        assigned_employee: "",  // NEW
         newCustomer: "",
         newEndCustomer: "",
         description: "",
@@ -120,7 +115,6 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
   const handleChange = (e) => {
     const { name, value } = e.target;
     
-    // Handle customer dropdown
     if (name === "customer" && value === "new") {
       setShowNewCustomer(true);
       setFormState(prev => ({
@@ -136,7 +130,6 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
         newCustomer: ""
       }));
     }
-    // Handle end customer dropdown
     else if (name === "end_customer" && value === "new") {
       setShowNewEndCustomer(true);
       setFormState(prev => ({
@@ -152,7 +145,6 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
         newEndCustomer: ""
       }));
     }
-    // Handle other fields
     else {
       setFormState((prev) => ({
         ...prev,
@@ -192,18 +184,23 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
     console.log("Project ID:", projectId);
     console.log("Customer:", customer);
     console.log("End Customer:", endCustomer);
-    console.log("Form data:", formState);
+    console.log("Assigned Employee:", formState.assigned_employee);
 
     try {
       // Clean up form data
       const cleanedData = { 
         name: formState.name.trim(),
         customer: customer,
-        end_customer: endCustomer || null,  // NEW: Can be null
+        end_customer: endCustomer || null,
         description: formState.description.trim() || "",
         status: formState.status,
         priority: formState.priority
       };
+      
+      // Add assigned employee if provided
+      if (formState.assigned_employee.trim()) {
+        cleanedData.assigned_employee = formState.assigned_employee.trim();
+      }
       
       // Add dates if provided
       if (formState.start_date) cleanedData.start_date = formState.start_date;
@@ -213,7 +210,6 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
 
       let response;
       
-      // Handle EDIT mode
       if (isEditMode && projectId) {
         console.log(`Attempting to UPDATE project ${projectId}...`);
         response = await updateProject(projectId, cleanedData);
@@ -227,7 +223,6 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
           showMessage("error", errorMsg);
         }
       } 
-      // Handle CREATE mode
       else {
         console.log("Attempting to CREATE new project...");
         response = await createProject(cleanedData);
@@ -249,25 +244,159 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
     }
   };
 
-  // Determine button text and title
   const formTitle = isEditMode ? "Edit Project" : "Create New Project";
   const submitButtonText = isEditMode 
     ? (isSubmitting ? "Updating..." : "Update Project")
     : (isSubmitting ? "Creating..." : "Create Project");
 
+  // Inline styles
+  const styles = {
+    projectForm: {
+      padding: "20px",
+      maxWidth: "600px",
+      margin: "0 auto",
+    },
+    formTitle: {
+      marginBottom: "15px",
+      color: "#333",
+      fontSize: "1.5rem",
+    },
+    formGroup: {
+      marginBottom: "15px",
+    },
+    label: {
+      display: "block",
+      marginBottom: "5px",
+      fontWeight: "500",
+      color: "#555",
+    },
+    input: {
+      width: "100%",
+      padding: "8px 12px",
+      border: "1px solid #ddd",
+      borderRadius: "4px",
+      fontSize: "14px",
+    },
+    textarea: {
+      width: "100%",
+      padding: "8px 12px",
+      border: "1px solid #ddd",
+      borderRadius: "4px",
+      fontSize: "14px",
+      fontFamily: "inherit",
+    },
+    select: {
+      width: "100%",
+      padding: "8px 12px",
+      border: "1px solid #ddd",
+      borderRadius: "4px",
+      fontSize: "14px",
+    },
+    disabled: {
+      backgroundColor: "#f5f5f5",
+      cursor: "not-allowed",
+    },
+    focus: {
+      outline: "none",
+      borderColor: "#007bff",
+    },
+    newCustomerField: {
+      marginTop: "10px",
+    },
+    fieldHint: {
+      display: "block",
+      marginTop: "4px",
+      color: "#6c757d",
+      fontSize: "12px",
+    },
+    loadingSelect: {
+      padding: "10px",
+      textAlign: "center",
+      color: "#6c757d",
+      background: "#f8f9fa",
+      borderRadius: "4px",
+    },
+    formRow: {
+      display: "flex",
+      gap: "15px",
+    },
+    formActions: {
+      display: "flex",
+      justifyContents: "flex-end",
+      gap: "10px",
+      marginTop: "25px",
+      paddingTop: "15px",
+      borderTop: "1px solid #eee",
+    },
+    btnPrimary: {
+      background: "#007bff",
+      color: "white",
+      padding: "10px 20px",
+      border: "none",
+      borderRadius: "4px",
+      cursor: "pointer",
+      fontWeight: "500",
+      minWidth: "140px",
+    },
+    btnPrimaryHover: {
+      background: "#0056b3",
+    },
+    btnPrimaryDisabled: {
+      background: "#ccc",
+      cursor: "not-allowed",
+    },
+    btnSecondary: {
+      background: "#6c757d",
+      color: "white",
+      padding: "10px 20px",
+      border: "none",
+      borderRadius: "4px",
+      cursor: "pointer",
+    },
+    btnSecondaryHover: {
+      background: "#545b62",
+    },
+    btnSecondaryDisabled: {
+      background: "#ccc",
+      cursor: "not-allowed",
+    },
+    message: {
+      padding: "12px 15px",
+      marginBottom: "20px",
+      borderRadius: "4px",
+      fontWeight: "500",
+    },
+    messageSuccess: {
+      background: "#d4edda",
+      color: "#155724",
+      border: "1px solid #c3e6cb",
+    },
+    messageError: {
+      background: "#f8d7da",
+      color: "#721c24",
+      border: "1px solid #f5c6cb",
+    },
+  };
+
   return (
-    <div className="project-form">
-      <h2>{formTitle}</h2>
+    <div style={styles.projectForm}>
+      <h2 style={styles.formTitle}>{formTitle}</h2>
       
       {message.text && (
-        <div className={`message ${message.type}`}>
+        <div 
+          style={{
+            ...styles.message,
+            ...(message.type === 'success' ? styles.messageSuccess : {}),
+            ...(message.type === 'error' ? styles.messageError : {}),
+          }}
+        >
           {message.text}
         </div>
       )}
 
       <form onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label htmlFor="name">Project Name *</label>
+        <div style={styles.formGroup}>
+          <label htmlFor="name" style={styles.label}>Project Name *</label>
           <input
             type="text"
             id="name"
@@ -277,14 +406,18 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
             required
             placeholder="Enter project name"
             disabled={isSubmitting}
+            style={{
+              ...styles.input,
+              ...(isSubmitting ? styles.disabled : {}),
+            }}
           />
         </div>
 
         {/* Customer Field */}
-        <div className="form-group">
-          <label htmlFor="customer">Customer *</label>
+        <div style={styles.formGroup}>
+          <label htmlFor="customer" style={styles.label}>Customer *</label>
           {loadingCustomers ? (
-            <div className="loading-select">Loading customers...</div>
+            <div style={styles.loadingSelect}>Loading customers...</div>
           ) : (
             <>
               <select
@@ -294,6 +427,10 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
                 onChange={handleChange}
                 required
                 disabled={isSubmitting}
+                style={{
+                  ...styles.select,
+                  ...(isSubmitting ? styles.disabled : {}),
+                }}
               >
                 <option value="">Select Customer</option>
                 {customers.map((customer, index) => (
@@ -305,7 +442,7 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
               </select>
               
               {showNewCustomer && (
-                <div className="new-customer-field">
+                <div style={styles.newCustomerField}>
                   <input
                     type="text"
                     name="newCustomer"
@@ -314,19 +451,23 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
                     placeholder="Enter new customer name"
                     disabled={isSubmitting}
                     required
+                    style={{
+                      ...styles.input,
+                      ...(isSubmitting ? styles.disabled : {}),
+                    }}
                   />
-                  <small className="field-hint">This customer will be saved for future use</small>
+                  <small style={styles.fieldHint}>This customer will be saved for future use</small>
                 </div>
               )}
             </>
           )}
         </div>
 
-        {/* End Customer Field - NEW */}
-        <div className="form-group">
-          <label htmlFor="end_customer">End Customer (Optional)</label>
+        {/* End Customer Field */}
+        <div style={styles.formGroup}>
+          <label htmlFor="end_customer" style={styles.label}>End Customer</label>
           {loadingCustomers ? (
-            <div className="loading-select">Loading end customers...</div>
+            <div style={styles.loadingSelect}>Loading end customers...</div>
           ) : (
             <>
               <select
@@ -335,6 +476,10 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
                 value={showNewEndCustomer ? "new" : formState.end_customer}
                 onChange={handleChange}
                 disabled={isSubmitting}
+                style={{
+                  ...styles.select,
+                  ...(isSubmitting ? styles.disabled : {}),
+                }}
               >
                 <option value="">Select End Customer</option>
                 <option value="">None</option>
@@ -347,7 +492,7 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
               </select>
               
               {showNewEndCustomer && (
-                <div className="new-customer-field">
+                <div style={styles.newCustomerField}>
                   <input
                     type="text"
                     name="newEndCustomer"
@@ -355,16 +500,46 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
                     onChange={handleChange}
                     placeholder="Enter new end customer name"
                     disabled={isSubmitting}
+                    style={{
+                      ...styles.input,
+                      ...(isSubmitting ? styles.disabled : {}),
+                    }}
                   />
-                  <small className="field-hint">This end customer will be saved for future use</small>
+                  <small style={styles.fieldHint}>This end customer will be saved for future use</small>
                 </div>
               )}
             </>
           )}
         </div>
 
-        <div className="form-group">
-          <label htmlFor="description">Description</label>
+        {/* Employee Assignment Field - SIMPLIFIED VERSION */}
+        <div style={styles.formGroup}>
+          <label htmlFor="assigned_employee" style={styles.label}>
+            Assign to Employee
+            <span style={{ marginLeft: "5px", fontSize: "12px", color: "#666" }}>
+              (Enter Employee ID or Username)
+            </span>
+          </label>
+          <input
+            type="text"
+            id="assigned_employee"
+            name="assigned_employee"
+            value={formState.assigned_employee}
+            onChange={handleChange}
+            disabled={isSubmitting}
+            placeholder="e.g., EMP001 or johndoe"
+            style={{
+              ...styles.input,
+              ...(isSubmitting ? styles.disabled : {}),
+            }}
+          />
+          <small style={styles.fieldHint}>
+            Enter the employee's ID (EMP001) or username. Leave empty if no specific assignment.
+          </small>
+        </div>
+
+        <div style={styles.formGroup}>
+          <label htmlFor="description" style={styles.label}>Description</label>
           <textarea
             id="description"
             name="description"
@@ -373,18 +548,26 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
             placeholder="Enter project description"
             rows="3"
             disabled={isSubmitting}
+            style={{
+              ...styles.textarea,
+              ...(isSubmitting ? styles.disabled : {}),
+            }}
           />
         </div>
 
-        <div className="form-row">
-          <div className="form-group">
-            <label htmlFor="status">Status</label>
+        <div style={styles.formRow}>
+          <div style={styles.formGroup}>
+            <label htmlFor="status" style={styles.label}>Status</label>
             <select 
               id="status" 
               name="status" 
               value={formState.status} 
               onChange={handleChange}
               disabled={isSubmitting}
+              style={{
+                ...styles.select,
+                ...(isSubmitting ? styles.disabled : {}),
+              }}
             >
               <option value="active">Active</option>
               <option value="completed">Completed</option>
@@ -394,14 +577,18 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
             </select>
           </div>
 
-          <div className="form-group">
-            <label htmlFor="priority">Priority</label>
+          <div style={styles.formGroup}>
+            <label htmlFor="priority" style={styles.label}>Priority</label>
             <select 
               id="priority" 
               name="priority" 
               value={formState.priority} 
               onChange={handleChange}
               disabled={isSubmitting}
+              style={{
+                ...styles.select,
+                ...(isSubmitting ? styles.disabled : {}),
+              }}
             >
               <option value="low">Low</option>
               <option value="medium">Medium</option>
@@ -411,9 +598,9 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
           </div>
         </div>
 
-        <div className="form-row">
-          <div className="form-group">
-            <label htmlFor="start_date">Start Date</label>
+        <div style={styles.formRow}>
+          <div style={styles.formGroup}>
+            <label htmlFor="start_date" style={styles.label}>Start Date</label>
             <input
               type="date"
               id="start_date"
@@ -421,11 +608,15 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
               value={formState.start_date || ""}
               onChange={handleChange}
               disabled={isSubmitting}
+              style={{
+                ...styles.input,
+                ...(isSubmitting ? styles.disabled : {}),
+              }}
             />
           </div>
 
-          <div className="form-group">
-            <label htmlFor="end_date">End Date</label>
+          <div style={styles.formGroup}>
+            <label htmlFor="end_date" style={styles.label}>End Date</label>
             <input
               type="date"
               id="end_date"
@@ -433,15 +624,22 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
               value={formState.end_date || ""}
               onChange={handleChange}
               disabled={isSubmitting}
+              style={{
+                ...styles.input,
+                ...(isSubmitting ? styles.disabled : {}),
+              }}
             />
           </div>
         </div>
 
-        <div className="form-actions">
+        <div style={styles.formActions}>
           <button 
             type="button" 
             onClick={onClose} 
-            className="btn-secondary"
+            style={{
+              ...styles.btnSecondary,
+              ...(isSubmitting ? styles.btnSecondaryDisabled : {}),
+            }}
             disabled={isSubmitting}
           >
             Cancel
@@ -449,162 +647,15 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
           <button 
             type="submit" 
             disabled={isSubmitting} 
-            className="btn-primary"
+            style={{
+              ...styles.btnPrimary,
+              ...(isSubmitting ? styles.btnPrimaryDisabled : {}),
+            }}
           >
             {submitButtonText}
           </button>
         </div>
       </form>
-
-      <style jsx>{`
-        .project-form {
-          padding: 20px;
-          max-width: 600px;
-          margin: 0 auto;
-        }
-
-        .project-form h2 {
-          margin-bottom: 15px;
-          color: #333;
-          font-size: 1.5rem;
-        }
-
-        .form-group {
-          margin-bottom: 15px;
-        }
-
-        .form-group label {
-          display: block;
-          margin-bottom: 5px;
-          font-weight: 500;
-          color: #555;
-        }
-
-        .form-group input,
-        .form-group textarea,
-        .form-group select {
-          width: 100%;
-          padding: 8px 12px;
-          border: 1px solid #ddd;
-          border-radius: 4px;
-          font-size: 14px;
-        }
-
-        .form-group input:disabled,
-        .form-group textarea:disabled,
-        .form-group select:disabled {
-          background-color: #f5f5f5;
-          cursor: not-allowed;
-        }
-
-        .form-group input:focus,
-        .form-group textarea:focus,
-        .form-group select:focus {
-          outline: none;
-          border-color: #007bff;
-        }
-
-        .new-customer-field {
-          margin-top: 10px;
-          animation: fadeIn 0.3s ease;
-        }
-
-        .field-hint {
-          display: block;
-          margin-top: 4px;
-          color: #6c757d;
-          font-size: 12px;
-        }
-
-        .loading-select {
-          padding: 10px;
-          text-align: center;
-          color: #6c757d;
-          background: #f8f9fa;
-          border-radius: 4px;
-        }
-
-        .form-row {
-          display: flex;
-          gap: 15px;
-        }
-
-        .form-row .form-group {
-          flex: 1;
-        }
-
-        .form-actions {
-          display: flex;
-          justify-content: flex-end;
-          gap: 10px;
-          margin-top: 25px;
-          padding-top: 15px;
-          border-top: 1px solid #eee;
-        }
-
-        .btn-primary {
-          background: #007bff;
-          color: white;
-          padding: 10px 20px;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-          font-weight: 500;
-          min-width: 140px;
-        }
-
-        .btn-primary:hover:not(:disabled) {
-          background: #0056b3;
-        }
-
-        .btn-primary:disabled {
-          background: #ccc;
-          cursor: not-allowed;
-        }
-
-        .btn-secondary {
-          background: #6c757d;
-          color: white;
-          padding: 10px 20px;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-        }
-
-        .btn-secondary:hover:not(:disabled) {
-          background: #545b62;
-        }
-
-        .btn-secondary:disabled {
-          background: #ccc;
-          cursor: not-allowed;
-        }
-
-        .message {
-          padding: 12px 15px;
-          margin-bottom: 20px;
-          border-radius: 4px;
-          font-weight: 500;
-          animation: fadeIn 0.3s ease;
-        }
-
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-
-        .message.success {
-          background: #d4edda;
-          color: #155724;
-          border: 1px solid #c3e6cb;
-        }
-
-        .message.error {
-          background: #f8d7da;
-          color: #721c24;
-          border: 1px solid #f5c6cb;
-        }
-      `}</style>
     </div>
   );
 };

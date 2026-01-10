@@ -238,27 +238,25 @@ const mockApi = {
 };
 
 // Enhanced API helpers with automatic fallback to mock
-export const createProject = async (data) => {
-  console.log('📝 Attempting to create project:', data);
+// In api.js, update createProject function:
+
+export const createProject = async (projectData) => {
+  console.log("📤 Sending to /api/projects:", projectData);
+  console.log("📤 JSON:", JSON.stringify(projectData));
   
   try {
-    // First try real API
-    const response = await api.post('/api/projects', data);
-    console.log('✅ Real API succeeded');
+    const response = await api.post('/api/projects', projectData);
+    console.log("✅ API Response:", response.data);
     return response;
   } catch (error) {
-    console.warn('❌ Real API failed, falling back to mock');
-    
-    // If real API fails, use mock
-    const mockResponse = await mockApi.createProject(data);
-    
-    // Show notification to user
-    if (window.showMockNotification !== false) {
-      alert('⚠️ Note: Using mock data because backend is not available. Projects will be saved in browser only.');
-      window.showMockNotification = false; // Only show once
-    }
-    
-    return mockResponse;
+    console.error("❌ API Error details:", {
+      url: error.config?.url,
+      method: error.config?.method,
+      data: error.config?.data,
+      status: error.response?.status,
+      responseData: error.response?.data
+    });
+    throw error;
   }
 };
 
@@ -692,6 +690,29 @@ export const addTaskAttachment = (projectId, taskId, formData) => {
   });
 };
 
+// Add this function to your existing api.js file
+// In your api.js file, add this function:
+
+export const getEmployeesList = async () => {
+  try {
+    const response = await api.get('/api/employees/list');
+    return response;
+  } catch (error) {
+    console.error('Error fetching employees list:', error);
+    // Return a mock response if API is offline
+    return {
+      data: {
+        success: true,
+        employees: [
+          { id: 1, name: "John Doe", employeeId: "EMP001", department: "Engineering" },
+          { id: 2, name: "Jane Smith", employeeId: "EMP002", department: "Sales" },
+          { id: 3, name: "Robert Johnson", employeeId: "EMP003", department: "Marketing" },
+          { id: 4, name: "Emily Davis", employeeId: "EMP004", department: "Operations" },
+        ]
+      }
+    };
+  }
+};
 // Quick server test
 export const quickServerTest = async () => {
   try {
