@@ -1429,3 +1429,241 @@ form {
     padding: 12px;
   }
 }
+.auto-filled {
+  background-color: #f0fff4 !important;
+  border-color: #9ae6b4 !important;
+  border-left: 3px solid #38a169 !important;
+}
+
+.auto-fill-info {
+  color: #38a169;
+  font-size: 11px;
+  margin-top: 4px;
+  display: block;
+  font-style: italic;
+}
+
+.customer-section {
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 15px;
+  margin-bottom: 20px;
+  border: 1px solid #e2e8f0;
+}
+
+.section-title {
+  color: #2d3748;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.section-title .optional {
+  color: #718096;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.customer-details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 15px;
+  margin-bottom: 15px;
+}
+/* Add these styles to your existing ManagerProjectDashboard.css */
+
+/* Employee Selection Header */
+.employee-selection-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.selection-controls {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.btn-select-all {
+  padding: 6px 12px;
+  background: #f0f7ff;
+  border: 1px solid #3b82f6;
+  color: #3b82f6;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+
+.btn-select-all:hover {
+  background: #3b82f6;
+  color: white;
+}
+
+.selected-count {
+  font-size: 0.85rem;
+  color: #666;
+  font-weight: 500;
+}
+
+/* Employee Search Box */
+.employee-search-box {
+  margin-bottom: 15px;
+}
+
+.employee-search-input {
+  width: 100%;
+  padding: 10px 15px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  transition: border-color 0.2s;
+}
+
+.employee-search-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+/* Employee Checkbox List */
+.employee-list-container {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid #e8eef4;
+  border-radius: 8px;
+  padding: 5px;
+}
+
+.employee-checkbox {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.employee-checkbox:last-child {
+  border-bottom: none;
+}
+
+.employee-checkbox:hover {
+  background-color: #f8fafc;
+}
+
+.employee-checkbox input[type="checkbox"] {
+  margin-right: 12px;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.employee-info {
+  flex: 1;
+}
+
+.employee-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.employee-name {
+  font-weight: 600;
+  color: #1f2937;
+  font-size: 0.95rem;
+}
+
+.employee-role {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 500;
+}
+
+.employee-role.manager {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.employee-role.engineer {
+  background-color: #dbeafe;
+  color: #1e40af;
+}
+
+.employee-role.team-leader {
+  background-color: #f3e8ff;
+  color: #7c3aed;
+}
+
+.employee-details {
+  display: flex;
+  gap: 15px;
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+.employee-id, .employee-department {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Loading State */
+.loading-employees {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: #6b7280;
+}
+
+.spinner-small {
+  width: 24px;
+  height: 24px;
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 10px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* No Employees State */
+.no-employees {
+  text-align: center;
+  padding: 40px;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .employee-selection-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  
+  .selection-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .employee-details {
+    flex-direction: column;
+    gap: 5px;
+  }
+}

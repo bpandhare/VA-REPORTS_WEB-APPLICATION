@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react'
 import logo from '../assets/logo.jpeg'
 
 function Sidebar() {
-  const { user, logout } = useAuth()
+  const { user, logout, token } = useAuth() // Add token from AuthContext
   const navigate = useNavigate()
   const location = useLocation()
   const activePage = location.pathname.substring(1) || 'hourly'
@@ -18,33 +18,58 @@ function Sidebar() {
     return () => clearInterval(timer)
   }, [])
 
-  // Fetch pending leave count for managers
+
+  
+  // Fetch pending leave count for managers - UPDATED to use token from AuthContext
   useEffect(() => {
     const fetchPendingLeaveCount = async () => {
-      if (user?.role === 'Manager' || user?.role === 'Team Leader') {
-        try {
-          const endpoint = import.meta.env.VITE_API_URL?.replace('/api/activity', '/api/daily-target') ?? 'http://localhost:5000/api/daily-target'
-          const token = localStorage.getItem('token') || ''
-          
-          const response = await fetch(`${endpoint}/pending-leaves`, {
-            headers: { Authorization: `Bearer ${token}` }
-          })
-          
-          if (response.ok) {
-            const data = await response.json()
-            if (data.success) {
-              setPendingLeaveCount(data.total || 0)
-            }
+      // Check if user has manager role
+      const isManager = user?.role === 'Manager' || user?.role === 'Team Leader'
+      
+      if (!isManager || !token) {
+        setPendingLeaveCount(0)
+        return
+      }
+
+      try {
+        const endpoint = import.meta.env.VITE_API_URL?.replace('/api/activity', '/api/daily-target') ?? 'http://localhost:5000/api/daily-target'
+        
+        console.log('Fetching pending leaves with token:', token.substring(0, 20) + '...')
+
+        const response = await fetch(`${endpoint}/pending-leaves`, {
+          headers: { 
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
           }
-        } catch (error) {
-          console.error('Failed to fetch pending leave count:', error)
+        })
+
+        console.log('Response status:', response.status)
+        
+        if (response.ok) {
+          const data = await response.json()
+          console.log('Pending leaves response:', data)
+          if (data.success) {
+            setPendingLeaveCount(data.total || 0)
+          }
+        } else if (response.status === 401) {
+          console.warn('Authentication failed - token might be expired')
+          // Optionally refresh token or show login prompt
+        } else {
+          console.warn(`Failed to fetch pending leaves: ${response.status}`)
         }
+      } catch (error) {
+        console.error('Network error fetching pending leaves:', error)
+        // Don't show error to user for this non-critical feature
       }
     }
     
-    fetchPendingLeaveCount()
-  }, [user])
+    // Only fetch if user exists AND token is available
+    if (user && token) {
+      fetchPendingLeaveCount()
+    }
+  }, [user, token]) // Re-run when user or token changes
 
+  // Rest of your component remains the same...
   const handleNavigation = (page) => {
     navigate(`/${page}`)
   }
@@ -89,7 +114,7 @@ function Sidebar() {
   const hasEmployeeId = user?.employeeId || user?.employee_id || user?.id
 
   // Check if user is manager
-  const isManager = user?.role === 'Manager'
+  const isManager = user?.role === 'Manager' || user?.role === 'Team Leader' || user?.role === 'Group Leader'
 
   return (
     <div className="sidebar">
@@ -104,6 +129,7 @@ function Sidebar() {
           <div className="user-name">{user?.username || user?.name || 'User Name'}</div>
           <div className="user-details">
             <span className="user-role">{getFormattedRole()}</span>
+            {isManager && <span className="manager-tag"></span>}
             {/* Only show ID if employee has one */}
             {hasEmployeeId && (
               <span className="user-id">
@@ -129,36 +155,19 @@ function Sidebar() {
       </div>
 
       {/* Company Branding */}
-    {/* Company Branding */}
-<div className="company-section"> {/* Changed from company-brand */}
-  <div className="company-logo-container"> {/* Changed from company-logo */}
-    <img src={logo} alt="Vickhardth Logo" className="company-logo-img" /> {/* Changed from logo-img */}
-  </div>
-  <div className="company-title">VICKHARDTH</div> {/* Changed from company-name */}
-  <div className="company-subtitle">Daily reporting hub for site engineers</div> {/* Changed from company-tagline */}
-</div>
+      <div className="company-section">
+        <div className="company-logo-container">
+          <img src={logo} alt="Vickhardth Logo" className="company-logo-img" />
+        </div>
+        <div className="company-title">VICKHARDTH</div>
+        <div className="company-subtitle">Daily reporting hub for site engineers</div>
+      </div>
 
       {/* Main Navigation */}
       <nav className="main-nav">
-        {/* TIME TRACKER SECTION */}
-        {/* <div className="nav-section">
-          <div className="section-title">TIME TRACKING</div>
-          <div className="nav-buttons">
-            <button
-              className={`nav-btn ${activePage === 'time-tracker' ? 'active' : ''}`}
-              onClick={() => handleNavigation('time-tracker')}
-            >
-              <span className="btn-icon">⏰</span>
-              <span className="btn-text">Time Tracker</span>
-              <span className="btn-tag new">NEW</span>
-            </button>
-          </div>
-        </div> */}
-
         <div className="nav-section">
           <div className="section-title">REPORTS</div>
           <div className="nav-buttons">
-
             <button
               className={`nav-btn ${activePage === 'daily' ? 'active' : ''}`}
               onClick={() => handleNavigation('daily')}
@@ -166,13 +175,27 @@ function Sidebar() {
               <span className="btn-icon">📋</span>
               <span className="btn-text">Daily Target Report</span>
             </button>
-                        <button
+            <button
               className={`nav-btn ${activePage === 'hourly' ? 'active' : ''}`}
               onClick={() => handleNavigation('hourly')}
             >
               <span className="btn-icon">⏰</span>
               <span className="btn-text">Hourly Report</span>
             </button>
+            
+            {/* Manager Dashboard - Only for Managers */}
+            {isManager && (
+              <button
+                className={`nav-btn ${activePage === 'manager-dashboard' ? 'active' : ''}`}
+                onClick={() => handleNavigation('manager-dashboard')}
+              >
+                <span className="btn-icon">📊</span>
+                <span className="btn-text">
+                  Manager Dashboard
+                  <span className="btn-tag new">NEW</span>
+                </span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -204,6 +227,7 @@ function Sidebar() {
               </span>
             </button>
             
+            {/* Attendance History - For managers/senior roles */}
             {(user?.role === 'Manager' || user?.role === 'Team Leader' || user?.role === 'Senior Assistant') && (
               <button
                 className={`nav-btn ${activePage === 'attendance-history' ? 'active' : ''}`}
@@ -223,7 +247,7 @@ function Sidebar() {
           <div className="section-title">DOCUMENTS</div>
           <div className="nav-buttons">
             {/* Only managers can create MOM */}
-            { (
+            {isManager && (
               <button 
                 className={`nav-btn ${activePage === 'create-mom' ? 'active' : ''}`} 
                 onClick={() => handleNavigation('create-mom')}
@@ -284,7 +308,18 @@ function Sidebar() {
         </div>
       </div>
     </div>
+    
   )
+  // Inside your Sidebar component, add this menu item for managers
+{isManager && (
+  <MenuItem 
+    icon={<DashboardIcon />}
+    label="Manager Dashboard"
+    page="manager-dashboard"
+    currentPage={currentPage}
+    onClick={() => onPageChange('manager-dashboard')}
+  />
+)}
 }
 
 export default Sidebar

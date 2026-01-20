@@ -1,4 +1,3 @@
-// App.jsx - Updated with role-based routing
 import { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './components/AuthContext'
@@ -15,6 +14,7 @@ import ProjectList from './components/ProjectList'
 import EmployeeProjects from './components/EmployeeProjects'
 import TimeTracker from './components/TimeTracker'
 import ProjectDetails from './components/ProjectDetails'
+import ManagerDashboard from './components/ManagerDashboard'
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('daily')
@@ -27,11 +27,18 @@ function AppContent() {
   }
 
   if (token) {
-    const isManager = user?.role === 'Manager'
+    const isManager = user?.role === 'Manager' || 
+                      user?.role?.toLowerCase().includes('manager') ||
+                      user?.role === 'Team Leader' ||
+                      user?.role?.toLowerCase().includes('team leader')
     
     return (
       <div style={{ display: 'flex', minHeight: '100vh' }}>
-        <Sidebar currentPage={currentPage} onPageChange={handlePageChange} />
+        <Sidebar 
+          currentPage={currentPage} 
+          onPageChange={handlePageChange}
+          userRole={user?.role}
+        />
         <main style={{ flex: 1, padding: '20px', overflow: 'auto' }}>
           <Routes>
             <Route path="/hourly" element={<HourlyForm />} />
@@ -42,6 +49,11 @@ function AppContent() {
             <Route path="/leave-application" element={<LeaveApplication />} />
             <Route path="/time-tracker" element={<TimeTracker />} />
             <Route path="/project/:id" element={<ProjectDetails />} />
+            
+            {/* Manager Dashboard Route - Fixed */}
+            {isManager && (
+              <Route path="/manager-dashboard" element={<ManagerDashboard />} />
+            )}
             
             {/* Projects - different views based on role */}
             <Route path="/projects" element={
@@ -72,7 +84,6 @@ function AppContent() {
 }
 
 function App() {
-  
   return (
     <AuthProvider>
       <Router>

@@ -14,6 +14,8 @@ import employeeActivityRouter from './routes/employeeActivity.js'
 import projectsRouter from './routes/projects.js'
 import pool from './db.js'
 import timeTrackingRoutes from './routes/timeTracking.js'
+// REMOVE THIS: import managerRoutes from './routes/authRoutes.js'
+import authRoutes from './routes/authRoutes.js' // Add this line
 
 // ES Modules fix for __dirname
 const __filename = fileURLToPath(import.meta.url)
@@ -440,11 +442,36 @@ app.get('/api/users/me', verifyToken, async (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRouter)
+app.use('/api/auth', authRoutes) // Add this line for the new authRoutes
 app.use('/api/activity', activityRouter)
 app.use('/api/hourly-report', hourlyReportRouter)
 app.use('/api/daily-target', dailyTargetRouter)
 app.use('/api/employee-activity', employeeActivityRouter)
 app.use('/api/projects', verifyToken, projectsRouter)
+
+// Create project_files table (move this inside migrateDatabase function)
+try {
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS project_files (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      description TEXT,
+      file_name VARCHAR(255) NOT NULL,
+      original_name VARCHAR(255) NOT NULL,
+      file_path VARCHAR(500) NOT NULL,
+      file_size INT NOT NULL,
+      mime_type VARCHAR(100) NOT NULL,
+      uploaded_by INT NOT NULL,
+      uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `)
+  console.log('✓ Created project_files table')
+} catch (error) {
+  console.error('Error creating project_files table:', error.message)
+}
 
 // Serve frontend static files in production
 if (process.env.NODE_ENV === 'production') {
@@ -512,6 +539,7 @@ migrateDatabase().then(() => {
     console.log(`🚀 Server running in ${process.env.NODE_ENV || 'development'} mode`)
     console.log(`📡 API server ready on http://${HOST}:${PORT}`)
     console.log(`🔐 Auth endpoint: http://${HOST}:${PORT}/api/auth/login`)
+    console.log(`👥 Users endpoint: http://${HOST}:${PORT}/api/auth/users`)
     console.log(`🏥 Health check: http://${HOST}:${PORT}/health`)
     console.log(`👤 User info endpoint: http://${HOST}:${PORT}/api/users/me`)
     
@@ -520,26 +548,3 @@ migrateDatabase().then(() => {
     }
   })
 })
-// Create project_files table
-try {
-  await pool.execute(`
-    CREATE TABLE IF NOT EXISTS project_files (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      project_id INT NOT NULL,
-      name VARCHAR(255) NOT NULL,
-      description TEXT,
-      file_name VARCHAR(255) NOT NULL,
-      original_name VARCHAR(255) NOT NULL,
-      file_path VARCHAR(500) NOT NULL,
-      file_size INT NOT NULL,
-      mime_type VARCHAR(100) NOT NULL,
-      uploaded_by INT NOT NULL,
-      uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-      FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `)
-  console.log('✓ Created project_files table')
-} catch (error) {
-  console.error('Error creating project_files table:', error.message)
-}

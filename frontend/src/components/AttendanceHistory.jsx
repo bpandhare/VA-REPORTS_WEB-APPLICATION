@@ -12,7 +12,6 @@ export default function ActivityDisplay() {
   const [dateSummary, setDateSummary] = useState(null)
   const [attendanceData, setAttendanceData] = useState(null)
   const [availableDates, setAvailableDates] = useState([])
-  const [activeTab, setActiveTab] = useState('summary')
   
   const hasFetchedInitial = useRef(false)
   
@@ -63,11 +62,7 @@ export default function ActivityDisplay() {
         await fetchAvailableDates();
         
         // Fetch data for selected date
-        await Promise.all([
-          fetchDateSummary(selectedDate),
-          fetchAttendanceData(selectedDate),
-          fetchRecentActivities()
-        ]);
+        await fetchAttendanceData(selectedDate);
         
       } catch (err) {
         console.error('❌ Initial load failed:', err);
@@ -79,47 +74,6 @@ export default function ActivityDisplay() {
     
     fetchInitialData();
   }, [user, token, selectedDate]);
-
-  // Fetch date summary
-  const fetchDateSummary = async (date) => {
-    if (!token) return;
-    
-    try {
-      console.log(`📅 Fetching date summary for: ${date}`);
-      
-      const response = await fetch(`${endpoints.dateSummary}?date=${date}`, {
-        headers: { 
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        if (response.status === 404) {
-          console.log(`📭 No date summary found for ${date}`);
-          setDateSummary(null);
-          return;
-        }
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.success === false) {
-        console.warn(`⚠️ API returned error: ${data.message}`);
-        setDateSummary(null);
-      } else {
-        setDateSummary(data);
-        console.log(`✅ Date summary fetched for ${date}:`, {
-          activities: data.activities?.length || 0,
-          summary: data.summary
-        });
-      }
-    } catch (err) {
-      console.error('❌ Error fetching date summary:', err);
-      setDateSummary(null);
-    }
-  };
 
   // Fetch attendance data
   const fetchAttendanceData = async (date) => {
@@ -147,7 +101,7 @@ export default function ActivityDisplay() {
           return;
         }
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
+      };
       
       const data = await response.json();
       console.log(`📊 Attendance data received:`, data);
@@ -195,33 +149,6 @@ export default function ActivityDisplay() {
     }
   };
 
-  // Fetch recent activities
-  const fetchRecentActivities = async () => {
-    if (!token) return;
-    
-    try {
-      console.log(`📝 Fetching recent activities from ${endpoints.activities}`);
-      
-      const response = await fetch(`${endpoints.activities}?limit=20&page=1`, {
-        headers: { 
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      console.log(`📝 Activities response status: ${response.status}`);
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`📝 Activities data received:`, data);
-        setActivities(data.activities || []);
-        console.log(`✅ Loaded ${data.activities?.length || 0} activities`);
-      }
-    } catch (error) {
-      console.error('Failed to fetch recent activities:', error);
-    }
-  };
-
   // Handle date change
   const handleDateChange = (date) => {
     console.log(`📅 Date changed to: ${date}`);
@@ -229,10 +156,7 @@ export default function ActivityDisplay() {
     setLoading(true);
     
     // Fetch new data for selected date
-    Promise.all([
-      fetchDateSummary(date),
-      fetchAttendanceData(date)
-    ]).finally(() => {
+    fetchAttendanceData(date).finally(() => {
       setLoading(false);
     });
   };
@@ -243,10 +167,8 @@ export default function ActivityDisplay() {
     setLoading(true);
     
     Promise.all([
-      fetchDateSummary(selectedDate),
       fetchAttendanceData(selectedDate),
-      fetchAvailableDates(),
-      fetchRecentActivities()
+      fetchAvailableDates()
     ]).finally(() => {
       setLoading(false);
     });
@@ -300,9 +222,9 @@ export default function ActivityDisplay() {
     <section className="vh-form-shell">
       <header className="vh-form-header">
         <div>
-          <p className="vh-form-label">Activity Dashboard</p>
+          <p className="vh-form-label">Attendance Dashboard</p>
           <h2>
-            {user?.role === 'Manager' || user?.role === 'Team Leader' ? 'Monitor All Employee Activities' : 'Your Activities Dashboard'}
+            {user?.role === 'Manager' || user?.role === 'Team Leader' ? 'Monitor Employee Attendance' : 'Attendance Dashboard'}
           </h2>
           
           <div style={{ 
@@ -330,7 +252,7 @@ export default function ActivityDisplay() {
                 <span>📅</span>
                 <span><strong>Selected Date:</strong> {formatDate(selectedDate)}</span>
               </div>
-              {dateSummary && (
+              {attendanceData && (
                 <div style={{ 
                   background: '#e8f4ff', 
                   padding: '0.5rem 1rem', 
@@ -339,8 +261,8 @@ export default function ActivityDisplay() {
                   alignItems: 'center',
                   gap: '0.5rem'
                 }}>
-                  <span>📊</span>
-                  <span><strong>Activities:</strong> {dateSummary.summary?.totalActivities || 0}</span>
+                  <span>👥</span>
+                  <span><strong>Total Employees:</strong> {attendanceData.summary?.total || 0}</span>
                 </div>
               )}
             </div>
@@ -441,56 +363,6 @@ export default function ActivityDisplay() {
           </div>
         </div>
 
-        {/* Tab Navigation */}
-        <div style={{ 
-          display: 'flex', 
-          borderBottom: '1px solid #e0e0e0',
-          marginBottom: '1.5rem'
-        }}>
-          <button
-            onClick={() => setActiveTab('summary')}
-            style={{
-              padding: '0.75rem 1.5rem',
-              background: activeTab === 'summary' ? '#2ad1ff' : 'transparent',
-              color: activeTab === 'summary' ? 'white' : '#666',
-              border: 'none',
-              borderBottom: activeTab === 'summary' ? '2px solid #2ad1ff' : 'none',
-              cursor: 'pointer',
-              fontWeight: activeTab === 'summary' ? 'bold' : 'normal'
-            }}
-          >
-            📊 Summary
-          </button>
-          <button
-            onClick={() => setActiveTab('attendance')}
-            style={{
-              padding: '0.75rem 1.5rem',
-              background: activeTab === 'attendance' ? '#2ad1ff' : 'transparent',
-              color: activeTab === 'attendance' ? 'white' : '#666',
-              border: 'none',
-              borderBottom: activeTab === 'attendance' ? '2px solid #2ad1ff' : 'none',
-              cursor: 'pointer',
-              fontWeight: activeTab === 'attendance' ? 'bold' : 'normal'
-            }}
-          >
-            👥 Attendance
-          </button>
-          <button
-            onClick={() => setActiveTab('activities')}
-            style={{
-              padding: '0.75rem 1.5rem',
-              background: activeTab === 'activities' ? '#2ad1ff' : 'transparent',
-              color: activeTab === 'activities' ? 'white' : '#666',
-              border: 'none',
-              borderBottom: activeTab === 'activities' ? '2px solid #2ad1ff' : 'none',
-              cursor: 'pointer',
-              fontWeight: activeTab === 'activities' ? 'bold' : 'normal'
-            }}
-          >
-            📝 Activities
-          </button>
-        </div>
-
         {/* Loading State */}
         {loading && (
           <div style={{ 
@@ -499,140 +371,12 @@ export default function ActivityDisplay() {
             color: '#666'
           }}>
             <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>⏳</div>
-            <p>Loading data for {formatDate(selectedDate)}...</p>
+            <p>Loading attendance data for {formatDate(selectedDate)}...</p>
           </div>
         )}
 
-        {/* Summary Tab */}
-        {!loading && activeTab === 'summary' && (
-  <div>
-    {dateSummary ? (
-      <>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: '1rem',
-          marginBottom: '2rem'
-        }}>
-          {/* Only show these 4 cards for employee dashboard */}
-          <div style={{ background: '#e8f4ff', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-            <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>Total Activities</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#092544' }}>
-              {dateSummary.summary?.totalActivities || 0}
-            </div>
-          </div>
-          <div style={{ background: '#e8f5e9', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-            <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>Present</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#4CAF50' }}>
-              {dateSummary.summary?.presentCount || 0}
-            </div>
-          </div>
-          <div style={{ background: '#ffebee', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-            <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>Absent</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#F44336' }}>
-              {dateSummary.summary?.absentCount || 0}
-            </div>
-          </div>
-          <div style={{ background: '#fff3e0', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-            <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.25rem' }}>On Leave</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#FF9800' }}>
-              {dateSummary.summary?.leaveCount || 0}
-            </div>
-          </div>
-        </div>
-
-                {/* Daily Reports */}
-                {dateSummary.dailyReports && dateSummary.dailyReports.length > 0 && (
-                  <div style={{ marginBottom: '2rem' }}>
-                    <h4 style={{ color: '#092544', marginBottom: '1rem' }}>📅 Daily Reports</h4>
-                    <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid #e8eef4' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr style={{ background: '#f3f6f9' }}>
-                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Engineer</th>
-                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Project</th>
-                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Activity</th>
-                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Time</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dateSummary.dailyReports.slice(0, 10).map((report, index) => (
-                            <tr key={index}>
-                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                                <div style={{ fontWeight: 'bold' }}>{report.engineerName || 'Unknown'}</div>
-                                {report.engineerId && <small style={{ color: '#666' }}>ID: {report.engineerId}</small>}
-                              </td>
-                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>{report.projectName || 'N/A'}</td>
-                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                                {report.activityTarget?.substring(0, 80) || 'No activity'}
-                              </td>
-                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                                {report.startTime && report.endTime 
-                                  ? `${formatTime(report.startTime)} - ${formatTime(report.endTime)}`
-                                  : 'N/A'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                {/* Hourly Reports */}
-                {dateSummary.hourlyReports && dateSummary.hourlyReports.length > 0 && (
-                  <div style={{ marginBottom: '2rem' }}>
-                    <h4 style={{ color: '#092544', marginBottom: '1rem' }}>⏰ Hourly Reports</h4>
-                    <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid #e8eef4' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr style={{ background: '#f3f6f9' }}>
-                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Engineer</th>
-                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Project</th>
-                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Activity</th>
-                            <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Time</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dateSummary.hourlyReports.slice(0, 10).map((report, index) => (
-                            <tr key={index}>
-                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                                <div style={{ fontWeight: 'bold' }}>{report.engineerName || 'Unknown'}</div>
-                                {report.engineerId && <small style={{ color: '#666' }}>ID: {report.engineerId}</small>}
-                              </td>
-                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>{report.projectName || 'N/A'}</td>
-                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                                {report.activityTarget?.substring(0, 80) || 'No activity'}
-                              </td>
-                              <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                                {report.time ? formatTime(report.time) : 'N/A'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div style={{ 
-                textAlign: 'center', 
-                padding: '3rem',
-                color: '#999'
-              }}>
-                <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>📭</div>
-                <p>No data found for {formatDate(selectedDate)}</p>
-                <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
-                  Try selecting a different date or check if reports have been submitted.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Attendance Tab */}
-        {!loading && activeTab === 'attendance' && (
+        {/* Attendance Content */}
+        {!loading && (
           <div>
             {attendanceData ? (
               <>
@@ -843,90 +587,6 @@ export default function ActivityDisplay() {
                 >
                   Try Again
                 </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Activities Tab */}
-        {!loading && activeTab === 'activities' && (
-          <div>
-            {activities.length > 0 ? (
-              <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid #e8eef4' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ background: '#f3f6f9' }}>
-                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Engineer</th>
-                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Date</th>
-                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Project</th>
-                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Activity</th>
-                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Status</th>
-                      <th style={{ padding: '0.75rem', border: '1px solid #e8eef4', textAlign: 'left' }}>Time</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activities.slice(0, 20).map((a, index) => (
-                      <tr key={index}>
-                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                          <div style={{ fontWeight: 'bold' }}>{a.engineerName || a.username || 'N/A'}</div>
-                          {a.engineerId && <small style={{ color: '#666' }}>ID: {a.engineerId}</small>}
-                        </td>
-                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>{formatDate(a.date || a.reportDate)}</td>
-                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>{a.project || a.projectName || 'N/A'}</td>
-                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                          {a.activityTarget?.substring(0, 60) || a.dailyTargetAchieved?.substring(0, 60) || 'No activity'}
-                        </td>
-                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                          <span style={{
-                            padding: '0.25rem 0.5rem',
-                            borderRadius: '4px',
-                            fontSize: '0.8rem',
-                            background: 
-                              a.status === 'present' ? '#e8f5e9' :
-                              a.status === 'leave' ? '#fff3e0' :
-                              a.status === 'absent' ? '#ffebee' : '#f5f5f5',
-                            color:
-                              a.status === 'present' ? '#2e7d32' :
-                              a.status === 'leave' ? '#f57c00' :
-                              a.status === 'absent' ? '#c62828' : '#757575',
-                            fontWeight: 'bold'
-                          }}>
-                            {a.status?.toUpperCase() || 'UNKNOWN'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.75rem', border: '1px solid #eef3f7' }}>
-                          {a.startTime && a.endTime 
-                            ? `${formatTime(a.startTime)} - ${formatTime(a.endTime)}`
-                            : formatTime(a.time) || 'N/A'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {activities.length > 20 && (
-                  <div style={{ 
-                    textAlign: 'center', 
-                    padding: '1rem',
-                    background: '#f8f9fa',
-                    borderTop: '1px solid #e8eef4'
-                  }}>
-                    <p style={{ color: '#666', fontSize: '0.9rem' }}>
-                      Showing 20 of {activities.length} activities
-                    </p>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div style={{ 
-                textAlign: 'center', 
-                padding: '3rem',
-                color: '#999'
-              }}>
-                <div style={{ fontSize: '2rem', marginBottom: '1rem' }}>📝</div>
-                <p>No activities found</p>
-                <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
-                  Try refreshing or selecting a different date.
-                </p>
               </div>
             )}
           </div>

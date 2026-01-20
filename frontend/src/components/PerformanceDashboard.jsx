@@ -335,9 +335,9 @@ const ManagerProjectDashboard = () => {
                     {project.end_date && (
                       <span className="project-date">End: {formatDate(project.end_date)}</span>
                     )}
-                    {project.budget && (
+                    {/* {project.budget && (
                       <span className="project-budget">Budget: {formatCurrency(project.budget)}</span>
-                    )}
+                    )} */}
                     {project.priority && (
                       <span 
                         className="project-priority" 

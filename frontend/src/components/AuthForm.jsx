@@ -9,6 +9,7 @@ function AuthForm() {
   const [managerId, setManagerId] = useState('')
   const [username, setUsername] = useState('')
   const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [dob, setDob] = useState('')
   const [phone, setPhone] = useState('')
@@ -19,6 +20,8 @@ function AuthForm() {
   const [checkingId, setCheckingId] = useState(false)
   const [checkingPhone, setCheckingPhone] = useState(false)
   const [isPhoneTaken, setIsPhoneTaken] = useState(false)
+  const [checkingEmail, setCheckingEmail] = useState(false)
+  const [isEmailTaken, setIsEmailTaken] = useState(false)
   
   // Get API endpoint base URL
   const endpointBase = useMemo(
@@ -84,6 +87,23 @@ function AuthForm() {
     return null
   }
 
+  // Email validation
+  const validateEmail = (email) => {
+    if (!email) return 'Email address is required'
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
+      return 'Please enter a valid email address'
+    }
+    
+    // Additional validation for company email if needed
+    // if (!email.toLowerCase().endsWith('@vickhardth.com')) {
+    //   return 'Please use your company email address (@vickhardth.com)'
+    // }
+    
+    return null
+  }
+
   // Handle Manager ID input with format validation
   const handleManagerIdChange = (e) => {
     const value = e.target.value.toUpperCase()
@@ -119,6 +139,12 @@ function AuthForm() {
     }
     
     setPhone(value)
+  }
+
+  // Handle email input
+  const handleEmailChange = (e) => {
+    const value = e.target.value.trim()
+    setEmail(value)
   }
 
   // Check if ID (Employee ID or Manager ID) is already taken
@@ -208,6 +234,45 @@ function AuthForm() {
     return () => clearTimeout(timer)
   }, [phone, mode, endpointBase])
 
+  // Check if email is already taken
+  useEffect(() => {
+    const checkEmail = async () => {
+      if (mode === 'register' && email) {
+        const emailError = validateEmail(email)
+        
+        if (emailError) {
+          setIsEmailTaken(false)
+          return
+        }
+
+        setCheckingEmail(true)
+        try {
+          const response = await fetch(`${endpointBase}/check-email/${encodeURIComponent(email)}`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+          })
+
+          if (response.ok) {
+            const data = await response.json()
+            setIsEmailTaken(!data.available)
+          } else {
+            setIsEmailTaken(false)
+          }
+        } catch (error) {
+          console.error('Error checking email:', error)
+          setIsEmailTaken(false)
+        } finally {
+          setCheckingEmail(false)
+        }
+      } else {
+        setIsEmailTaken(false)
+      }
+    }
+
+    const timer = setTimeout(checkEmail, 500)
+    return () => clearTimeout(timer)
+  }, [email, mode, endpointBase])
+
   // Reset IDs when role changes
   useEffect(() => {
     if (isManagerRole) {
@@ -235,6 +300,7 @@ function AuthForm() {
       if (mode === 'register') {
         requestBody.full_name = fullName.trim() || username.trim()
         requestBody.dob = dob
+        requestBody.email = email.trim()
         
         const cleanPhone = phone.replace(/\D/g, '')
         requestBody.phone = cleanPhone
@@ -291,6 +357,21 @@ function AuthForm() {
           return
         }
 
+        // Email validation
+        const emailError = validateEmail(email)
+        if (emailError) {
+          setAlert({ type: 'error', message: emailError })
+          setLoading(false)
+          return
+        }
+
+        if (isEmailTaken) {
+          setAlert({ type: 'error', message: 'This email address is already registered' })
+          setLoading(false)
+          return
+        }
+
+        // Phone validation
         const cleanPhone = phone.replace(/\D/g, '')
         const phoneError = validatePhone(cleanPhone)
         if (phoneError) {
@@ -404,7 +485,8 @@ function AuthForm() {
         name: data.user?.fullName || data.user?.username || data.username,
         role: data.user?.role || data.role,
         employeeId: data.user?.employeeId || data.user?.employee_id || data.employee_id || null,
-        phone: data.user?.phone || data.phone || null
+        phone: data.user?.phone || data.phone || null,
+        email: data.user?.email || data.email || null
       })
       
       if (loginSuccess) {
@@ -436,12 +518,14 @@ function AuthForm() {
     setManagerId('')
     setUsername('')
     setFullName('')
+    setEmail('')
     setPassword('')
     setDob('')
     setPhone('')
     setRole('')
     setIsIdTaken(false)
     setIsPhoneTaken(false)
+    setIsEmailTaken(false)
   }
 
   return (
@@ -503,9 +587,8 @@ function AuthForm() {
             <option value="">-- Select your role --</option>
             <option value="Manager">Manager</option>
             <option value="Team Leader">Team Leader</option>
-            
             <option value="Senior Engineer">Senior Engineer</option>
-            <option value=" Engineer"> Engineer</option>
+            <option value="Engineer">Engineer</option>
           </select>
           <small className="form-hint">
             Select role to determine login method
@@ -563,6 +646,35 @@ function AuthForm() {
             required
           />
         </label>
+
+        {/* Email Field - Only for registration */}
+        {mode === 'register' && (
+          <label>
+            <span>Email Address *</span>
+            <div className="input-with-status">
+              <input
+                type="email"
+                value={email}
+                onChange={handleEmailChange}
+                placeholder="employee@vickhardth.com"
+                required
+                disabled={checkingEmail}
+              />
+              {checkingEmail && (
+                <span className="checking-status">Checking...</span>
+              )}
+              {isEmailTaken && !checkingEmail && (
+                <span className="error-status">Already registered</span>
+              )}
+              {!isEmailTaken && email && !checkingEmail && !validateEmail(email) && (
+                <span className="success-status">Available</span>
+              )}
+            </div>
+            <small className="form-hint">
+              Enter your company email address
+            </small>
+          </label>
+        )}
 
         {/* Full Name Field - Only for registration */}
         {mode === 'register' && (
@@ -648,7 +760,8 @@ function AuthForm() {
             type="submit" 
             disabled={loading || 
               (mode === 'register' && isIdTaken) || 
-              (mode === 'register' && isPhoneTaken)}
+              (mode === 'register' && isPhoneTaken) ||
+              (mode === 'register' && isEmailTaken)}
             className={loading ? 'loading' : ''}
           >
             {loading ? (

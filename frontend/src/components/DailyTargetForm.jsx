@@ -22,26 +22,35 @@ const defaultPayload = () => {
     customerName: '',
     customerPerson: '',
     customerContact: '',
-    customerCountryCode: '+91', // Default country code for India
+    customerCountryCode: '+91',
+    customerAddress: '', // Add this
     endCustomerName: '',
     endCustomerPerson: '',
     endCustomerContact: '',
-    endCustomerCountryCode: '+91', // Default country code for India
+    endCustomerCountryCode: '+91',
+    endCustomerAddress: '', // Add this
     projectNo: '',
-    locationType: '', // 'site', 'office', 'leave'
-    leaveType: '', // Leave type ID
+    locationType: '',
+    leaveType: '',
     siteLocation: '',
     locationLat: '',
     locationLng: '',
     momReport: null,
     dailyTargetPlanned: '',
     dailyTargetAchieved: '',
-    additionalActivity: '',
-    whoAddedActivity: '',
-    dailyPendingTarget: '',
-    reasonPendingTarget: '',
-    problemFaced: '',
-    problemResolved: '',
+    // Additional Activity fields
+    additionalActivity: 'No', // Yes/No
+    additionalActivityDetails: '', // Show if Yes
+    whoAddedActivity: '', // Show if Yes
+    // Daily Pending Target fields
+    dailyPendingTarget: 'No', // Yes/No
+    pendingTargetDetails: '', // Show if Yes
+    reasonPendingTarget: '', // Show if Yes
+    // Problem Faced fields
+    problemFaced: 'No', // Yes/No
+    problemDetails: '', // Show if Yes
+    problemResolved: '', // Show if Yes
+    problemResolutionDetails: '', // Show if problemResolved is Yes
     onlineSupportRequired: '',
     supportEngineerName: '',
     siteStartDate: today,
@@ -110,6 +119,264 @@ function DailyTargetForm() {
     { code: '+27', name: 'South Africa', flag: '🇿🇦' },
   ]
 
+  // Customer management states
+  const [customers, setCustomers] = useState([])
+  const [loadingCustomers, setLoadingCustomers] = useState(false)
+  const [customerDatabase, setCustomerDatabase] = useState([])
+
+  // Predefined customers with their details
+  const predefinedCustomers = [
+    {
+      id: 'cee_dee',
+      name: 'CEE DEE',
+      contact_person: 'Mr. John Smith',
+      email: 'john.smith@ceedee.com',
+      contact_number: '+91 98765 43210',
+      address: '123 Business Park, Mumbai, Maharashtra 400001'
+    },
+    {
+      id: 'abc_corp',
+      name: 'ABC Corporation',
+      contact_person: 'Ms. Sarah Johnson',
+      email: 'sarah.j@abccorp.com',
+      contact_number: '+91 87654 32109',
+      address: '456 Corporate Tower, Delhi, Delhi 110001'
+    },
+    {
+      id: 'xyz_ind',
+      name: 'XYZ Industries',
+      contact_person: 'Mr. Rajesh Kumar',
+      email: 'rajesh.k@xyzindustries.com',
+      contact_number: '+91 76543 21098',
+      address: '789 Industrial Estate, Bangalore, Karnataka 560001'
+    },
+    {
+      id: 'global_tech',
+      name: 'Global Tech Solutions',
+      contact_person: 'Ms. Priya Sharma',
+      email: 'priya.sharma@globaltech.com',
+      contact_number: '+91 65432 10987',
+      address: '321 Tech Park, Hyderabad, Telangana 500001'
+    },
+    {
+      id: 'prime_const',
+      name: 'Prime Construction',
+      contact_person: 'Mr. Amit Patel',
+      email: 'amit.patel@primeconstruction.com',
+      contact_number: '+91 54321 09876',
+      address: '654 Builders Plaza, Ahmedabad, Gujarat 380001'
+    },
+    {
+      id: 'infra_builders',
+      name: 'Infra Builders',
+      contact_person: 'Ms. Neha Singh',
+      email: 'neha.singh@infrabuilders.com',
+      contact_number: '+91 43210 98765',
+      address: '987 Infrastructure Complex, Pune, Maharashtra 411001'
+    },
+    {
+      id: 'tech_innovators',
+      name: 'Tech Innovators Ltd',
+      contact_person: 'Mr. Ravi Verma',
+      email: 'ravi.verma@techinnovators.com',
+      contact_number: '+91 32109 87654',
+      address: '147 Innovation Center, Chennai, Tamil Nadu 600001'
+    },
+    {
+      id: 'mega_projects',
+      name: 'Mega Projects Inc',
+      contact_person: 'Mr. Sanjay Mehta',
+      email: 'sanjay.mehta@megaprojects.com',
+      contact_number: '+91 21098 76543',
+      address: '258 Mega Tower, Kolkata, West Bengal 700001'
+    },
+    {
+      id: 'city_dev',
+      name: 'City Development Authority',
+      contact_person: 'Mr. Vikram Singh',
+      email: 'vikram.singh@citydev.gov.in',
+      contact_number: '+91 10987 65432',
+      address: '369 Government Complex, Lucknow, Uttar Pradesh 226001'
+    }
+  ];
+
+  // Fetch customers from API or use predefined
+  const fetchCustomers = async () => {
+    setLoadingCustomers(true)
+    try {
+      // Try to fetch from API
+      const response = await fetch(`${endpoint}/customers`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          // Combine API customers with predefined ones
+          const apiCustomers = data.customers || []
+          const allCustomers = [...predefinedCustomers, ...apiCustomers]
+          setCustomers(allCustomers.map(c => c.name))
+          setCustomerDatabase(allCustomers)
+        } else {
+          // Use predefined customers if API fails
+          setCustomers(predefinedCustomers.map(c => c.name))
+          setCustomerDatabase(predefinedCustomers)
+        }
+      } else {
+        setCustomers(predefinedCustomers.map(c => c.name))
+        setCustomerDatabase(predefinedCustomers)
+      }
+    } catch (error) {
+      console.error("Failed to fetch customers, using predefined:", error)
+      setCustomers(predefinedCustomers.map(c => c.name))
+      setCustomerDatabase(predefinedCustomers)
+    } finally {
+      setLoadingCustomers(false)
+    }
+  }
+
+  // Handle customer selection change
+  const handleCustomerChange = (customerName) => {
+    if (customerName === "Other") {
+      // For "Other", reset customer fields for manual entry
+      setFormData(prev => ({
+        ...prev,
+        customerName: "Other",
+        customerPerson: '',
+        customerContact: '',
+        customerCountryCode: '+91',
+        customerAddress: ''
+      }))
+    } else if (customerName === "") {
+      // For empty selection, reset everything
+      setFormData(prev => ({
+        ...prev,
+        customerName: "",
+        customerPerson: '',
+        customerContact: '',
+        customerCountryCode: '+91',
+        customerAddress: ''
+      }))
+    } else {
+      // Find selected customer in database
+      const selectedCustomer = customerDatabase.find(c => c.name === customerName)
+      if (selectedCustomer) {
+        // Auto-fill customer details
+        setFormData(prev => ({
+          ...prev,
+          customerName: customerName,
+          customerPerson: selectedCustomer.contact_person || '',
+          customerContact: selectedCustomer.contact_number || '',
+          customerCountryCode: '+91', // Default for Indian customers
+          customerAddress: selectedCustomer.address || ''
+        }))
+      } else {
+        // Customer not found in database
+        setFormData(prev => ({
+          ...prev,
+          customerName: customerName,
+          customerPerson: '',
+          customerContact: '',
+          customerCountryCode: '+91',
+          customerAddress: ''
+        }))
+      }
+    }
+    setIsDirty(true)
+  }
+
+  // Handle end customer selection change
+  const handleEndCustomerChange = (endCustomerName) => {
+    if (endCustomerName === "Other") {
+      // For "Other", reset end customer fields for manual entry
+      setFormData(prev => ({
+        ...prev,
+        endCustomerName: "Other",
+        endCustomerPerson: '',
+        endCustomerContact: '',
+        endCustomerCountryCode: '+91',
+        endCustomerAddress: ''
+      }))
+    } else if (endCustomerName === "Same as Customer") {
+      // Copy customer details to end customer
+      setFormData(prev => ({
+        ...prev,
+        endCustomerName: "Same as Customer",
+        endCustomerPerson: prev.customerPerson,
+        endCustomerContact: prev.customerContact,
+        endCustomerCountryCode: prev.customerCountryCode,
+        endCustomerAddress: prev.customerAddress || ''
+      }))
+    } else if (endCustomerName === "") {
+      // For empty selection, reset everything
+      setFormData(prev => ({
+        ...prev,
+        endCustomerName: "",
+        endCustomerPerson: '',
+        endCustomerContact: '',
+        endCustomerCountryCode: '+91',
+        endCustomerAddress: ''
+      }))
+    } else {
+      // Find selected end customer in database
+      const selectedEndCustomer = customerDatabase.find(c => c.name === endCustomerName)
+      if (selectedEndCustomer) {
+        // Auto-fill end customer details
+        setFormData(prev => ({
+          ...prev,
+          endCustomerName: endCustomerName,
+          endCustomerPerson: selectedEndCustomer.contact_person || '',
+          endCustomerContact: selectedEndCustomer.contact_number || '',
+          endCustomerCountryCode: '+91', // Default for Indian customers
+          endCustomerAddress: selectedEndCustomer.address || ''
+        }))
+      } else {
+        // End customer not found in database
+        setFormData(prev => ({
+          ...prev,
+          endCustomerName: endCustomerName,
+          endCustomerPerson: '',
+          endCustomerContact: '',
+          endCustomerCountryCode: '+91',
+          endCustomerAddress: ''
+        }))
+      }
+    }
+    setIsDirty(true)
+  }
+
+  // Check if field was auto-filled
+  const isAutoFilled = (fieldName, isEndCustomer = false) => {
+    const customerName = isEndCustomer ? formData.endCustomerName : formData.customerName
+    
+    if (!customerName || customerName === "Other" || customerName === "Same as Customer") {
+      return false
+    }
+    
+    const customer = customerDatabase.find(c => c.name === customerName)
+    if (!customer) return false
+    
+    switch(fieldName) {
+      case 'customerPerson':
+      case 'endCustomerPerson':
+        return !!customer.contact_person && 
+          (isEndCustomer ? formData.endCustomerPerson === customer.contact_person : 
+                          formData.customerPerson === customer.contact_person)
+      case 'customerContact':
+      case 'endCustomerContact':
+        return !!customer.contact_number && 
+          (isEndCustomer ? formData.endCustomerContact === customer.contact_number : 
+                          formData.customerContact === customer.contact_number)
+      case 'customerAddress':
+      case 'endCustomerAddress':
+        return !!customer.address && 
+          (isEndCustomer ? formData.endCustomerAddress === customer.address : 
+                          formData.customerAddress === customer.address)
+      default: 
+        return false
+    }
+  }
+
   const endpoint = useMemo(
     () => import.meta.env.VITE_API_URL?.replace('/api/activity', '/api/daily-target') ?? 'http://localhost:5000/api/daily-target',
     []
@@ -165,6 +432,13 @@ function DailyTargetForm() {
     
     fetchLeaveData()
   }, [user, token, endpoint])
+
+  // Fetch customers on component mount
+  useEffect(() => {
+    if (token) {
+      fetchCustomers()
+    }
+  }, [token])
 
   // Load auto-saved data on component mount
   useEffect(() => {
@@ -228,12 +502,16 @@ function DailyTargetForm() {
           momReport: null,
           dailyTargetPlanned: '',
           dailyTargetAchieved: '',
-          additionalActivity: '',
+          additionalActivity: 'No',
+          additionalActivityDetails: '',
           whoAddedActivity: '',
-          dailyPendingTarget: '',
+          dailyPendingTarget: 'No',
+          pendingTargetDetails: '',
           reasonPendingTarget: '',
-          problemFaced: '',
+          problemFaced: 'No',
+          problemDetails: '',
           problemResolved: '',
+          problemResolutionDetails: '',
           onlineSupportRequired: '',
           supportEngineerName: '',
           siteStartDate: '',
@@ -273,11 +551,34 @@ function DailyTargetForm() {
   // Reset leave type when switching from leave to other location types
   useEffect(() => {
     if (formData.locationType !== 'leave' && formData.leaveType) {
-      setFormData(prev => ({ ...prev, leaveType: '' }))
+      setFormData(prev => ({ 
+        ...prev, 
+        leaveType: '',
+        additionalActivity: 'No',
+        additionalActivityDetails: '',
+        whoAddedActivity: '',
+        dailyPendingTarget: 'No',
+        pendingTargetDetails: '',
+        reasonPendingTarget: '',
+        problemFaced: 'No',
+        problemDetails: '',
+        problemResolved: '',
+        problemResolutionDetails: ''
+      }))
       setSelectedLeaveType(null)
       setLeaveAvailability(null)
     }
   }, [formData.locationType])
+
+  // Update selected leave type when leaveType changes
+  useEffect(() => {
+    if (formData.leaveType) {
+      const typeDetails = leaveTypes.find(lt => lt.id === formData.leaveType)
+      setSelectedLeaveType(typeDetails)
+    } else {
+      setSelectedLeaveType(null)
+    }
+  }, [formData.leaveType, leaveTypes])
 
   // Check if a report already exists for the selected date
   const checkExistingReport = async (date, excludeId = null) => {
@@ -584,7 +885,7 @@ function DailyTargetForm() {
     )
   }
 
-  const handleChange = async (event) => {
+  const handleChange = (event) => {
     const { name, value, type, files } = event.target
 
     // Mark form as dirty
@@ -595,114 +896,105 @@ function DailyTargetForm() {
       return
     }
 
+    // Handle customer selection
+    if (name === 'customerName') {
+      handleCustomerChange(value)
+      return
+    }
+
+    // Handle end customer selection
+    if (name === 'endCustomerName') {
+      handleEndCustomerChange(value)
+      return
+    }
+
+    // Handle leave type selection
     if (name === 'leaveType') {
-      setFormData((prev) => ({ ...prev, [name]: value }))
-      
-      // Find selected leave type details
-      const typeDetails = leaveTypes.find(lt => lt.id === value)
-      setSelectedLeaveType(typeDetails)
-      
-      // Reset availability check
-      setLeaveAvailability(null)
-      
+      setFormData(prev => ({ ...prev, [name]: value }))
       return
     }
 
     // Handle country code changes
     if (name === 'customerCountryCode' || name === 'endCustomerCountryCode') {
-      setFormData((prev) => ({ ...prev, [name]: value }))
+      setFormData(prev => ({ ...prev, [name]: value }))
       return
     }
 
-    // Handle contact number changes with validation
-    if (name === 'customerContact' || name === 'endCustomerContact') {
-      const digits = (value ?? '').toString().replace(/\D/g, '')
-      
-      // Validate based on country code
-      const countryCode = name === 'customerContact' 
-        ? formData.customerCountryCode 
-        : formData.endCustomerCountryCode
-      
-      let maxDigits = 10 // Default for most countries
-      
-      // Adjust max digits based on country code
-      switch (countryCode) {
-        case '+91': // India
-          maxDigits = 10
-          break
-        case '+1': // USA/Canada
-          maxDigits = 10
-          break
-        case '+44': // UK
-          maxDigits = 10
-          break
-        case '+971': // UAE
-          maxDigits = 9
-          break
-        case '+966': // Saudi Arabia
-          maxDigits = 9
-          break
-        case '+7': // Russia
-          maxDigits = 10
-          break
-        case '+86': // China
-          maxDigits = 11
-          break
-        case '+81': // Japan
-          maxDigits = 10
-          break
-        default:
-          maxDigits = 15 // Generic max for international numbers
+    // Handle additional activity Yes/No
+    if (name === 'additionalActivity') {
+      if (value === 'No') {
+        setFormData(prev => ({ 
+          ...prev, 
+          [name]: value,
+          additionalActivityDetails: '',
+          whoAddedActivity: ''
+        }))
+      } else {
+        setFormData(prev => ({ ...prev, [name]: value }))
       }
-      
-      const trimmedDigits = digits.substring(0, maxDigits)
-      setFormData((prev) => ({ ...prev, [name]: trimmedDigits }))
       return
     }
 
+    // Handle pending target Yes/No
+    if (name === 'dailyPendingTarget') {
+      if (value === 'No') {
+        setFormData(prev => ({ 
+          ...prev, 
+          [name]: value,
+          pendingTargetDetails: '',
+          reasonPendingTarget: ''
+        }))
+      } else {
+        setFormData(prev => ({ ...prev, [name]: value }))
+      }
+      return
+    }
+
+    // Handle problem faced Yes/No
+    if (name === 'problemFaced') {
+      if (value === 'No') {
+        setFormData(prev => ({ 
+          ...prev, 
+          [name]: value,
+          problemDetails: '',
+          problemResolved: '',
+          problemResolutionDetails: '',
+          onlineSupportRequired: '',
+          supportEngineerName: ''
+        }))
+      } else {
+        setFormData(prev => ({ ...prev, [name]: value }))
+      }
+      return
+    }
+
+    // Handle problem resolved Yes/No
+    if (name === 'problemResolved') {
+      if (value === 'Yes') {
+        setFormData(prev => ({ 
+          ...prev, 
+          [name]: value,
+          problemResolutionDetails: '',
+          onlineSupportRequired: '',
+          supportEngineerName: ''
+        }))
+      } else {
+        setFormData(prev => ({ ...prev, [name]: value }))
+      }
+      return
+    }
+
+    // Handle online support required
     if (name === 'onlineSupportRequired') {
-      const v = value
-      setFormData((prev) => ({
-        ...prev,
-        onlineSupportRequired: v,
-        supportEngineerName: v === 'Yes' ? prev.supportEngineerName : '',
+      setFormData(prev => ({ 
+        ...prev, 
+        [name]: value,
+        supportEngineerName: value === 'Yes' ? prev.supportEngineerName : ''
       }))
       return
     }
 
-    if (name === 'reportDate') {
-      // Check if report already exists for this date
-      if (value) {
-        const existingReport = await checkExistingReport(value, isEditMode ? submittedData?.id : null)
-        
-        if (existingReport) {
-          const reportType = existingReport.locationType === 'leave' 
-            ? `leave (${existingReport.leaveType || 'leave'})` 
-            : `${existingReport.locationType} report`
-          
-          setAlert({ 
-            type: 'error', 
-            message: `You already have a ${reportType} for ${value}. Please edit the existing report instead.` 
-          })
-        } else if (alert?.type === 'error' && alert.message.includes('already have a')) {
-          // Clear the error alert if date changed
-          setAlert(null)
-        }
-      }
-      
-      // Validate leave date when location type is leave and report date changes
-      if (formData.locationType === 'leave' && value) {
-        const validation = await validateLeaveDate(value)
-        if (!validation.valid) {
-          setAlert({ type: 'error', message: validation.message })
-          return
-        }
-        
-        // Reset availability check when date changes
-        setLeaveAvailability(null)
-      }
-    }
-
+    // For all other fields
     setFormData((prev) => ({ ...prev, [name]: value }))
   }
 
@@ -767,11 +1059,15 @@ function DailyTargetForm() {
         dailyTargetPlanned: savedData.dailyTargetPlanned || prev.dailyTargetPlanned,
         dailyTargetAchieved: savedData.dailyTargetAchieved || prev.dailyTargetAchieved,
         additionalActivity: savedData.additionalActivity || prev.additionalActivity,
+        additionalActivityDetails: savedData.additionalActivityDetails || prev.additionalActivityDetails,
         whoAddedActivity: savedData.whoAddedActivity || prev.whoAddedActivity,
         dailyPendingTarget: savedData.dailyPendingTarget || prev.dailyPendingTarget,
+        pendingTargetDetails: savedData.pendingTargetDetails || prev.pendingTargetDetails,
         reasonPendingTarget: savedData.reasonPendingTarget || prev.reasonPendingTarget,
         problemFaced: savedData.problemFaced || prev.problemFaced,
+        problemDetails: savedData.problemDetails || prev.problemDetails,
         problemResolved: savedData.problemResolved || prev.problemResolved,
+        problemResolutionDetails: savedData.problemResolutionDetails || prev.problemResolutionDetails,
         onlineSupportRequired: savedData.onlineSupportRequired || prev.onlineSupportRequired,
         supportEngineerName: savedData.supportEngineerName || prev.supportEngineerName,
         siteStartDate: savedData.siteStartDate || prev.siteStartDate,
@@ -1051,11 +1347,16 @@ function DailyTargetForm() {
         dataToSubmit.projectNo = ''
         dataToSubmit.dailyTargetPlanned = ''
         dataToSubmit.dailyTargetAchieved = ''
-        dataToSubmit.additionalActivity = ''
+        dataToSubmit.additionalActivity = 'No'
+        dataToSubmit.additionalActivityDetails = ''
         dataToSubmit.whoAddedActivity = ''
-        dataToSubmit.dailyPendingTarget = ''
+        dataToSubmit.dailyPendingTarget = 'No'
+        dataToSubmit.pendingTargetDetails = ''
         dataToSubmit.reasonPendingTarget = ''
+        dataToSubmit.problemFaced = 'No'
+        dataToSubmit.problemDetails = ''
         dataToSubmit.problemResolved = ''
+        dataToSubmit.problemResolutionDetails = ''
         dataToSubmit.onlineSupportRequired = ''
         dataToSubmit.supportEngineerName = ''
         dataToSubmit.siteStartDate = ''
@@ -1502,7 +1803,7 @@ function DailyTargetForm() {
             {submittedData.outTime && (
               <div>
                 <strong>Out Time:</strong> {submittedData.outTime}
-            </div>
+              </div>
             )}
             {submittedData.customerName && submittedData.customerName !== 'N/A' && (
               <div>
@@ -1625,14 +1926,53 @@ function DailyTargetForm() {
               {/* Customer Information */}
               <label className="vh-span-2">
                 <span>Customer Name *</span>
-                <input
-                  type="text"
-                  name="customerName"
-                  value={formData.customerName}
-                  onChange={handleChange}
-                  placeholder="Enter customer name"
-                  required={formData.locationType !== 'leave'}
-                />
+                {loadingCustomers ? (
+                  <div style={{ 
+                    padding: '0.75rem', 
+                    background: '#f8f9fa', 
+                    borderRadius: '8px',
+                    border: '1px dashed #dee2e6',
+                    textAlign: 'center',
+                    color: '#6c757d'
+                  }}>
+                    Loading customers...
+                  </div>
+                ) : (
+                  <select
+                    name="customerName"
+                    value={formData.customerName}
+                    onChange={handleChange}
+                    required={formData.locationType !== 'leave'}
+                    style={{ 
+                      backgroundColor: formData.customerName && formData.customerName !== "Other" && isAutoFilled('customerPerson') ? '#f0fff4' : 'white',
+                      borderLeft: formData.customerName && formData.customerName !== "Other" && isAutoFilled('customerPerson') ? '3px solid #38a169' : '1px solid #d5e0f2'
+                    }}
+                  >
+                    <option value="">Select Customer</option>
+                    {customers.map((customerName, index) => (
+                      <option key={index} value={customerName}>
+                        {customerName}
+                      </option>
+                    ))}
+                    <option value="Other">Other (Enter Manually)</option>
+                  </select>
+                )}
+                {formData.customerName === "Other" && (
+                  <input
+                    type="text"
+                    name="customerNameManual"
+                    value={formData.customerNameManual || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, customerNameManual: e.target.value }))}
+                    placeholder="Enter customer name manually"
+                    style={{ marginTop: '0.5rem' }}
+                    required={formData.locationType !== 'leave' && formData.customerName === "Other"}
+                  />
+                )}
+                {formData.customerName && formData.customerName !== "Other" && isAutoFilled('customerPerson') && (
+                  <small style={{ color: '#28a745', display: 'block', marginTop: '0.25rem' }}>
+                    ✓ Customer details auto-filled
+                  </small>
+                )}
               </label>
 
               <label>
@@ -1644,7 +1984,16 @@ function DailyTargetForm() {
                   onChange={handleChange}
                   placeholder="Contact person"
                   required={formData.locationType !== 'leave'}
+                  style={{ 
+                    backgroundColor: isAutoFilled('customerPerson') ? '#f0fff4' : 'white',
+                    borderLeft: isAutoFilled('customerPerson') ? '3px solid #38a169' : '1px solid #d5e0f2'
+                  }}
                 />
+                {isAutoFilled('customerPerson') && (
+                  <small style={{ color: '#28a745', display: 'block', marginTop: '0.25rem' }}>
+                    ✓ Auto-filled from customer database
+                  </small>
+                )}
               </label>
 
               <label style={{ gridColumn: 'span 2' }}>
@@ -1659,7 +2008,8 @@ function DailyTargetForm() {
                       padding: '0.75rem',
                       border: '1px solid #d5e0f2',
                       borderRadius: '8px',
-                      background: 'white'
+                      backgroundColor: isAutoFilled('customerContact') ? '#f0fff4' : 'white',
+                      borderLeft: isAutoFilled('customerContact') ? '3px solid #38a169' : '1px solid #d5e0f2'
                     }}
                     required={formData.locationType !== 'leave'}
                   >
@@ -1675,25 +2025,89 @@ function DailyTargetForm() {
                     value={formData.customerContact}
                     onChange={handleChange}
                     placeholder="Enter phone number"
-                    style={{ flex: 1 }}
+                    style={{ 
+                      flex: 1,
+                      backgroundColor: isAutoFilled('customerContact') ? '#f0fff4' : 'white',
+                      borderLeft: isAutoFilled('customerContact') ? '3px solid #38a169' : '1px solid #d5e0f2'
+                    }}
                     required={formData.locationType !== 'leave'}
                   />
                 </div>
                 <small style={{ color: '#6c757d', display: 'block', marginTop: '0.25rem' }}>
                   Current: {formatPhoneNumber(formData.customerCountryCode, formData.customerContact)}
+                  {isAutoFilled('customerContact') && (
+                    <span style={{ color: '#28a745', marginLeft: '0.5rem' }}>
+                      ✓ Auto-filled
+                    </span>
+                  )}
                 </small>
               </label>
 
+              {/* End Customer Information */}
               <label className="vh-span-2">
                 <span>End Customer Name *</span>
-                <input
-                  type="text"
-                  name="endCustomerName"
-                  value={formData.endCustomerName}
-                  onChange={handleChange}
-                  placeholder="Enter end customer name"
-                  required={formData.locationType !== 'leave'}
-                />
+                {loadingCustomers ? (
+                  <div style={{ 
+                    padding: '0.75rem', 
+                    background: '#f8f9fa', 
+                    borderRadius: '8px',
+                    border: '1px dashed #dee2e6',
+                    textAlign: 'center',
+                    color: '#6c757d'
+                  }}>
+                    Loading customers...
+                  </div>
+                ) : (
+                  <select
+                    name="endCustomerName"
+                    value={formData.endCustomerName}
+                    onChange={handleChange}
+                    required={formData.locationType !== 'leave'}
+                    style={{ 
+                      backgroundColor: formData.endCustomerName && 
+                        formData.endCustomerName !== "Other" && 
+                        formData.endCustomerName !== "Same as Customer" && 
+                        isAutoFilled('endCustomerPerson', true) ? '#f0fff4' : 'white',
+                      borderLeft: formData.endCustomerName && 
+                        formData.endCustomerName !== "Other" && 
+                        formData.endCustomerName !== "Same as Customer" && 
+                        isAutoFilled('endCustomerPerson', true) ? '3px solid #38a169' : '1px solid #d5e0f2'
+                    }}
+                  >
+                    <option value="">Select End Customer (if different)</option>
+                    <option value="Same as Customer">Same as Customer</option>
+                    {customers.map((customerName, index) => (
+                      <option key={`end-${index}`} value={customerName}>
+                        {customerName}
+                      </option>
+                    ))}
+                    <option value="Other">Other (Enter Manually)</option>
+                  </select>
+                )}
+                {formData.endCustomerName === "Other" && (
+                  <input
+                    type="text"
+                    name="endCustomerNameManual"
+                    value={formData.endCustomerNameManual || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, endCustomerNameManual: e.target.value }))}
+                    placeholder="Enter end customer name manually"
+                    style={{ marginTop: '0.5rem' }}
+                    required={formData.locationType !== 'leave' && formData.endCustomerName === "Other"}
+                  />
+                )}
+                {formData.endCustomerName && 
+                  formData.endCustomerName !== "Other" && 
+                  formData.endCustomerName !== "Same as Customer" && 
+                  isAutoFilled('endCustomerPerson', true) && (
+                  <small style={{ color: '#28a745', display: 'block', marginTop: '0.25rem' }}>
+                    ✓ End customer details auto-filled
+                  </small>
+                )}
+                {formData.endCustomerName === "Same as Customer" && (
+                  <small style={{ color: '#17a2b8', display: 'block', marginTop: '0.25rem' }}>
+                    ⚡ Using same details as customer
+                  </small>
+                )}
               </label>
 
               <label>
@@ -1757,29 +2171,61 @@ function DailyTargetForm() {
                 />
               </label>
 
-              <label className="vh-span-2">
-                <span>Daily Target Planned *</span>
-                <textarea
-                  name="dailyTargetPlanned"
-                  value={formData.dailyTargetPlanned}
-                  onChange={handleChange}
-                  placeholder="Describe planned daily targets"
-                  rows="3"
-                  required={formData.locationType !== 'leave'}
-                />
-              </label>
+              {/* Daily Target Information */}
+              <div className="vh-grid">
+                <label className="vh-span-2">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Daily Target Planned</span>
+                    {formData.dailyTargetPlanned && formData.projectNo && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => ({
+                            ...prev,
+                            dailyTargetPlanned: ''
+                          }))
+                        }}
+                        style={{
+                          padding: '0.25rem 0.5rem',
+                          background: 'transparent',
+                          color: '#ff7a7a',
+                          border: '1px solid #ff7a7a',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '0.8rem'
+                        }}
+                      >
+                        Clear auto-filled target
+                      </button>
+                    )}
+                  </div>
+                  <textarea
+                    rows={3}
+                    name="dailyTargetPlanned"
+                    value={formData.dailyTargetPlanned}
+                    onChange={handleChange}
+                    placeholder="Describe what you plan to achieve today..."
+                  />
+                  <small style={{ color: '#6c757d', marginTop: '0.25rem', display: 'block' }}>
+                    Describe your planned activities and targets for the day
+                  </small>
+                </label>
 
-              <label className="vh-span-2">
-                <span>Daily Target Achieved *</span>
-                <textarea
-                  name="dailyTargetAchieved"
-                  value={formData.dailyTargetAchieved}
-                  onChange={handleChange}
-                  placeholder="Describe achieved daily targets"
-                  rows="3"
-                  required={formData.locationType !== 'leave'}
-                />
-              </label>
+                <label className="vh-span-2">
+                  <span>Daily Target Achieved</span>
+                  <textarea
+                    rows={3}
+                    name="dailyTargetAchieved"
+                    value={formData.dailyTargetAchieved}
+                    onChange={handleChange}
+                    placeholder="Describe achieved daily targets"
+                    required={formData.locationType !== 'leave'}
+                  />
+                  <small style={{ color: '#06c167', marginTop: '0.25rem', display: 'block' }}>
+                    Describe what you actually achieved today
+                  </small>
+                </label>
+              </div>
 
               <label>
                 <span>Incharge *</span>
@@ -1983,97 +2429,213 @@ function DailyTargetForm() {
           {/* Additional fields for all location types */}
           {(formData.locationType === 'office' || formData.locationType === 'site') && (
             <>
-              <label className="vh-span-2">
-                <span>Additional Activity (if any)</span>
-                <textarea
-                  name="additionalActivity"
-                  value={formData.additionalActivity}
-                  onChange={handleChange}
-                  placeholder="Describe any additional activities"
-                  rows="2"
-                />
-              </label>
+              {/* Additional Activity Section */}
+              <div className="vh-span-2" style={{
+                padding: '1rem',
+                background: '#f8f9fa',
+                border: '1px solid #dee2e6',
+                borderRadius: '8px',
+                marginBottom: '1rem'
+              }}>
+                <h4 style={{ marginTop: 0, marginBottom: '1rem', color: '#092544' }}>Additional Activity</h4>
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <label>
+                    <span>Any additional activity? *</span>
+                    <select
+                      name="additionalActivity"
+                      value={formData.additionalActivity}
+                      onChange={handleChange}
+                    >
+                      <option value="No">No</option>
+                      <option value="Yes">Yes</option>
+                    </select>
+                  </label>
+                </div>
+                
+                {formData.additionalActivity === 'Yes' && (
+                  <>
+                    <label style={{ gridColumn: 'span 2', marginBottom: '1rem' }}>
+                      <span>Additional Activity Details *</span>
+                      <textarea
+                        name="additionalActivityDetails"
+                        value={formData.additionalActivityDetails}
+                        onChange={handleChange}
+                        placeholder="Describe the additional activity..."
+                        rows="2"
+                        required={formData.additionalActivity === 'Yes'}
+                      />
+                    </label>
+                    
+                    <label style={{ marginBottom: '1rem' }}>
+                      <span>Who Added Activity *</span>
+                      <input
+                        type="text"
+                        name="whoAddedActivity"
+                        value={formData.whoAddedActivity}
+                        onChange={handleChange}
+                        placeholder="Name of person who added activity"
+                        required={formData.additionalActivity === 'Yes'}
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
 
-              <label>
-                <span>Who Added Activity</span>
-                <input
-                  type="text"
-                  name="whoAddedActivity"
-                  value={formData.whoAddedActivity}
-                  onChange={handleChange}
-                  placeholder="Name of person who added activity"
-                />
-              </label>
+              {/* Daily Pending Target Section */}
+              <div className="vh-span-2" style={{
+                padding: '1rem',
+                background: '#f8f9fa',
+                border: '1px solid #dee2e6',
+                borderRadius: '8px',
+                marginBottom: '1rem'
+              }}>
+                <h4 style={{ marginTop: 0, marginBottom: '1rem', color: '#092544' }}>Daily Pending Target</h4>
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <label>
+                    <span>Any pending target for next day? *</span>
+                    <select
+                      name="dailyPendingTarget"
+                      value={formData.dailyPendingTarget}
+                      onChange={handleChange}
+                    >
+                      <option value="No">No</option>
+                      <option value="Yes">Yes</option>
+                    </select>
+                  </label>
+                </div>
+                
+                {formData.dailyPendingTarget === 'Yes' && (
+                  <>
+                    <label style={{ gridColumn: 'span 2', marginBottom: '1rem' }}>
+                      <span>Pending Target Details *</span>
+                      <textarea
+                        name="pendingTargetDetails"
+                        value={formData.pendingTargetDetails}
+                        onChange={handleChange}
+                        placeholder="Describe pending targets for next day..."
+                        rows="2"
+                        required={formData.dailyPendingTarget === 'Yes'}
+                      />
+                    </label>
+                    
+                    <label style={{ gridColumn: 'span 2', marginBottom: '1rem' }}>
+                      <span>Reason for Pending Target *</span>
+                      <textarea
+                        name="reasonPendingTarget"
+                        value={formData.reasonPendingTarget}
+                        onChange={handleChange}
+                        placeholder="Explain why targets are pending..."
+                        rows="2"
+                        required={formData.dailyPendingTarget === 'Yes'}
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
 
-              <label className="vh-span-2">
-                <span>Daily Pending Target</span>
-                <textarea
-                  name="dailyPendingTarget"
-                  value={formData.dailyPendingTarget}
-                  onChange={handleChange}
-                  placeholder="Describe pending targets for next day"
-                  rows="2"
-                />
-              </label>
-
-              <label className="vh-span-2">
-                <span>Reason for Pending Target</span>
-                <textarea
-                  name="reasonPendingTarget"
-                  value={formData.reasonPendingTarget}
-                  onChange={handleChange}
-                  placeholder="Explain why targets are pending"
-                  rows="2"
-                />
-              </label>
-
-              <label className="vh-span-2">
-                <span>Problem Faced (if any)</span>
-                <textarea
-                  name="problemFaced"
-                  value={formData.problemFaced}
-                  onChange={handleChange}
-                  placeholder="Describe any problems faced"
-                  rows="2"
-                />
-              </label>
-
-              <label className="vh-span-2">
-                <span>Problem Resolved (if any)</span>
-                <textarea
-                  name="problemResolved"
-                  value={formData.problemResolved}
-                  onChange={handleChange}
-                  placeholder="Describe how problems were resolved"
-                  rows="2"
-                />
-              </label>
-
-              <label>
-                <span>Online Support Required</span>
-                <select
-                  name="onlineSupportRequired"
-                  value={formData.onlineSupportRequired}
-                  onChange={handleChange}
-                >
-                  <option value="">Select</option>
-                  <option value="Yes">Yes</option>
-                  <option value="No">No</option>
-                </select>
-              </label>
-
-              {formData.onlineSupportRequired === 'Yes' && (
-                <label>
-                  <span>Support Engineer Name</span>
-                  <input
-                    type="text"
-                    name="supportEngineerName"
-                    value={formData.supportEngineerName}
-                    onChange={handleChange}
-                    placeholder="Name of support engineer"
-                  />
-                </label>
-              )}
+              {/* Problem Faced Section */}
+              <div className="vh-span-2" style={{
+                padding: '1rem',
+                background: '#f8f9fa',
+                border: '1px solid #dee2e6',
+                borderRadius: '8px',
+                marginBottom: '1rem'
+              }}>
+                <h4 style={{ marginTop: 0, marginBottom: '1rem', color: '#092544' }}>Problem Faced</h4>
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <label>
+                    <span>Did you face any problem? *</span>
+                    <select
+                      name="problemFaced"
+                      value={formData.problemFaced}
+                      onChange={handleChange}
+                    >
+                      <option value="No">No</option>
+                      <option value="Yes">Yes</option>
+                    </select>
+                  </label>
+                </div>
+                
+                {formData.problemFaced === 'Yes' && (
+                  <>
+                    <label style={{ gridColumn: 'span 2', marginBottom: '1rem' }}>
+                      <span>Problem Details *</span>
+                      <textarea
+                        name="problemDetails"
+                        value={formData.problemDetails}
+                        onChange={handleChange}
+                        placeholder="Describe the problem faced..."
+                        rows="2"
+                        required={formData.problemFaced === 'Yes'}
+                      />
+                    </label>
+                    
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label>
+                        <span>Problem Resolved? *</span>
+                        <select
+                          name="problemResolved"
+                          value={formData.problemResolved}
+                          onChange={handleChange}
+                          required={formData.problemFaced === 'Yes'}
+                        >
+                          <option value="">Select</option>
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                      </label>
+                    </div>
+                    
+                    {formData.problemResolved === 'Yes' && (
+                      <label style={{ gridColumn: 'span 2', marginBottom: '1rem' }}>
+                        <span>Problem Resolution Details</span>
+                        <textarea
+                          name="problemResolutionDetails"
+                          value={formData.problemResolutionDetails}
+                          onChange={handleChange}
+                          placeholder="Describe how the problem was resolved..."
+                          rows="2"
+                        />
+                      </label>
+                    )}
+                    
+                    {formData.problemResolved === 'No' && (
+                      <>
+                        <label style={{ marginBottom: '1rem' }}>
+                          <span>Online Support Required? *</span>
+                          <select
+                            name="onlineSupportRequired"
+                            value={formData.onlineSupportRequired}
+                            onChange={handleChange}
+                            required={formData.problemResolved === 'No'}
+                          >
+                            <option value="">Select</option>
+                            <option value="Yes">Yes</option>
+                            <option value="No">No</option>
+                          </select>
+                        </label>
+                        
+                        {formData.onlineSupportRequired === 'Yes' && (
+                          <label style={{ marginBottom: '1rem' }}>
+                            <span>Support Engineer Name *</span>
+                            <input
+                              type="text"
+                              name="supportEngineerName"
+                              value={formData.supportEngineerName}
+                              onChange={handleChange}
+                              placeholder="Name of support engineer"
+                              required={formData.onlineSupportRequired === 'Yes'}
+                            />
+                          </label>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
 
               <label>
                 <span>Site End Date</span>

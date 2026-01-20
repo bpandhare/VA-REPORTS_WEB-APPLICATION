@@ -194,6 +194,58 @@ const mockApi = {
     });
   },
   
+  getProjectDetails: (projectId) => {
+    console.log(`🛠️ Using MOCK API for getProjectDetails: ${projectId}`);
+    
+    const project = mockProjects.find(p => p.id === parseInt(projectId));
+    
+    if (!project) {
+      return Promise.resolve({
+        data: {
+          success: false,
+          message: 'Project not found'
+        }
+      });
+    }
+    
+    // Enhanced mock project details with all the fields
+    const projectDetails = {
+      ...project,
+      customer_person: project.customer_person || 'John Manager',
+      customer_contact: project.customer_contact || '+91-9876543210',
+      end_customer: project.end_customer || 'XYZ Industries',
+      end_customer_person: project.end_customer_person || 'Jane Director',
+      end_customer_contact: project.end_customer_contact || '+91-9876543211',
+      incharge: project.incharge || 'Project Manager',
+      assigned_employee: project.assigned_employee || 'EMP001 - John Doe',
+      site_location: project.site_location || 'Mumbai Office',
+      project_no: project.project_no || `PROJ-${project.id}`,
+      created_by_name: 'Admin User',
+      collaborators_count: project.collaborators_count || 0
+    };
+    
+    return Promise.resolve({
+      data: {
+        success: true,
+        project: projectDetails,
+        collaborators: [
+          {
+            id: 1,
+            username: 'john.doe',
+            employee_id: 'EMP001',
+            role: 'Developer'
+          },
+          {
+            id: 2,
+            username: 'jane.smith',
+            employee_id: 'EMP002',
+            role: 'Designer'
+          }
+        ]
+      }
+    });
+  },
+  
   updateProject: (projectId, data) => {
     console.log(`🛠️ Using MOCK API to update project ${projectId}:`, data);
     
@@ -584,6 +636,19 @@ export const listProjects = async () => {
   } catch (error) {
     console.warn('❌ Real API failed, using mock');
     return mockApi.listProjects();
+  }
+};
+
+// NEW: Get single project details
+export const getProjectDetails = async (projectId) => {
+  console.log(`📋 Attempting to get project details for ID: ${projectId}`);
+  
+  try {
+    const response = await api.get(`/api/projects/${projectId}`);
+    return response;
+  } catch (error) {
+    console.warn('❌ Real API failed for project details, using mock');
+    return mockApi.getProjectDetails(projectId);
   }
 };
 
@@ -1265,5 +1330,7 @@ export const quickServerTest = async () => {
   }
 };
 
+// Remove collaborator (alias for deleteCollaborator)
+export const removeCollaborator = deleteCollaborator;
 
 export default api;

@@ -506,3 +506,71 @@
   50% { opacity: 1; }
   100% { opacity: 0.8; }
 }
+/* Add these styles to your existing Sidebar.css */
+
+/* Manager tag in user info */
+.manager-tag {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 0.1rem 0.5rem;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  margin-left: 0.5rem;
+  font-weight: 600;
+  display: inline-block;
+}
+
+/* New tag styling for Manager Dashboard */
+.btn-tag.new {
+  background: #ff7a7a;
+  color: white;
+  padding: 0.1rem 0.5rem;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  margin-left: 0.5rem;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Pending badge for leave approval */
+.pending-badge {
+  background: #ff7a7a;
+  color: white;
+  font-size: 0.8rem;
+  font-weight: bold;
+  padding: 0.1rem 0.5rem;
+  border-radius: 10px;
+  margin-left: 0.5rem;
+  animation: pulse 1.5s infinite;
+}
+
+/* Manager dashboard button specific styling */
+.nav-btn.active[data-page="manager-dashboard"] {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-color: #764ba2;
+}
+
+.nav-btn.active[data-page="manager-dashboard"] .btn-icon {
+  color: white;
+}
+
+.nav-btn.active[data-page="manager-dashboard"] .btn-text {
+  color: white;
+}
+
+.nav-btn.active[data-page="manager-dashboard"] .btn-tag {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}

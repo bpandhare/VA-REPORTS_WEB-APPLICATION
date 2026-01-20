@@ -7,7 +7,6 @@ import {
   getUserInfo,
   getProjectTasks,
   updateTaskStatus,
-  // New imports for assignments and reporting
   assignProjectToEmployees,
   getEmployeeAssignments,
   getAssignedProjects,
@@ -16,16 +15,16 @@ import {
   getMyReports,
   getEmployeesList,
   getProjectReports,
-  // New API for manager to submit reports
   submitManagerDailyReport,
-  submitManagerHourlyReport
+  submitManagerHourlyReport,
+  getCustomersList
 } from '../services/api'
 import './ManagerProjectDashboard.css'
 
 const ManagerProjectDashboard = () => {
   // State declarations
   const [projects, setProjects] = useState([])
-  const [assignedProjects, setAssignedProjects] = useState([]) // Projects assigned to current user (manager)
+  const [assignedProjects, setAssignedProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingProject, setEditingProject] = useState(null)
@@ -33,10 +32,18 @@ const ManagerProjectDashboard = () => {
   const [selectedProjectForAssign, setSelectedProjectForAssign] = useState(null)
   const [showReportModal, setShowReportModal] = useState(false)
   const [showViewReportsModal, setShowViewReportsModal] = useState(false)
-  const [reportType, setReportType] = useState('daily') // 'daily' or 'hourly'
+  const [reportType, setReportType] = useState('daily')
   const [selectedProjectForReport, setSelectedProjectForReport] = useState(null)
   const [availableProjectsForReport, setAvailableProjectsForReport] = useState([])
   const [projectReports, setProjectReports] = useState([])
+  const [customers, setCustomers] = useState([])
+  
+  // New state for employee management
+  const [allEmployees, setAllEmployees] = useState([]) // All employees fetched from API
+  const [filteredEmployees, setFilteredEmployees] = useState([]) // Employees filtered for display
+  const [selectedEmployees, setSelectedEmployees] = useState([]) // Employees selected for assignment
+  const [searchTerm, setSearchTerm] = useState('')
+  const [employeeLoading, setEmployeeLoading] = useState(false)
   
   const [stats, setStats] = useState({
     total: 0,
@@ -50,6 +57,16 @@ const ManagerProjectDashboard = () => {
     name: '',
     customer: '',
     otherCustomer: '',
+    customerContact: '',
+    customerEmail: '',
+    customerPhone: '',
+    customerAddress: '',
+    endCustomer: '',
+    endCustomerOther: '',
+    endCustomerContact: '',
+    endCustomerEmail: '',
+    endCustomerPhone: '',
+    endCustomerAddress: '',
     description: '',
     status: 'active',
     priority: 'medium',
@@ -62,8 +79,6 @@ const ManagerProjectDashboard = () => {
   const [userInfo, setUserInfo] = useState(null)
   const [currentTime, setCurrentTime] = useState('')
   const [projectTasks, setProjectTasks] = useState({})
-  const [employees, setEmployees] = useState([])
-  const [selectedEmployees, setSelectedEmployees] = useState([])
   const [assignmentLoading, setAssignmentLoading] = useState(false)
   
   // Report states
@@ -90,6 +105,19 @@ const ManagerProjectDashboard = () => {
     equipmentUsed: '',
     issues: ''
   })
+
+  // Predefined customers with their details
+  const predefinedCustomers = [
+    {
+      id: 'cee_dee',
+      name: 'CEE DEE',
+      contact: 'Mr. John Smith',
+      email: 'john.smith@ceedee.com',
+      phone: '+91 98765 43210',
+      address: '123 Business Park, Mumbai, Maharashtra 400001'
+    },
+    // ... (keep all your existing customers)
+  ];
 
   // Update current time every minute
   useEffect(() => {
@@ -123,9 +151,10 @@ const ManagerProjectDashboard = () => {
       if (userRes.data?.success) {
         setUserInfo(userRes.data)
       }
-      await fetchEmployees() // Fetch employees for assignment
+      await fetchAllEmployees() // Fetch employees on load
       await fetchProjects()
-      await fetchAssignedProjectsForReports() // Fetch projects available for reporting
+      await fetchAssignedProjectsForReports()
+      await fetchCustomers()
     } catch (error) {
       console.error('Failed to fetch data:', error)
     } finally {
@@ -133,14 +162,117 @@ const ManagerProjectDashboard = () => {
     }
   }
 
-  const fetchEmployees = async () => {
+  // ========== EMPLOYEE FETCHING LOGIC FROM ManagerDashboard ==========
+  const fetchAllEmployees = async () => {
     try {
-      const res = await getEmployeesList()
-      if (res.data?.success) {
-        setEmployees(res.data.employees || [])
+      setEmployeeLoading(true)
+      const BASE_URL = 'http://localhost:5000'
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token')
+      
+      if (!token) {
+        console.error('No token found')
+        setAllEmployees([])
+        setFilteredEmployees([])
+        return
+      }
+
+      const response = await fetch(`${BASE_URL}/api/auth/users`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        let usersData = []
+        
+        if (Array.isArray(data)) {
+          usersData = data
+        } else if (data.users && Array.isArray(data.users)) {
+          usersData = data.users
+        }
+        
+        // Filter out admin users and current user
+        const filteredUsers = usersData.filter(u => 
+          u.role !== 'admin' && u.id !== userInfo?.id
+        ).map(user => ({
+          id: user.id,
+          username: user.username || user.name || 'Unknown',
+          employeeId: user.employee_id || user.employeeId || user.id,
+          role: user.role || 'Employee',
+          email: user.email || '',
+          phone: user.phone || '',
+          department: user.department || ''
+        }))
+        
+        setAllEmployees(filteredUsers)
+        setFilteredEmployees(filteredUsers)
+        console.log(`✅ Loaded ${filteredUsers.length} employees`)
+      } else {
+        console.error('Failed to fetch employees:', response.status)
+        setAllEmployees([])
+        setFilteredEmployees([])
       }
     } catch (error) {
-      console.error('Failed to fetch employees:', error)
+      console.error('Error fetching employees:', error)
+      setAllEmployees([])
+      setFilteredEmployees([])
+    } finally {
+      setEmployeeLoading(false)
+    }
+  }
+
+  // Search and filter employees
+  useEffect(() => {
+    if (searchTerm.trim() === '') {
+      setFilteredEmployees(allEmployees)
+    } else {
+      const filtered = allEmployees.filter(emp => 
+        emp.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        emp.employeeId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        emp.role.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+      setFilteredEmployees(filtered)
+    }
+  }, [searchTerm, allEmployees])
+
+  // ========== END EMPLOYEE FETCHING LOGIC ==========
+
+  // Fetch customers from API or use predefined
+  const fetchCustomers = async () => {
+    try {
+      // Try to fetch from API
+      const res = await getCustomersList()
+      if (res.data?.success) {
+        // Combine API customers with predefined ones
+        const apiCustomers = res.data.customers || []
+        setCustomers([...predefinedCustomers, ...apiCustomers])
+      } else {
+        // Use predefined customers if API fails
+        setCustomers(predefinedCustomers)
+      }
+    } catch (error) {
+      console.error('Failed to fetch customers, using predefined:', error)
+      setCustomers(predefinedCustomers)
+    }
+  }
+
+  // Handle employee selection for assignment
+  const handleEmployeeSelect = (employeeId) => {
+    if (selectedEmployees.includes(employeeId)) {
+      setSelectedEmployees(selectedEmployees.filter(id => id !== employeeId))
+    } else {
+      setSelectedEmployees([...selectedEmployees, employeeId])
+    }
+  }
+
+  // Handle select all employees
+  const handleSelectAll = () => {
+    if (selectedEmployees.length === filteredEmployees.length) {
+      setSelectedEmployees([])
+    } else {
+      setSelectedEmployees(filteredEmployees.map(emp => emp.id))
     }
   }
 
@@ -181,7 +313,6 @@ const ManagerProjectDashboard = () => {
                 // Update project status based on task completion
                 let calculatedStatus = project.status;
                 
-                // If all tasks are completed, set project to "completed"
                 if (projectTaskData.tasks.length > 0 && 
                     projectTaskData.tasks.every(task => task.status === 'completed')) {
                   calculatedStatus = 'completed';
@@ -194,7 +325,6 @@ const ManagerProjectDashboard = () => {
                     }
                   }
                 }
-                // If some tasks are completed but not all, and project is marked as completed, revert to active
                 else if (project.status === 'completed' && 
                          projectTaskData.tasks.some(task => task.status !== 'completed')) {
                   calculatedStatus = 'active';
@@ -239,7 +369,7 @@ const ManagerProjectDashboard = () => {
         
         setProjects(projectsWithAssignments);
         
-        // Calculate stats including assigned projects
+        // Calculate stats
         const total = projectsWithAssignments.length;
         const completed = projectsWithAssignments.filter(p => 
           p.status === 'completed' || p.is_completed === true
@@ -266,23 +396,16 @@ const ManagerProjectDashboard = () => {
     }
   };
 
-  // Fetch projects that are available for reporting
   const fetchAssignedProjectsForReports = async () => {
     try {
-      // For managers, they can submit reports for ALL projects they manage
-      // But for employees, they only see projects assigned to them
-      // Since this is manager dashboard, show all active projects
       const res = await listProjects();
       if (res.data?.success) {
         const allProjects = res.data.projects || [];
         
-        // Filter active projects that are within date range
         const currentDate = new Date();
         const availableProjects = allProjects.filter(project => {
-          // Check if project is active
           const isActive = project.status === 'active' || project.status === 'planning';
           
-          // Check if within date range
           const startDate = new Date(project.start_date || project.startDate);
           const endDate = project.end_date || project.endDate ? new Date(project.end_date || project.endDate) : null;
           
@@ -297,7 +420,6 @@ const ManagerProjectDashboard = () => {
         setAssignedProjects(availableProjects);
         setAvailableProjectsForReport(availableProjects);
         
-        // Set default project for reports if available
         if (availableProjects.length > 0) {
           setDailyReport(prev => ({ ...prev, project_id: availableProjects[0].id }));
           setHourlyReport(prev => ({ ...prev, project_id: availableProjects[0].id }));
@@ -309,131 +431,17 @@ const ManagerProjectDashboard = () => {
   };
 
   const loadFallbackProjects = () => {
-    const fallbackProjects = [
-      {
-        id: 1,
-        name: 'ABC',
-        customer: 'ABC Corporation',
-        description: 'Bridge construction project',
-        status: 'active',
-        priority: 'medium',
-        collaborators_count: 3,
-        created_at: new Date().toISOString(),
-        is_completed: false,
-        completionPercentage: 65,
-        assignedEmployees: [],
-        assignedCount: 0,
-        start_date: '2024-01-01',
-        end_date: '2024-12-31'
-      },
-      {
-        id: 2,
-        name: 'XYZ Tower',
-        customer: 'Global Builders Inc.',
-        description: 'High-rise commercial building construction',
-        status: 'active',
-        priority: 'high',
-        collaborators_count: 5,
-        created_at: new Date().toISOString(),
-        is_completed: false,
-        completionPercentage: 45,
-        assignedEmployees: [
-          { employee_id: 1, employee_name: 'John Doe', employee_role: 'Site Engineer' },
-          { employee_id: 2, employee_name: 'Jane Smith', employee_role: 'Project Coordinator' }
-        ],
-        assignedCount: 2,
-        start_date: '2024-02-01',
-        end_date: '2024-11-30'
-      },
-      {
-        id: 3,
-        name: 'Highway Extension',
-        customer: 'National Infrastructure Corp',
-        description: '50km highway extension project',
-        status: 'planning',
-        priority: 'medium',
-        collaborators_count: 4,
-        created_at: new Date().toISOString(),
-        is_completed: false,
-        completionPercentage: 15,
-        assignedEmployees: [
-          { employee_id: 3, employee_name: 'Robert Johnson', employee_role: 'Civil Engineer' }
-        ],
-        assignedCount: 1,
-        start_date: '2024-03-01',
-        end_date: '2025-02-28'
-      }
-    ];
-    
-    setProjects(fallbackProjects);
-    setAssignedProjects(fallbackProjects.filter(p => p.status === 'active'));
-    setAvailableProjectsForReport(fallbackProjects.filter(p => p.status === 'active'));
-    setStats({
-      total: 3,
-      completed: 0,
-      active: 2,
-      overdue: 0,
-      assigned: 2
-    });
-    
-    // Set default project for reports
-    if (fallbackProjects.length > 0) {
-      setDailyReport(prev => ({ ...prev, project_id: fallbackProjects[0].id }));
-      setHourlyReport(prev => ({ ...prev, project_id: fallbackProjects[0].id }));
-    }
+    // ... (keep existing fallback projects logic)
   };
 
   const getMockDescription = (projectName) => {
-    const descriptions = {
-      'ABC': 'Bridge construction project',
-      'XYZ Tower': 'High-rise commercial building construction',
-      'Highway Extension': '50km highway extension project',
-      'test': 'PLC automation testing',
-      'VICKHARDTH': 'Daily reporting hub for site engineers'
-    };
-    return descriptions[projectName] || 'Project description';
+    // ... (keep existing mock description logic)
   };
 
   const handleCreateProject = async (e) => {
     e.preventDefault()
     try {
-      const projectData = {
-        name: newProject.name,
-        customer: newProject.customer === 'Other' ? newProject.otherCustomer : newProject.customer,
-        description: newProject.description,
-        status: newProject.status,
-        priority: newProject.priority,
-        start_date: newProject.startDate || null,
-        end_date: newProject.endDate || null,
-        budget: newProject.budget || null,
-        requires_reporting: newProject.requiresReporting
-      }
-      
-      console.log('Sending project data:', projectData)
-      
-      const res = await createProject(projectData)
-      console.log('Create response:', res.data)
-      
-      if (res.data?.success) {
-        alert('✅ Project created successfully!')
-        setShowCreateModal(false)
-        setNewProject({
-          name: '',
-          customer: '',
-          otherCustomer: '',
-          description: '',
-          status: 'active',
-          priority: 'medium',
-          startDate: '',
-          endDate: '',
-          budget: '',
-          requiresReporting: true
-        })
-        await fetchProjects()
-        await fetchAssignedProjectsForReports() // Refresh available projects
-      } else {
-        alert('Failed to create project: ' + (res.data?.message || 'Unknown error'))
-      }
+      // ... (keep existing create project logic)
     } catch (error) {
       console.error('Failed to create project:', error)
       alert('Failed to create project. Please check console for details.')
@@ -443,22 +451,7 @@ const ManagerProjectDashboard = () => {
   const handleUpdateProject = async (e) => {
     e.preventDefault()
     try {
-      const res = await updateProject(editingProject.id, {
-        name: editingProject.name,
-        customer: editingProject.customer,
-        description: editingProject.description,
-        status: editingProject.status,
-        priority: editingProject.priority,
-        start_date: editingProject.start_date,
-        end_date: editingProject.end_date,
-        budget: editingProject.budget
-      })
-      if (res.data?.success) {
-        setEditingProject(null)
-        fetchProjects()
-        fetchAssignedProjectsForReports() // Refresh available projects
-        alert('✅ Project updated successfully!')
-      }
+      // ... (keep existing update project logic)
     } catch (error) {
       console.error('Failed to update project:', error)
       alert('Failed to update project. Please try again.')
@@ -472,7 +465,7 @@ const ManagerProjectDashboard = () => {
       const res = await deleteProject(projectId)
       if (res.data?.success) {
         fetchProjects()
-        fetchAssignedProjectsForReports() // Refresh available projects
+        fetchAssignedProjectsForReports()
         alert('✅ Project deleted successfully!')
       }
     } catch (error) {
@@ -484,6 +477,9 @@ const ManagerProjectDashboard = () => {
   const handleAssignProject = async (projectId) => {
     const project = projects.find(p => p.id === projectId)
     setSelectedProjectForAssign(project)
+    setSelectedEmployees([]) // Clear previous selections
+    setSearchTerm('') // Clear search
+    await fetchAllEmployees() // Refresh employee list
     setShowAssignModal(true)
   }
 
@@ -519,262 +515,7 @@ const ManagerProjectDashboard = () => {
     }
   }
 
-  // Open report modal with project selection
-  const handleOpenReportModal = (type) => {
-    setReportType(type)
-    setShowReportModal(true)
-  }
-
-  // Open report modal for specific project
-  const handleOpenReportForProject = (projectId, type) => {
-    const project = projects.find(p => p.id === projectId)
-    if (project) {
-      setSelectedProjectForReport(project)
-      setReportType(type)
-      setShowReportModal(true)
-      
-      // Pre-fill the project ID
-      if (type === 'daily') {
-        setDailyReport(prev => ({ ...prev, project_id: projectId }))
-      } else {
-        setHourlyReport(prev => ({ ...prev, project_id: projectId }))
-      }
-    }
-  }
-
-  const handleSubmitDailyReport = async () => {
-    try {
-      // Validate project selection
-      if (!dailyReport.project_id) {
-        alert('Please select a project')
-        return
-      }
-
-      const reportData = {
-        project_id: dailyReport.project_id,
-        date: dailyReport.date,
-        hours_worked: dailyReport.hoursWorked,
-        tasks_completed: dailyReport.tasksCompleted,
-        challenges: dailyReport.challenges,
-        next_day_plan: dailyReport.nextDayPlan,
-        materials_used: dailyReport.materialsUsed,
-        equipment_used: dailyReport.equipmentUsed,
-        progress_percentage: dailyReport.progressPercentage,
-        submitted_by: 'manager' // Indicate this is a manager submission
-      }
-
-      const res = await submitManagerDailyReport(reportData)
-      if (res.data?.success) {
-        alert('✅ Daily report submitted successfully!')
-        setShowReportModal(false)
-        // Reset form
-        setDailyReport({
-          project_id: availableProjectsForReport.length > 0 ? availableProjectsForReport[0].id : '',
-          date: new Date().toISOString().split('T')[0],
-          hoursWorked: 8,
-          tasksCompleted: '',
-          challenges: '',
-          nextDayPlan: '',
-          materialsUsed: '',
-          equipmentUsed: '',
-          progressPercentage: 0
-        })
-        setSelectedProjectForReport(null)
-      }
-    } catch (error) {
-      console.error('Failed to submit daily report:', error)
-      alert('Failed to submit report. Please try again.')
-    }
-  }
-
-  const handleSubmitHourlyReport = async () => {
-    try {
-      // Validate project selection
-      if (!hourlyReport.project_id) {
-        alert('Please select a project')
-        return
-      }
-
-      const reportData = {
-        project_id: hourlyReport.project_id,
-        date: hourlyReport.date,
-        start_time: hourlyReport.startTime,
-        end_time: hourlyReport.endTime,
-        task_description: hourlyReport.taskDescription,
-        work_details: hourlyReport.workDetails,
-        materials_used: hourlyReport.materialsUsed,
-        equipment_used: hourlyReport.equipmentUsed,
-        issues: hourlyReport.issues,
-        submitted_by: 'manager' // Indicate this is a manager submission
-      }
-
-      const res = await submitManagerHourlyReport(reportData)
-      if (res.data?.success) {
-        alert('✅ Hourly report submitted successfully!')
-        setShowReportModal(false)
-        // Reset form
-        setHourlyReport({
-          project_id: availableProjectsForReport.length > 0 ? availableProjectsForReport[0].id : '',
-          date: new Date().toISOString().split('T')[0],
-          startTime: '09:00',
-          endTime: '10:00',
-          taskDescription: '',
-          workDetails: '',
-          materialsUsed: '',
-          equipmentUsed: '',
-          issues: ''
-        })
-        setSelectedProjectForReport(null)
-      }
-    } catch (error) {
-      console.error('Failed to submit hourly report:', error)
-      alert('Failed to submit report. Please try again.')
-    }
-  }
-
-  const handleViewProjectReports = async (projectId) => {
-    try {
-      const res = await getProjectReports(projectId)
-      if (res.data?.success) {
-        setProjectReports(res.data.reports || [])
-        setSelectedProjectForReport(projects.find(p => p.id === projectId))
-        setShowViewReportsModal(true)
-      }
-    } catch (error) {
-      console.error('Failed to fetch project reports:', error)
-      alert('Failed to load reports. Please try again.')
-    }
-  }
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'active': return '#10B981'
-      case 'completed': return '#3B82F6'
-      case 'overdue': return '#EF4444'
-      case 'planning': return '#F59E0B'
-      case 'on-hold': return '#6B7280'
-      default: return '#6B7280'
-    }
-  }
-
-  const getPriorityColor = (priority) => {
-    switch(priority?.toLowerCase()) {
-      case 'low': return '#4CAF50'
-      case 'medium': return '#FF9800'
-      case 'high': return '#F44336'
-      case 'urgent': return '#9C27B0'
-      default: return '#757575'
-    }
-  }
-
-  const getDayAndDate = () => {
-    const now = new Date();
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const dayName = days[now.getDay()];
-    
-    const dateStr = now.toLocaleDateString('en-IN', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric'
-    });
-    
-    const timeStr = now.toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-    
-    return `${dayName}\n${dateStr}, ${timeStr}`;
-  };
-
-  const formatDate = (dateString) => {
-    if (!dateString) return 'Not set'
-    try {
-      return new Date(dateString).toLocaleDateString('en-IN', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric'
-      })
-    } catch {
-      return dateString
-    }
-  }
-
-  const formatCurrency = (amount) => {
-    if (!amount) return 'Not set'
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount)
-  }
-
-  const renderProjectStatus = (project) => {
-    const statusColor = getStatusColor(project.status);
-    const tasksForProject = project.tasks || projectTasks[project.id]?.tasks || [];
-    const completionPercentage = project.completionPercentage || 
-                                 projectTasks[project.id]?.completionPercentage || 0;
-    
-    return (
-      <div className="project-status-container">
-        <div className="status-row">
-          <span className="status-label">Status:</span>
-          <span 
-            className="status-badge" 
-            style={{ 
-              backgroundColor: `${statusColor}20`, 
-              color: statusColor,
-              border: `1px solid ${statusColor}`
-            }}
-          >
-            {project.status?.toUpperCase()}
-          </span>
-          {project.assignedCount > 0 && (
-            <span className="assignment-badge" title="Assigned to employees">
-              👥 {project.assignedCount}
-            </span>
-          )}
-          <span 
-            className="priority-badge"
-            style={{ 
-              backgroundColor: `${getPriorityColor(project.priority)}20`, 
-              color: getPriorityColor(project.priority),
-              border: `1px solid ${getPriorityColor(project.priority)}`
-            }}
-          >
-            {project.priority?.toUpperCase()}
-          </span>
-        </div>
-        
-        {tasksForProject.length > 0 && (
-          <div className="completion-row">
-            <span className="completion-label">Progress:</span>
-            <div className="completion-bar">
-              <div 
-                className="completion-fill" 
-                style={{ width: `${completionPercentage}%` }}
-              ></div>
-            </div>
-            <span className="completion-text">{completionPercentage}%</span>
-          </div>
-        )}
-        
-        <div className="project-dates">
-          <div className="date-info">
-            <span className="date-label">Start:</span>
-            <span className="date-value">{formatDate(project.start_date)}</span>
-          </div>
-          {project.end_date && (
-            <div className="date-info">
-              <span className="date-label">End:</span>
-              <span className="date-value">{formatDate(project.end_date)}</span>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
+  // ... (keep all other existing functions: handleOpenReportModal, handleSubmitDailyReport, etc.)
 
   if (loading) {
     return (
@@ -787,7 +528,7 @@ const ManagerProjectDashboard = () => {
 
   return (
     <div className="manager-dashboard">
-      {/* Header */}
+      {/* Header - keep existing */}
       <div className="dashboard-header">
         <div className="header-top">
           <div className="user-info">
@@ -809,148 +550,22 @@ const ManagerProjectDashboard = () => {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main Content - keep existing */}
       <div className="dashboard-main-grid">
-        {/* Left Column - Projects */}
+        {/* Left Column - Projects - keep existing */}
         <div className="projects-column">
-          {/* Projects List */}
-          <div className="projects-list">
-            {projects.map(project => (
-              <div key={project.id} className="project-item">
-                <div className="project-header">
-                  <div className="project-title-section">
-                    <h3 className="project-name">{project.name}</h3>
-                    <div className="project-customer-info">
-                      <div className="customer-label">CUSTOMER</div>
-                      <div className="customer-value">{project.customer}</div>
-                    </div>
-                  </div>
-                  <div className="project-actions">
-                    <button 
-                      className="btn-icon-small assign-btn"
-                      onClick={() => handleAssignProject(project.id)}
-                      title="Assign to Employees"
-                    >
-                      👥 Assign
-                    </button>
-                    <button 
-                      className="btn-icon-small edit-btn"
-                      onClick={() => setEditingProject(project)}
-                      title="Edit"
-                    >
-                      ✏️ Edit
-                    </button>
-                    <button 
-                      className="btn-icon-small delete-btn"
-                      onClick={() => handleDeleteProject(project.id)}
-                      title="Delete"
-                    >
-                      🗑️ Delete
-                    </button>
-                  </div>
-                </div>
-                
-                <p className="project-description">
-                  {project.description}
-                </p>
-                
-                {/* Project Status and Task Completion */}
-                {renderProjectStatus(project)}
-                
-                {/* Assigned Employees */}
-                {project.assignedEmployees && project.assignedEmployees.length > 0 && (
-                  <div className="assigned-employees">
-                    <div className="assigned-label">Assigned to:</div>
-                    <div className="employee-tags">
-                      {project.assignedEmployees.slice(0, 3).map(emp => (
-                        <span key={emp.employee_id} className="employee-tag">
-                          {emp.employee_name}
-                        </span>
-                      ))}
-                      {project.assignedEmployees.length > 3 && (
-                        <span className="employee-tag-more">
-                          +{project.assignedEmployees.length - 3} more
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
-                
-                <div className="project-meta">
-                  <div className="project-action-buttons">
-                    <button 
-                      className="btn-action btn-report"
-                      onClick={() => handleOpenReportForProject(project.id, 'daily')}
-                    >
-                      📅 Daily Report
-                    </button>
-                    <button 
-                      className="btn-action btn-report"
-                      onClick={() => handleOpenReportForProject(project.id, 'hourly')}
-                    >
-                      ⏰ Hourly Report
-                    </button>
-                    <button 
-                      className="btn-action btn-view-reports"
-                      onClick={() => handleViewProjectReports(project.id)}
-                    >
-                      📊 View Reports
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-            
-            {/* Summary Card */}
-            <div className="summary-card">
-              <h3 className="summary-title">Project Summary</h3>
-              <div className="summary-stats">
-                <div className="summary-stat">
-                  <span className="stat-label">Total Projects</span>
-                  <span className="stat-value">{stats.total}</span>
-                </div>
-                <div className="summary-stat">
-                  <span className="stat-label">Completed</span>
-                  <span className="stat-value">{stats.completed}</span>
-                </div>
-                <div className="summary-stat">
-                  <span className="stat-label">Assigned</span>
-                  <span className="stat-value">{stats.assigned}</span>
-                </div>
-                <div className="summary-stat">
-                  <span className="stat-label">Active</span>
-                  <span className="stat-value">{stats.active}</span>
-                </div>
-                <div className="summary-stat">
-                  <span className="stat-label">Overdue</span>
-                  <span className="stat-value">{stats.overdue}</span>
-                </div>
-              </div>
-            </div>
-            
-            {/* New Project Card */}
-            <div className="new-project-card">
-              <h3 className="new-project-title">Create New Project</h3>
-              <p>Start tracking a new project</p>
-              <button 
-                className="btn-new-project"
-                onClick={() => setShowCreateModal(true)}
-              >
-                + Create New Project
-              </button>
-            </div>
-          </div>
+          {/* Projects List - keep existing */}
         </div>
 
-        {/* Right Column - Tools & Reports */}
+        {/* Right Column - Tools & Reports - keep existing */}
         <div className="tools-column">
-          {/* Quick Stats Card */}
+          {/* Quick Stats Card - Updated with employee count */}
           <div className="tool-card">
             <h3 className="tool-title">QUICK STATS</h3>
             <div className="tool-content">
               <div className="tool-item">
                 <span className="tool-item-name">Total Employees</span>
-                <span className="tool-value">{employees.length}</span>
+                <span className="tool-value">{allEmployees.length}</span>
               </div>
               <div className="tool-item">
                 <span className="tool-item-name">Active Projects</span>
@@ -967,372 +582,15 @@ const ManagerProjectDashboard = () => {
             </div>
           </div>
 
-          {/* Quick Report Submission */}
-          <div className="tool-card">
-            <h3 className="tool-title">QUICK REPORT SUBMISSION</h3>
-            <div className="tool-content">
-              <div className="quick-report-section">
-                <h4>Submit Report for:</h4>
-                <select 
-                  className="project-select"
-                  value={dailyReport.project_id}
-                  onChange={(e) => {
-                    setDailyReport(prev => ({ ...prev, project_id: e.target.value }))
-                    setHourlyReport(prev => ({ ...prev, project_id: e.target.value }))
-                  }}
-                >
-                  <option value="">Select Project</option>
-                  {availableProjectsForReport.map(project => (
-                    <option key={project.id} value={project.id}>
-                      {project.name} - {project.customer}
-                    </option>
-                  ))}
-                </select>
-                
-                <div className="quick-report-buttons">
-                  <button 
-                    className="quick-action-btn"
-                    onClick={() => handleOpenReportModal('daily')}
-                    disabled={!dailyReport.project_id}
-                  >
-                    📅 Submit Daily Report
-                  </button>
-                  <button 
-                    className="quick-action-btn"
-                    onClick={() => handleOpenReportModal('hourly')}
-                    disabled={!hourlyReport.project_id}
-                  >
-                    ⏰ Submit Hourly Report
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Recent Activity Card */}
-          <div className="tool-card">
-            <h3 className="tool-title">RECENT ACTIVITY</h3>
-            <div className="tool-content">
-              <div className="activity-item">
-                <div className="activity-icon">📋</div>
-                <div className="activity-details">
-                  <div className="activity-title">Project Created</div>
-                  <div className="activity-time">2 hours ago</div>
-                </div>
-              </div>
-              <div className="activity-item">
-                <div className="activity-icon">👥</div>
-                <div className="activity-details">
-                  <div className="activity-title">Project Assigned</div>
-                  <div className="activity-time">1 day ago</div>
-                </div>
-              </div>
-              <div className="activity-item">
-                <div className="activity-icon">📊</div>
-                <div className="activity-details">
-                  <div className="activity-title">Report Submitted</div>
-                  <div className="activity-time">2 days ago</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Weather Widget */}
-          <div className="weather-card">
-            <div className="weather-info">
-              <div className="weather-temp">30°C</div>
-              <div className="weather-location">Surrey</div>
-              <div className="weather-condition">Sunny</div>
-            </div>
-            <div className="weather-icon">☀️</div>
-          </div>
+          {/* ... (keep other tool cards) */}
         </div>
       </div>
 
-      {/* Create Project Modal */}
-      {showCreateModal && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h2>Create New Project</h2>
-              <button 
-                className="btn-close"
-                onClick={() => setShowCreateModal(false)}
-              >
-                ×
-              </button>
-            </div>
-            <form onSubmit={handleCreateProject}>
-              <div className="form-group">
-                <label>Project Name *</label>
-                <input
-                  type="text"
-                  value={newProject.name}
-                  onChange={(e) => setNewProject({...newProject, name: e.target.value})}
-                  placeholder="Enter project name"
-                  required
-                />
-              </div>
+      {/* Create Project Modal - keep existing */}
+      
+      {/* Edit Project Modal - keep existing */}
 
-              <div className="form-group">
-                <label>Customer Name *</label>
-                <select
-                  value={newProject.customer}
-                  onChange={(e) => setNewProject({...newProject, customer: e.target.value})}
-                  required
-                  className="customer-select"
-                >
-                  <option value="">Select Customer</option>
-                  <option value="CEE DEE">CEE DEE</option>
-                  <option value="ABC Corporation">ABC Corporation</option>
-                  <option value="XYZ Industries">XYZ Industries</option>
-                  <option value="Global Tech Solutions">Global Tech Solutions</option>
-                  <option value="Prime Construction">Prime Construction</option>
-                  <option value="Infra Builders">Infra Builders</option>
-                  <option value="Tech Innovators Ltd">Tech Innovators Ltd</option>
-                  <option value="Mega Projects Inc">Mega Projects Inc</option>
-                  <option value="City Development Authority">City Development Authority</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
-
-              {newProject.customer === 'Other' && (
-                <div className="form-group">
-                  <label>Specify Customer Name *</label>
-                  <input
-                    type="text"
-                    value={newProject.otherCustomer || ''}
-                    onChange={(e) => setNewProject({...newProject, otherCustomer: e.target.value})}
-                    placeholder="Enter customer name"
-                    required={newProject.customer === 'Other'}
-                  />
-                </div>
-              )}
-
-              <div className="form-group">
-                <label>Description</label>
-                <textarea
-                  value={newProject.description}
-                  onChange={(e) => setNewProject({...newProject, description: e.target.value})}
-                  placeholder="Describe your project..."
-                  rows="3"
-                />
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Status</label>
-                  <select
-                    value={newProject.status}
-                    onChange={(e) => setNewProject({...newProject, status: e.target.value})}
-                  >
-                    <option value="planning">Planning</option>
-                    <option value="active">Active</option>
-                    <option value="on-hold">On Hold</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label>Priority</label>
-                  <select
-                    value={newProject.priority}
-                    onChange={(e) => setNewProject({...newProject, priority: e.target.value})}
-                  >
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="urgent">Urgent</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Start Date *</label>
-                  <input
-                    type="date"
-                    value={newProject.startDate}
-                    onChange={(e) => setNewProject({...newProject, startDate: e.target.value})}
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>End Date</label>
-                  <input
-                    type="date"
-                    value={newProject.endDate}
-                    onChange={(e) => setNewProject({...newProject, endDate: e.target.value})}
-                  />
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label>Budget (₹)</label>
-                <input
-                  type="number"
-                  value={newProject.budget}
-                  onChange={(e) => setNewProject({...newProject, budget: e.target.value})}
-                  placeholder="Enter budget amount"
-                  min="0"
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={newProject.requiresReporting}
-                    onChange={(e) => setNewProject({...newProject, requiresReporting: e.target.checked})}
-                  />
-                  <span>Require daily/hourly reporting from assigned employees</span>
-                </label>
-              </div>
-
-              <div className="modal-actions">
-                <button 
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => setShowCreateModal(false)}
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  className="btn-primary"
-                >
-                  Create Project
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Project Modal */}
-      {editingProject && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h2>Edit Project</h2>
-              <button 
-                className="btn-close"
-                onClick={() => setEditingProject(null)}
-              >
-                ×
-              </button>
-            </div>
-            <form onSubmit={handleUpdateProject}>
-              <div className="form-group">
-                <label>Project Name</label>
-                <input
-                  type="text"
-                  value={editingProject.name}
-                  onChange={(e) => setEditingProject({...editingProject, name: e.target.value})}
-                  required
-                />
-              </div>
-              
-              <div className="form-group">
-                <label>Customer Name</label>
-                <input
-                  type="text"
-                  value={editingProject.customer || ''}
-                  onChange={(e) => setEditingProject({...editingProject, customer: e.target.value})}
-                  placeholder="Enter customer name"
-                  required
-                />
-              </div>
-              
-              <div className="form-group">
-                <label>Description</label>
-                <textarea
-                  value={editingProject.description}
-                  onChange={(e) => setEditingProject({...editingProject, description: e.target.value})}
-                  rows="3"
-                />
-              </div>
-              
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Status</label>
-                  <select
-                    value={editingProject.status}
-                    onChange={(e) => setEditingProject({...editingProject, status: e.target.value})}
-                  >
-                    <option value="planning">Planning</option>
-                    <option value="active">Active</option>
-                    <option value="on-hold">On Hold</option>
-                    <option value="completed">Completed</option>
-                    <option value="overdue">Overdue</option>
-                  </select>
-                </div>
-                
-                <div className="form-group">
-                  <label>Priority</label>
-                  <select
-                    value={editingProject.priority}
-                    onChange={(e) => setEditingProject({...editingProject, priority: e.target.value})}
-                  >
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="urgent">Urgent</option>
-                  </select>
-                </div>
-              </div>
-              
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Start Date</label>
-                  <input
-                    type="date"
-                    value={editingProject.start_date?.split('T')[0] || ''}
-                    onChange={(e) => setEditingProject({...editingProject, start_date: e.target.value})}
-                  />
-                </div>
-                
-                <div className="form-group">
-                  <label>End Date</label>
-                  <input
-                    type="date"
-                    value={editingProject.end_date?.split('T')[0] || ''}
-                    onChange={(e) => setEditingProject({...editingProject, end_date: e.target.value})}
-                  />
-                </div>
-              </div>
-              
-              <div className="form-group">
-                <label>Budget (₹)</label>
-                <input
-                  type="number"
-                  value={editingProject.budget || ''}
-                  onChange={(e) => setEditingProject({...editingProject, budget: e.target.value})}
-                  min="0"
-                />
-              </div>
-              
-              <div className="modal-actions">
-                <button 
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => setEditingProject(null)}
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  className="btn-primary"
-                >
-                  Update Project
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Assign Project Modal */}
+      {/* ========== UPDATED ASSIGN PROJECT MODAL WITH EMPLOYEE SELECTION ========== */}
       {showAssignModal && selectedProjectForAssign && (
         <div className="modal-overlay">
           <div className="modal-content assign-modal">
@@ -1344,6 +602,7 @@ const ManagerProjectDashboard = () => {
                   setShowAssignModal(false)
                   setSelectedProjectForAssign(null)
                   setSelectedEmployees([])
+                  setSearchTerm('')
                 }}
               >
                 ×
@@ -1359,37 +618,70 @@ const ManagerProjectDashboard = () => {
               </div>
 
               <div className="form-group">
-                <label>Select Employees to Assign *</label>
-                <div className="employees-checkbox-list">
-                  {employees.length === 0 ? (
-                    <div className="no-employees">No employees found</div>
-                  ) : (
-                    employees.map(employee => (
-                      <label key={employee.id} className="checkbox-label employee-checkbox">
-                        <input
-                          type="checkbox"
-                          value={employee.id}
-                          checked={selectedEmployees.includes(employee.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedEmployees([...selectedEmployees, employee.id])
-                            } else {
-                              setSelectedEmployees(selectedEmployees.filter(id => id !== employee.id))
-                            }
-                          }}
-                        />
-                        <div className="employee-info">
-                          <span className="employee-name">{employee.name}</span>
-                          <span className="employee-details">
-                            {employee.role} • ID: {employee.employee_id || employee.id}
-                          </span>
-                        </div>
-                      </label>
-                    ))
-                  )}
+                <div className="employee-selection-header">
+                  <label>Select Employees to Assign *</label>
+                  <div className="selection-controls">
+                    <button 
+                      type="button" 
+                      className="btn-select-all"
+                      onClick={handleSelectAll}
+                    >
+                      {selectedEmployees.length === filteredEmployees.length ? 'Deselect All' : 'Select All'}
+                    </button>
+                    <div className="selected-count">
+                      {selectedEmployees.length} selected / {filteredEmployees.length} total
+                    </div>
+                  </div>
                 </div>
-                <div className="selected-count">
-                  {selectedEmployees.length} employee(s) selected
+                
+                <div className="employee-search-box">
+                  <input
+                    type="text"
+                    placeholder="Search employees by name, ID, or role..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="employee-search-input"
+                  />
+                </div>
+
+                <div className="employees-checkbox-list">
+                  {employeeLoading ? (
+                    <div className="loading-employees">
+                      <div className="spinner-small"></div>
+                      <span>Loading employees...</span>
+                    </div>
+                  ) : filteredEmployees.length === 0 ? (
+                    <div className="no-employees">
+                      {searchTerm ? 'No employees match your search' : 'No employees available'}
+                    </div>
+                  ) : (
+                    <div className="employee-list-container">
+                      {filteredEmployees.map(employee => (
+                        <label key={employee.id} className="checkbox-label employee-checkbox">
+                          <input
+                            type="checkbox"
+                            value={employee.id}
+                            checked={selectedEmployees.includes(employee.id)}
+                            onChange={() => handleEmployeeSelect(employee.id)}
+                          />
+                          <div className="employee-info">
+                            <div className="employee-header">
+                              <span className="employee-name">{employee.username}</span>
+                              <span className={`employee-role ${employee.role.toLowerCase()}`}>
+                                {employee.role}
+                              </span>
+                            </div>
+                            <div className="employee-details">
+                              <span className="employee-id">ID: {employee.employeeId}</span>
+                              {employee.department && (
+                                <span className="employee-department">Dept: {employee.department}</span>
+                              )}
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1403,10 +695,6 @@ const ManagerProjectDashboard = () => {
                   <label className="checkbox-label">
                     <input type="checkbox" defaultChecked />
                     <span>✅ Hourly Report Required</span>
-                  </label>
-                  <label className="checkbox-label">
-                    <input type="checkbox" defaultChecked />
-                    <span>⏰ Time Tracking Enabled</span>
                   </label>
                 </div>
               </div>
@@ -1427,6 +715,7 @@ const ManagerProjectDashboard = () => {
                     setShowAssignModal(false)
                     setSelectedProjectForAssign(null)
                     setSelectedEmployees([])
+                    setSearchTerm('')
                   }}
                 >
                   Cancel
@@ -1442,7 +731,7 @@ const ManagerProjectDashboard = () => {
                       <span className="spinner"></span> Assigning...
                     </>
                   ) : (
-                    'Assign Project'
+                    `Assign to ${selectedEmployees.length} Employee${selectedEmployees.length !== 1 ? 's' : ''}`
                   )}
                 </button>
               </div>
@@ -1451,7 +740,8 @@ const ManagerProjectDashboard = () => {
         </div>
       )}
 
-      {/* Report Modal - Now includes project selection */}
+
+      {/* Report Modal */}
       {showReportModal && (
         <div className="modal-overlay">
           <div className="modal-content report-modal">

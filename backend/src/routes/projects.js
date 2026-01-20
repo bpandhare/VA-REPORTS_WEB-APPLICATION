@@ -69,31 +69,6 @@ const ensureColumnExists = async (connection, columnName, columnDefinition) => {
 // ========== PROJECT ROUTES ==========
 
 // Create a new project - MANAGER ONLY
-// Create a new project - MANAGER ONLY
-// Add this to your backend routes
-router.get('/api/employees/list', async (req, res) => {
-  try {
-    // Query your database for employees
-    // Example with SQL:
-    const employees = await db.query(`
-      SELECT id, name, employee_id, email, role, department 
-      FROM users 
-      WHERE role IN ('Employee', 'Manager', 'Engineer', 'Staff')
-      ORDER BY name
-    `);
-    
-    res.json({
-      success: true,
-      employees: employees.rows
-    });
-  } catch (error) {
-    console.error('Error fetching employees:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch employees'
-    });
-  }
-});
 router.post('/', verifyToken, isManager, async (req, res) => {
   const connection = await pool.getConnection()
   try {
@@ -102,12 +77,27 @@ router.post('/', verifyToken, isManager, async (req, res) => {
     const { 
       name, 
       customer, 
-      end_customer,  // NEW FIELD
+      end_customer,
       description, 
-      priority = 'medium', 
+    
       start_date, 
       end_date,
-      collaborator_ids = [] 
+      collaborator_ids = [],
+      assigned_employee,
+      // Customer contact fields
+      customer_person,
+   
+      customer_contact,
+   
+      // End customer contact fields
+      end_customer_person,
+    
+      end_customer_contact,
+     
+      // Additional fields
+      budget,
+      requires_reporting = true,
+      status = 'active'
     } = req.body
     
     if (!name) return res.status(400).json({ success: false, message: 'Project name is required' })
@@ -117,33 +107,97 @@ router.post('/', verifyToken, isManager, async (req, res) => {
     
     // Ensure all required columns exist
     await ensureColumnExists(connection, 'customer', 'VARCHAR(255) DEFAULT NULL')
-    await ensureColumnExists(connection, 'end_customer', 'VARCHAR(255) DEFAULT NULL') // NEW
-    await ensureColumnExists(connection, 'priority', "VARCHAR(50) DEFAULT 'medium'")
+    await ensureColumnExists(connection, 'end_customer', 'VARCHAR(255) DEFAULT NULL')
+    // await ensureColumnExists(connection, 'priority', "VARCHAR(50) DEFAULT 'medium'")
     await ensureColumnExists(connection, 'start_date', 'DATE DEFAULT NULL')
     await ensureColumnExists(connection, 'end_date', 'DATE DEFAULT NULL')
-    await ensureColumnExists(connection, 'status', "VARCHAR(20) DEFAULT 'active'")
-
-    // Create project WITH end_customer
+    // await ensureColumnExists(connection, 'status', "VARCHAR(20) DEFAULT 'active'")
+    await ensureColumnExists(connection, 'assigned_to', 'INT DEFAULT NULL')
+    await ensureColumnExists(connection, 'assigned_employee_id', 'VARCHAR(50) DEFAULT NULL')
+    
+    // Customer contact columns
+    await ensureColumnExists(connection, 'customer_person', 'VARCHAR(255) DEFAULT NULL')
+    // await ensureColumnExists(connection, 'customer_email', 'VARCHAR(255) DEFAULT NULL')
+    await ensureColumnExists(connection, 'customer_contact', 'VARCHAR(50) DEFAULT NULL')
+    // await ensureColumnExists(connection, 'customer_address', 'TEXT DEFAULT NULL')
+    
+    // End customer contact columns
+    await ensureColumnExists(connection, 'end_customer_person', 'VARCHAR(255) DEFAULT NULL')
+    // await ensureColumnExists(connection, 'end_customer_email', 'VARCHAR(255) DEFAULT NULL')
+    await ensureColumnExists(connection, 'end_customer_contact', 'VARCHAR(50) DEFAULT NULL')
+    // await ensureColumnExists(connection, 'end_customer_address', 'TEXT DEFAULT NULL')
+    
+   
+    // Look up employee if assigned_employee is provided
+    let assignedUserId = null
+    let assignedEmployeeId = null
+    
+    if (assigned_employee && assigned_employee.trim()) {
+      const [users] = await connection.execute(
+        'SELECT id, employee_id FROM users WHERE employee_id = ? OR username = ?',
+        [assigned_employee.trim(), assigned_employee.trim()]
+      )
+      
+      if (users.length > 0) {
+        assignedUserId = users[0].id
+        assignedEmployeeId = users[0].employee_id
+      } else {
+        assignedEmployeeId = assigned_employee.trim()
+      }
+    }
+    
+    // Create project WITH ALL fields
     const [result] = await connection.execute(
       `INSERT INTO projects 
-       (name, customer, end_customer, description, priority, start_date, end_date, status, created_by) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (name, customer, end_customer, description,  start_date, end_date, 
+        created_by, assigned_to, assigned_employee_id,
+        customer_person,, customer_contact,
+        end_customer_person,  end_customer_contact, 
+        , requires_reporting) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name, 
         customer, 
-        end_customer || null,  // NEW
+        end_customer || null,
         description || '', 
-        priority, 
+        // priority, 
         start_date || null, 
         end_date || null, 
-        'active',
-        createdBy
+        // status,
+        createdBy,
+        assignedUserId || null,
+        assignedEmployeeId || null,
+        // Customer contact fields
+        customer_person || null,
+        // customer_email || null,
+        customer_contact || null,
+        // customer_address || null,
+        // End customer contact fields
+        end_customer_person || null,
+        // end_customer_email || null,
+        end_customer_contact || null,
+        // end_customer_address || null,
+        // Additional fields
+        budget || null,
+        requires_reporting ? 1 : 0
       ]
     )
     
     const projectId = result.insertId
     
-    // Add collaborators if any
+    // If an employee was assigned, also add them as a collaborator
+    if (assignedUserId || assignedEmployeeId) {
+      try {
+        await connection.execute(
+          'INSERT INTO project_collaborators (project_id, user_id, collaborator_employee_id, role, added_by) VALUES (?, ?, ?, ?, ?)',
+          [projectId, assignedUserId || null, assignedEmployeeId || null, 'Assigned', createdBy]
+        )
+      } catch (collabError) {
+        console.error('Failed to add assigned employee as collaborator:', collabError)
+      }
+    }
+    
+    // Add other collaborators if any
     for (const collaboratorId of collaborator_ids) {
       if (collaboratorId) {
         await connection.execute(
@@ -172,10 +226,19 @@ router.post('/', verifyToken, isManager, async (req, res) => {
     
     let errorMessage = 'Unable to create project'
     if (error.code === 'ER_BAD_FIELD_ERROR') {
-      if (error.sqlMessage?.includes('end_customer')) {
-        errorMessage = 'Database error: End Customer column is missing. Please run: ALTER TABLE projects ADD COLUMN end_customer VARCHAR(255) DEFAULT NULL;'
-      } else if (error.sqlMessage?.includes('customer')) {
-        errorMessage = 'Database error: Customer column is missing.'
+      // Include new columns in error message
+      if (error.sqlMessage?.includes('customer_person') || error.sqlMessage?.includes('customer_contact')) {
+        errorMessage = 'Database error: Contact columns missing. Please run these SQL commands:\n' +
+                      'ALTER TABLE projects ADD COLUMN customer_person VARCHAR(255) DEFAULT NULL;\n' +
+                      // 'ALTER TABLE projects ADD COLUMN customer_email VARCHAR(255) DEFAULT NULL;\n' +
+                      'ALTER TABLE projects ADD COLUMN customer_contact VARCHAR(50) DEFAULT NULL;\n' +
+                      // 'ALTER TABLE projects ADD COLUMN customer_address TEXT DEFAULT NULL;\n' +
+                      'ALTER TABLE projects ADD COLUMN end_customer_person VARCHAR(255) DEFAULT NULL;\n' +
+                      // 'ALTER TABLE projects ADD COLUMN end_customer_email VARCHAR(255) DEFAULT NULL;\n' +
+                      'ALTER TABLE projects ADD COLUMN end_customer_contact VARCHAR(50) DEFAULT NULL;\n' +
+                      // 'ALTER TABLE projects ADD COLUMN end_customer_address TEXT DEFAULT NULL;\n' +
+                      // 'ALTER TABLE projects ADD COLUMN budget DECIMAL(15,2) DEFAULT NULL;\n' +
+                      'ALTER TABLE projects ADD COLUMN requires_reporting BOOLEAN DEFAULT TRUE;'
       }
     }
     
@@ -189,40 +252,195 @@ router.post('/', verifyToken, isManager, async (req, res) => {
   }
 })
 
-// UPDATE PROJECT ROUTE - FIXED
-// In your backend projects.js - update the PUT /:id route
+// Get project collaborators summary
+router.get('/:id/collaborators-summary', verifyToken, async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id)
+    if (!projectId) return res.status(400).json({ success: false, message: 'Invalid project id' })
+
+    const [collaborators] = await pool.execute(
+      `SELECT 
+        pc.id as collab_id,
+        pc.role,
+        pc.added_at,
+        u.id as user_id,
+        u.username,
+        u.employee_id,
+        u.email,
+        u.job_role,
+        CONCAT(u.username, ' (', u.employee_id, ')') as display_name,
+        CASE 
+          WHEN pc.role = 'Assigned' THEN 1
+          ELSE 0
+        END as is_assigned
+       FROM project_collaborators pc
+       LEFT JOIN users u ON pc.user_id = u.id
+       WHERE pc.project_id = ? 
+       ORDER BY 
+         is_assigned DESC,
+         pc.added_at DESC`,
+      [projectId]
+    )
+
+    res.json({ success: true, collaborators })
+  } catch (error) {
+    console.error('Failed to fetch collaborators summary:', error)
+    res.status(500).json({ success: false, message: 'Unable to fetch collaborators', error: error.message })
+  }
+})
+
+// Update collaborator role
+router.put('/:projectId/collaborators/:collabId/role', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+    
+    const projectId = parseInt(req.params.projectId)
+    const collabId = parseInt(req.params.collabId)
+    
+    if (!projectId || !collabId) {
+      return res.status(400).json({ success: false, message: 'Invalid ids' })
+    }
+
+    // Check permissions
+    const [project] = await connection.execute(
+      'SELECT created_by FROM projects WHERE id = ?',
+      [projectId]
+    )
+    
+    if (project.length === 0) {
+      await connection.rollback()
+      return res.status(404).json({ success: false, message: 'Project not found' })
+    }
+    
+    const isCreator = project[0].created_by === req.user?.id
+    const isManager = req.user?.role === 'Manager'
+    
+    if (!isCreator && !isManager) {
+      await connection.rollback()
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Only project creator or managers can update collaborators' 
+      })
+    }
+
+    const { role } = req.body
+    
+    // Validate role
+    const validRoles = ['Assigned', 'Contributor', 'Viewer']
+    if (!validRoles.includes(role)) {
+      await connection.rollback()
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid role. Must be one of: Assigned, Contributor, Viewer' 
+      })
+    }
+
+    // If setting as 'Assigned', check if there's already an assigned person
+    if (role === 'Assigned') {
+      const [existingAssigned] = await connection.execute(
+        'SELECT id FROM project_collaborators WHERE project_id = ? AND role = ?',
+        [projectId, 'Assigned']
+      )
+      
+      if (existingAssigned.length > 0 && existingAssigned[0].id !== collabId) {
+        await connection.rollback()
+        return res.status(400).json({ 
+          success: false, 
+          message: 'There is already an assigned person for this project' 
+        })
+      }
+      
+      // Update project's assigned fields
+      const [collabDetails] = await connection.execute(
+        `SELECT pc.user_id, pc.collaborator_employee_id, u.employee_id
+         FROM project_collaborators pc
+         LEFT JOIN users u ON pc.user_id = u.id
+         WHERE pc.id = ?`,
+        [collabId]
+      )
+      
+      if (collabDetails.length > 0) {
+        const userId = collabDetails[0].user_id
+        const employeeId = collabDetails[0].collaborator_employee_id || collabDetails[0].employee_id
+        
+        await ensureColumnExists(connection, 'assigned_to', 'INT DEFAULT NULL')
+        await ensureColumnExists(connection, 'assigned_employee_id', 'VARCHAR(50) DEFAULT NULL')
+        
+        await connection.execute(
+          'UPDATE projects SET assigned_to = ?, assigned_employee_id = ? WHERE id = ?',
+          [userId || null, employeeId || null, projectId]
+        )
+      }
+    } else {
+      // If changing from 'Assigned' to another role, clear project assignment
+      const [currentCollab] = await connection.execute(
+        'SELECT role FROM project_collaborators WHERE id = ?',
+        [collabId]
+      )
+      
+      if (currentCollab.length > 0 && currentCollab[0].role === 'Assigned') {
+        await ensureColumnExists(connection, 'assigned_to', 'INT DEFAULT NULL')
+        await ensureColumnExists(connection, 'assigned_employee_id', 'VARCHAR(50) DEFAULT NULL')
+        
+        await connection.execute(
+          'UPDATE projects SET assigned_to = NULL, assigned_employee_id = NULL WHERE id = ?',
+          [projectId]
+        )
+      }
+    }
+    
+    // Update collaborator role
+    await connection.execute(
+      'UPDATE project_collaborators SET role = ? WHERE id = ?',
+      [role, collabId]
+    )
+    
+    await connection.commit()
+    
+    res.json({ 
+      success: true, 
+      message: 'Collaborator role updated successfully'
+    })
+  } catch (error) {
+    await connection.rollback()
+    console.error('Failed to update collaborator role:', error)
+    res.status(500).json({ 
+      success: false, 
+      message: 'Unable to update collaborator role',
+      error: error.message 
+    })
+  } finally {
+    connection.release()
+  }
+})
+// UPDATE PROJECT ROUTE
+// UPDATE PROJECT ROUTE with improved collaborator management
 router.put('/:id', verifyToken, async (req, res) => {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
     
     const projectId = parseInt(req.params.id)
-    console.log('📝 UPDATE PROJECT REQUEST - ID:', projectId, 'Body:', req.body)
     
     if (!projectId) {
-      console.log('❌ Invalid project ID')
       return res.status(400).json({ success: false, message: 'Invalid project id' })
     }
 
     // Check if project exists
     const [project] = await connection.execute(
-      'SELECT id, created_by FROM projects WHERE id = ?',
+      'SELECT id, created_by, assigned_to, assigned_employee_id FROM projects WHERE id = ?',
       [projectId]
     )
     
-    console.log('🔍 Project found in DB:', project.length > 0)
-    
     if (project.length === 0) {
       await connection.rollback()
-      console.log('❌ Project not found in database')
       return res.status(404).json({ 
         success: false, 
-        message: 'Project not found',
-        requestedId: projectId 
+        message: 'Project not found'
       })
     }
     
-    // ... rest of your update code ...
     const isCreator = project[0].created_by === req.user?.id
     const isManager = req.user?.role === 'Manager'
     
@@ -237,18 +455,36 @@ router.put('/:id', verifyToken, async (req, res) => {
     const { 
       name, 
       customer, 
+      end_customer,
       description, 
-      priority, 
+  
       start_date, 
       end_date,
-      status,
-      completed
+
+      completed,
+      assigned_employee,
+      // Customer contact fields
+      customer_person,
+ 
+      customer_contact,
+    
+      // End customer contact fields
+      end_customer_person,
+   
+      end_customer_contact,
+    
+      // Additional fields
+      budget,
+      requires_reporting,
+      // Collaborator management
+      collaborator_ids = []
     } = req.body
     
     // Build update query dynamically
     const updates = []
     const values = []
     
+    // Existing fields
     if (name !== undefined) {
       updates.push('name = ?')
       values.push(name)
@@ -257,14 +493,15 @@ router.put('/:id', verifyToken, async (req, res) => {
       updates.push('customer = ?')
       values.push(customer)
     }
+    if (end_customer !== undefined) {
+      updates.push('end_customer = ?')
+      values.push(end_customer || null)
+    }
     if (description !== undefined) {
       updates.push('description = ?')
       values.push(description || '')
     }
-    if (priority !== undefined) {
-      updates.push('priority = ?')
-      values.push(priority)
-    }
+   
     if (start_date !== undefined) {
       updates.push('start_date = ?')
       values.push(start_date || null)
@@ -273,17 +510,141 @@ router.put('/:id', verifyToken, async (req, res) => {
       updates.push('end_date = ?')
       values.push(end_date || null)
     }
-    if (status !== undefined) {
-      updates.push('status = ?')
-      values.push(status)
-    }
+  
     if (completed !== undefined) {
       await ensureColumnExists(connection, 'completed', 'BOOLEAN DEFAULT FALSE')
       updates.push('completed = ?')
       values.push(completed ? 1 : 0)
     }
     
-    if (updates.length === 0) {
+    // Customer contact fields
+    if (customer_person !== undefined) {
+      await ensureColumnExists(connection, 'customer_person', 'VARCHAR(255) DEFAULT NULL')
+      updates.push('customer_person = ?')
+      values.push(customer_person || null)
+    }
+
+    if (customer_contact !== undefined) {
+      await ensureColumnExists(connection, 'customer_contact', 'VARCHAR(50) DEFAULT NULL')
+      updates.push('customer_contact = ?')
+      values.push(customer_contact || null)
+    }
+  
+    
+    // End customer contact fields
+    if (end_customer_person !== undefined) {
+      await ensureColumnExists(connection, 'end_customer_person', 'VARCHAR(255) DEFAULT NULL')
+      updates.push('end_customer_person = ?')
+      values.push(end_customer_person || null)
+    }
+
+    if (end_customer_contact !== undefined) {
+      await ensureColumnExists(connection, 'end_customer_contact', 'VARCHAR(50) DEFAULT NULL')
+      updates.push('end_customer_contact = ?')
+      values.push(end_customer_contact || null)
+    }
+
+    // Employee assignment logic
+    let assignedUserId = null
+    let assignedEmployeeId = null
+    
+    if (assigned_employee !== undefined) {
+      await ensureColumnExists(connection, 'assigned_to', 'INT DEFAULT NULL')
+      await ensureColumnExists(connection, 'assigned_employee_id', 'VARCHAR(50) DEFAULT NULL')
+      
+      // Clear previous assignment
+      if (project[0].assigned_to || project[0].assigned_employee_id) {
+        try {
+          await connection.execute(
+            'DELETE FROM project_collaborators WHERE project_id = ? AND role = ?',
+            [projectId, 'Assigned']
+          )
+        } catch (error) {
+          console.error('Failed to remove previous assigned collaborator:', error)
+        }
+      }
+      
+      // Set new assignment
+      if (assigned_employee && assigned_employee.trim()) {
+        const [users] = await connection.execute(
+          'SELECT id, employee_id FROM users WHERE employee_id = ? OR username = ?',
+          [assigned_employee.trim(), assigned_employee.trim()]
+        )
+        
+        if (users.length > 0) {
+          assignedUserId = users[0].id
+          assignedEmployeeId = users[0].employee_id
+        } else {
+          assignedEmployeeId = assigned_employee.trim()
+        }
+        
+        // Add as collaborator with 'Assigned' role
+        if (assignedUserId || assignedEmployeeId) {
+          try {
+            await connection.execute(
+              `INSERT INTO project_collaborators 
+               (project_id, user_id, collaborator_employee_id, role, added_by) 
+               VALUES (?, ?, ?, ?, ?)`,
+              [projectId, assignedUserId || null, assignedEmployeeId || null, 'Assigned', req.user?.id]
+            )
+          } catch (collabError) {
+            console.error('Failed to add assigned employee as collaborator:', collabError)
+          }
+        }
+      }
+      
+      updates.push('assigned_to = ?')
+      updates.push('assigned_employee_id = ?')
+      values.push(assignedUserId || null)
+      values.push(assignedEmployeeId || null)
+    }
+    
+    // Handle additional collaborator IDs
+    if (collaborator_ids && Array.isArray(collaborator_ids)) {
+      // Get existing collaborators
+      const [existingCollabs] = await connection.execute(
+        'SELECT user_id, collaborator_employee_id FROM project_collaborators WHERE project_id = ? AND role != ?',
+        [projectId, 'Assigned']
+      )
+      
+      const existingUserIds = existingCollabs
+        .map(c => c.user_id)
+        .filter(id => id)
+      
+      const existingEmployeeIds = existingCollabs
+        .map(c => c.collaborator_employee_id)
+        .filter(id => id)
+      
+      // Add new collaborators
+      for (const collaboratorId of collaborator_ids) {
+        if (collaboratorId) {
+          // Check if already exists
+          const [userCheck] = await connection.execute(
+            'SELECT id, employee_id FROM users WHERE id = ?',
+            [collaboratorId]
+          )
+          
+          if (userCheck.length > 0) {
+            const userId = userCheck[0].id
+            const employeeId = userCheck[0].employee_id
+            
+            // Skip if already exists
+            if (existingUserIds.includes(userId) || 
+                (employeeId && existingEmployeeIds.includes(employeeId))) {
+              continue
+            }
+            
+            // Add as contributor
+            await connection.execute(
+              'INSERT INTO project_collaborators (project_id, user_id, collaborator_employee_id, role, added_by) VALUES (?, ?, ?, ?, ?)',
+              [projectId, userId, employeeId || null, 'Contributor', req.user?.id]
+            )
+          }
+        }
+      }
+    }
+    
+    if (updates.length === 0 && !collaborator_ids) {
       await connection.rollback()
       return res.status(400).json({ success: false, message: 'No fields to update' })
     }
@@ -291,26 +652,41 @@ router.put('/:id', verifyToken, async (req, res) => {
     // Ensure updated_at column exists
     await ensureColumnExists(connection, 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP')
     
-    values.push(projectId)
-    
-    const query = `UPDATE projects SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-    console.log('Update query:', query)
-    console.log('Update values:', values)
-    
-    await connection.execute(query, values)
+    // Only update project table if there are updates
+    if (updates.length > 0) {
+      values.push(projectId)
+      const query = `UPDATE projects SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      await connection.execute(query, values)
+    }
     
     await connection.commit()
     
-    // Fetch updated project to return
+    // Fetch updated project with collaborators
     const [updatedProjects] = await connection.execute(
       'SELECT * FROM projects WHERE id = ?',
+      [projectId]
+    )
+    
+    // Get updated collaborators list
+    const [collaborators] = await connection.execute(
+      `SELECT pc.*, 
+              u.username, 
+              u.employee_id,
+             
+              CONCAT(COALESCE(u.username, pc.collaborator_employee_id), 
+                     ' (', COALESCE(u.employee_id, pc.collaborator_employee_id), ')') as display_name
+       FROM project_collaborators pc
+       LEFT JOIN users u ON pc.user_id = u.id
+       WHERE pc.project_id = ? 
+       ORDER BY pc.added_at DESC`,
       [projectId]
     )
     
     res.json({ 
       success: true, 
       message: 'Project updated successfully',
-      project: updatedProjects[0]
+      project: updatedProjects[0],
+      collaborators: collaborators
     })
   } catch (error) {
     await connection.rollback()
@@ -325,7 +701,7 @@ router.put('/:id', verifyToken, async (req, res) => {
     connection.release()
   }
 })
-// Get single project with collaborators
+
 // Get single project with collaborators
 router.get('/:id', verifyToken, async (req, res) => {
   const connection = await pool.getConnection()
@@ -333,25 +709,62 @@ router.get('/:id', verifyToken, async (req, res) => {
     const projectId = parseInt(req.params.id)
     if (!projectId) return res.status(400).json({ success: false, message: 'Invalid project id' })
 
-    // Ensure columns exist
+    // Ensure ALL columns exist
     await ensureColumnExists(connection, 'customer', 'VARCHAR(255) DEFAULT NULL')
-    await ensureColumnExists(connection, 'end_customer', 'VARCHAR(255) DEFAULT NULL') // NEW
+    await ensureColumnExists(connection, 'end_customer', 'VARCHAR(255) DEFAULT NULL')
     await ensureColumnExists(connection, 'priority', "VARCHAR(50) DEFAULT 'medium'")
     await ensureColumnExists(connection, 'start_date', 'DATE DEFAULT NULL')
     await ensureColumnExists(connection, 'end_date', 'DATE DEFAULT NULL')
     await ensureColumnExists(connection, 'status', "VARCHAR(20) DEFAULT 'active'")
     await ensureColumnExists(connection, 'completed', 'BOOLEAN DEFAULT FALSE')
+    await ensureColumnExists(connection, 'assigned_to', 'INT DEFAULT NULL')
+    await ensureColumnExists(connection, 'assigned_employee_id', 'VARCHAR(50) DEFAULT NULL')
+    
+    // Customer contact columns
+    await ensureColumnExists(connection, 'customer_person', 'VARCHAR(255) DEFAULT NULL')
+    await ensureColumnExists(connection, 'customer_email', 'VARCHAR(255) DEFAULT NULL')
+    await ensureColumnExists(connection, 'customer_contact', 'VARCHAR(50) DEFAULT NULL')
+    await ensureColumnExists(connection, 'customer_address', 'TEXT DEFAULT NULL')
+    
+    // End customer contact columns
+    await ensureColumnExists(connection, 'end_customer_person', 'VARCHAR(255) DEFAULT NULL')
+    await ensureColumnExists(connection, 'end_customer_email', 'VARCHAR(255) DEFAULT NULL')
+    await ensureColumnExists(connection, 'end_customer_contact', 'VARCHAR(50) DEFAULT NULL')
+    await ensureColumnExists(connection, 'end_customer_address', 'TEXT DEFAULT NULL')
+    
+    // Additional columns
+    await ensureColumnExists(connection, 'budget', 'DECIMAL(15,2) DEFAULT NULL')
+    await ensureColumnExists(connection, 'requires_reporting', 'BOOLEAN DEFAULT TRUE')
 
-    const [projects] = await connection.execute('SELECT * FROM projects WHERE id = ?', [projectId])
+    // UPDATED QUERY: Include all fields
+    const [projects] = await connection.execute(
+      `SELECT p.*, 
+              u_assigned.username as assigned_username,
+              u_assigned.employee_id as assigned_employee_code,
+              u_creator.username as created_by_name
+       FROM projects p
+       LEFT JOIN users u_assigned ON p.assigned_to = u_assigned.id
+       LEFT JOIN users u_creator ON p.created_by = u_creator.id
+       WHERE p.id = ?`, 
+      [projectId]
+    )
+    
     if (!projects || projects.length === 0) return res.status(404).json({ success: false, message: 'Project not found' })
+    
     const project = projects[0]
+    
+    // If no user found but we have assigned_employee_id, use that
+    if (project) {
+      project.assigned_employee = project.assigned_employee_id || project.assigned_employee_code || null
+    }
 
+    // Get collaborators
     const [collaborators] = await connection.execute(
       `SELECT pc.*, 
               u.username, 
               u.employee_id,
               u.email,
-              u.job_role,  -- NEW: Include job_role
+              u.job_role,
               CONCAT(COALESCE(u.username, pc.collaborator_employee_id), 
                      ' (', COALESCE(u.employee_id, pc.collaborator_employee_id), ')') as display_name
        FROM project_collaborators pc
@@ -396,10 +809,17 @@ router.get('/', verifyToken, async (req, res) => {
 
     // Ensure columns exist
     await ensureColumnExists(connection, 'customer', 'VARCHAR(255) DEFAULT NULL')
+    await ensureColumnExists(connection, 'end_customer', 'VARCHAR(255) DEFAULT NULL')
     await ensureColumnExists(connection, 'priority', "VARCHAR(50) DEFAULT 'medium'")
     await ensureColumnExists(connection, 'start_date', 'DATE DEFAULT NULL')
     await ensureColumnExists(connection, 'end_date', 'DATE DEFAULT NULL')
     await ensureColumnExists(connection, 'status', "VARCHAR(20) DEFAULT 'active'")
+    await ensureColumnExists(connection, 'customer_person', 'VARCHAR(255) DEFAULT NULL')
+    await ensureColumnExists(connection, 'customer_email', 'VARCHAR(255) DEFAULT NULL')
+    await ensureColumnExists(connection, 'customer_contact', 'VARCHAR(50) DEFAULT NULL')
+    await ensureColumnExists(connection, 'customer_address', 'TEXT DEFAULT NULL')
+    await ensureColumnExists(connection, 'budget', 'DECIMAL(15,2) DEFAULT NULL')
+    await ensureColumnExists(connection, 'requires_reporting', 'BOOLEAN DEFAULT TRUE')
 
     if (userIsManager) {
       // Managers see all projects
@@ -445,10 +865,7 @@ router.get('/', verifyToken, async (req, res) => {
   }
 })
 
-// ... [Keep the rest of your routes as they are, including collaborator routes, task management, etc.]
-
-// Update project status (alternative route if you want separate endpoint for status)
-// In your updateProjectStatus route, add this fix:
+// Update project status
 router.put('/:id/status', verifyToken, async (req, res) => {
   const connection = await pool.getConnection()
   try {
@@ -490,7 +907,7 @@ router.put('/:id/status', verifyToken, async (req, res) => {
     // Ensure status column exists
     await ensureColumnExists(connection, 'status', "VARCHAR(20) DEFAULT 'active'")
     
-    // Ensure updated_at column exists - ADD THIS
+    // Ensure updated_at column exists
     await ensureColumnExists(connection, 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP')
 
     // If status is 'completed', also set completed field to true
@@ -585,6 +1002,7 @@ router.put('/:id/complete', verifyToken, async (req, res) => {
     connection.release()
   }
 })
+
 // ========== COLLABORATOR ROUTES ==========
 
 // Get collaborators for a project
@@ -730,6 +1148,7 @@ router.post('/:id/collaborators', verifyToken, isManager, async (req, res) => {
   }
 })
 
+
 // Delete a collaborator
 router.delete('/:projectId/collaborators/:collabId', verifyToken, isManager, async (req, res) => {
   const connection = await pool.getConnection()
@@ -799,207 +1218,20 @@ router.put('/:projectId/collaborators/:collabId', verifyToken, isManager, async 
     res.status(500).json({ success: false, message: 'Unable to update collaborator' })
   }
 })
-// Get all users/employees for collaborator dropdown
-// Get all active users for collaborator dropdown
-// Get all active users for collaborator dropdown - SIMPLIFIED VERSION
-// Get all active users for collaborator dropdown - DEBUG VERSION
+
+// Get all users for collaborator dropdown
 router.get('/available-users', verifyToken, async (req, res) => {
-  console.log('🔍 GET /available-users - DEBUG MODE');
-  
-  try {
-    // Log everything for debugging
-    // console.log('1. Checking database connection...');
-    
-    // Test database connection first
-    const [dbTest] = await pool.execute('SELECT 1 as test');
-    // console.log('✅ Database connection OK:', dbTest);
-    
-    // Check if users table exists
-    // console.log('2. Checking if users table exists...');
-    const [tables] = await pool.execute("SHOW TABLES LIKE 'users'");
-    console.log('Tables found:', tables);
-    
-    if (tables.length === 0) {
-      // console.log('❌ USERS TABLE DOES NOT EXIST!');
-      return res.status(404).json({
-        success: false,
-        message: 'Users table not found in database',
-        error: 'TABLE_NOT_FOUND'
-      });
-    }
-    
-    // Check table structure
-    console.log('3. Checking table structure...');
-    const [columns] = await pool.execute("DESCRIBE users");
-    console.log('Users table columns:', columns.map(col => col.Field));
-    
-    // Try different queries to get users
-    console.log('4. Trying to fetch users...');
-    
-    // Query 1: Simple query
-    try {
-      const [users1] = await pool.execute('SELECT * FROM users');
-      console.log(`Query 1: Found ${users1.length} users with SELECT *`);
-    } catch (e1) {
-      console.log('Query 1 failed:', e1.message);
-    }
-    
-    // Query 2: Specific columns
-    try {
-      const [users2] = await pool.execute(`
-        SELECT id, username, employee_id,  role
-        FROM users
-      `);
-      console.log(`Query 2: Found ${users2.length} users with specific columns`);
-    } catch (e2) {
-      console.log('Query 2 failed:', e2.message);
-    }
-    
-    // Query 3: Try with LIMIT
-    try {
-      const [users3] = await pool.execute('SELECT id, username FROM users LIMIT 5');
-      console.log(`Query 3: Found ${users3.length} users with LIMIT`);
-    } catch (e3) {
-      console.log('Query 3 failed:', e3.message);
-    }
-    
-    // Main query for response
-    console.log('5. Executing final query...');
-    let users = [];
-    let queryError = null;
-    
-    try {
-      // Try with all possible columns
-      const [userRows] = await pool.execute(`
-        SELECT 
-          id,
-          COALESCE(username, 'Unknown') as username,
-          COALESCE(employee_id, CONCAT('EMP', id)) as employee_id,
-          
-          COALESCE(role, 'Employee') as role,
-          COALESCE(job_role, 'Employee') as job_role
-        FROM users
-        WHERE status IS NULL OR status = 'active' OR status = ''
-        ORDER BY username ASC
-      `);
-      
-      users = userRows;
-      console.log(`✅ FINAL QUERY: Found ${users.length} real users`);
-      
-      // Log first few users
-      if (users.length > 0) {
-        console.log('First 3 users:', users.slice(0, 3));
-      }
-      
-    } catch (error) {
-      queryError = error;
-      console.error('❌ Final query failed:', error.message);
-      
-      // Try simplest possible query
-      try {
-        const [simpleUsers] = await pool.execute('SELECT id, username FROM users');
-        users = simpleUsers.map(user => ({
-          id: user.id,
-          username: user.username || `User ${user.id}`,
-          employee_id: `EMP${user.id}`,
-        
-          role: 'Employee',
-          job_role: 'Employee'
-        }));
-        console.log(`✅ SIMPLE QUERY: Found ${users.length} users`);
-      } catch (simpleError) {
-        console.error('❌ Simple query also failed:', simpleError.message);
-      }
-    }
-    
-    // If still no users, check if table is empty
-    if (users.length === 0) {
-      const [countResult] = await pool.execute('SELECT COUNT(*) as count FROM users');
-      const totalCount = countResult[0]?.count || 0;
-      
-      console.log(`📊 Database has ${totalCount} total users in table`);
-      
-      if (totalCount > 0) {
-        // There are users but query is failing
-        console.log('⚠️ Table has users but query returns empty. Checking data...');
-        const [allData] = await pool.execute('SELECT * FROM users LIMIT 3');
-        console.log('Sample data:', allData);
-      }
-    }
-    
-    // Format response
-    const formattedUsers = users.map(user => ({
-      id: user.id,
-      label: `${user.username} (${user.employee_id}) - ${user.job_role}`,
-      username: user.username,
-      employee_id: user.employee_id,
-     
-      role: user.role,
-      job_role: user.job_role
-    }));
-    
-    // Send response
-    res.json({
-      success: true,
-      users: formattedUsers,
-      count: formattedUsers.length,
-      has_real_data: true,
-      message: `Found ${formattedUsers.length} real users`,
-      debug: {
-        table_exists: tables.length > 0,
-        total_in_table: users.length,
-        query_error: queryError?.message
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ CRITICAL ERROR in /available-users:', error);
-    
-    res.status(500).json({
-      success: false,
-      message: 'Server error fetching users',
-      error: error.message,
-      sqlMessage: error.sqlMessage,
-      code: error.code
-    });
-  }
-});
-// Get all unique customers for dropdown
-router.get('/customers/list', verifyToken, async (req, res) => {
-  try {
-    const [customers] = await pool.execute(`
-      SELECT DISTINCT customer 
-      FROM projects 
-      WHERE customer IS NOT NULL AND customer != ''
-      ORDER BY customer ASC
-    `);
-    
-    res.json({ 
-      success: true, 
-      customers: customers.map(c => c.customer)
-    });
-  } catch (error) {
-    console.error('Failed to fetch customers:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Unable to fetch customers',
-      error: error.message 
-    });
-  }
-});
-// Update the /available-users route in your backend projects.js
-router.get('/available-users', verifyToken, async (req, res) => {
-  console.log('📋 GET /available-users called');
-  console.log('User making request:', req.user);
+  console.log('📋 GET /available-users called')
+  console.log('User making request:', req.user)
   
   try {
     // Check if user has permission (managers only)
     if (req.user?.role !== 'Manager') {
-      console.log('❌ Non-manager trying to access available-users');
+      console.log('❌ Non-manager trying to access available-users')
       return res.status(403).json({ 
         success: false, 
         message: 'Only managers can access user list' 
-      });
+      })
     }
 
     const [users] = await pool.execute(`
@@ -1007,9 +1239,9 @@ router.get('/available-users', verifyToken, async (req, res) => {
       FROM users 
       WHERE status = 'active' OR status IS NULL
       ORDER BY username ASC
-    `);
+    `)
     
-    console.log(`✅ Found ${users.length} active users`);
+    console.log(`✅ Found ${users.length} active users`)
     
     res.json({ 
       success: true, 
@@ -1021,19 +1253,42 @@ router.get('/available-users', verifyToken, async (req, res) => {
         email: user.email,
         role: user.role
       }))
-    });
+    })
   } catch (error) {
-    console.error('❌ Failed to fetch users:', error);
+    console.error('❌ Failed to fetch users:', error)
     res.status(500).json({ 
       success: false, 
       message: 'Unable to fetch users',
       error: error.message 
-    });
+    })
   }
-});
+})
+
+// Get all unique customers for dropdown
+router.get('/customers/list', verifyToken, async (req, res) => {
+  try {
+    const [customers] = await pool.execute(`
+      SELECT DISTINCT customer 
+      FROM projects 
+      WHERE customer IS NOT NULL AND customer != ''
+      ORDER BY customer ASC
+    `)
+    
+    res.json({ 
+      success: true, 
+      customers: customers.map(c => c.customer)
+    })
+  } catch (error) {
+    console.error('Failed to fetch customers:', error)
+    res.status(500).json({ 
+      success: false, 
+      message: 'Unable to fetch customers',
+      error: error.message 
+    })
+  }
+})
 
 // ========== DELETE PROJECT ROUTE ==========
-// Add this route after your other project routes
 
 // Delete project - MANAGER ONLY
 router.delete('/:id', verifyToken, isManager, async (req, res) => {
@@ -1177,19 +1432,16 @@ router.delete('/:id', verifyToken, isManager, async (req, res) => {
 // ========== ASSIGNED PROJECTS ROUTES ==========
 
 // Get projects assigned to the current employee
-// ========== ASSIGNED PROJECTS ROUTES ==========
-
-// Get projects assigned to the current employee
 router.get('/assigned-projects', verifyToken, async (req, res) => {
-  console.log('🔍 GET /assigned-projects called for user:', req.user);
+  console.log('🔍 GET /assigned-projects called for user:', req.user)
   
   try {
-    const userId = req.user?.id;
-    const employeeId = req.user?.employeeId || req.user?.employee_id;
-    const username = req.user?.username;
-    const userRole = req.user?.role;
+    const userId = req.user?.id
+    const employeeId = req.user?.employeeId || req.user?.employee_id
+    const username = req.user?.username
+    const userRole = req.user?.role
     
-    console.log('User info for query:', { userId, employeeId, username, userRole });
+    console.log('User info for query:', { userId, employeeId, username, userRole })
     
     // If user is manager, return all active projects
     if (userRole === 'Manager') {
@@ -1208,19 +1460,19 @@ router.get('/assigned-projects', verifyToken, async (req, res) => {
         FROM projects p
         WHERE (p.status = 'active' OR p.status IS NULL)
         ORDER BY p.name ASC
-      `);
+      `)
       
-      console.log(`✅ Manager sees ${allProjects.length} projects`);
+      console.log(`✅ Manager sees ${allProjects.length} projects`)
       
       return res.json({
         success: true,
         projects: allProjects,
         count: allProjects.length
-      });
+      })
     }
     
     // For non-managers: Use the EXACT SAME query as your listProjects route
-    console.log('Using non-manager query...');
+    console.log('Using non-manager query...')
     
     const [projects] = await pool.execute(`
       SELECT DISTINCT p.*, 
@@ -1235,9 +1487,9 @@ router.get('/assigned-projects', verifyToken, async (req, res) => {
       )
       GROUP BY p.id
       ORDER BY p.created_at DESC
-    `, [userId, userId, employeeId, username]);
+    `, [userId, userId, employeeId, username])
     
-    console.log(`✅ Query returned ${projects.length} projects`);
+    console.log(`✅ Query returned ${projects.length} projects`)
     
     // Format the response to match what frontend expects
     const formattedProjects = projects.map(project => ({
@@ -1252,35 +1504,35 @@ router.get('/assigned-projects', verifyToken, async (req, res) => {
       status: project.status || 'active',
       start_date: project.start_date,
       end_date: project.end_date
-    }));
+    }))
     
     console.log('📋 Projects found:', formattedProjects.map(p => ({
       id: p.id,
       name: p.name,
       project_no: p.project_no
-    })));
+    })))
     
     res.json({
       success: true,
       projects: formattedProjects,
       count: formattedProjects.length,
       message: `Found ${formattedProjects.length} assigned projects`
-    });
+    })
     
   } catch (error) {
-    console.error('❌ Error in /assigned-projects:', error);
+    console.error('❌ Error in /assigned-projects:', error)
     res.status(500).json({
       success: false,
       message: 'Unable to fetch assigned projects',
       error: error.message,
       sqlMessage: error.sqlMessage
-    });
+    })
   }
-});
+})
 
 // Simple test endpoint that returns hardcoded data matching your UI
 router.get('/test-ui-projects', verifyToken, (req, res) => {
-  console.log('🎯 Test UI projects route for user:', req.user);
+  console.log('🎯 Test UI projects route for user:', req.user)
   
   const testProjects = [
     {
@@ -1309,7 +1561,7 @@ router.get('/test-ui-projects', verifyToken, (req, res) => {
       start_date: '2026-01-06',
       end_date: '2026-06-30'
     }
-  ];
+  ]
   
   res.json({
     success: true,
@@ -1317,19 +1569,19 @@ router.get('/test-ui-projects', verifyToken, (req, res) => {
     count: testProjects.length,
     isTestData: true,
     user: req.user
-  });
-});
+  })
+})
 
 // Get projects available for reporting (similar but more focused)
 router.get('/available-for-reporting', verifyToken, async (req, res) => {
-  console.log('📋 GET /available-for-reporting called');
+  console.log('📋 GET /available-for-reporting called')
   
   try {
-    const currentDate = new Date();
-    const userId = req.user.id;
-    const userRole = req.user.role;
+    const currentDate = new Date()
+    const userId = req.user.id
+    const userRole = req.user.role
     
-    let availableProjects = [];
+    let availableProjects = []
     
     if (userRole === 'Manager') {
       // Managers can report on all active projects within date range
@@ -1350,9 +1602,9 @@ router.get('/available-for-reporting', verifyToken, async (req, res) => {
           AND (p.start_date IS NULL OR p.start_date <= ?)
           AND (p.end_date IS NULL OR p.end_date >= ?)
         ORDER BY p.name ASC
-      `, [currentDate, currentDate]);
+      `, [currentDate, currentDate])
       
-      availableProjects = projects;
+      availableProjects = projects
       
     } else {
       // Employees can only report on projects they're assigned to
@@ -1381,21 +1633,21 @@ router.get('/available-for-reporting', verifyToken, async (req, res) => {
           AND (p.start_date IS NULL OR p.start_date <= ?)
           AND (p.end_date IS NULL OR p.end_date >= ?)
         ORDER BY p.name ASC
-      `, [userId, userId, req.user?.employee_id || req.user?.username, userId, currentDate, currentDate]);
+      `, [userId, userId, req.user?.employee_id || req.user?.username, userId, currentDate, currentDate])
       
-      availableProjects = projects;
+      availableProjects = projects
     }
     
-    console.log(`✅ Found ${availableProjects.length} projects available for reporting`);
+    console.log(`✅ Found ${availableProjects.length} projects available for reporting`)
     
     res.json({
       success: true,
       projects: availableProjects,
       count: availableProjects.length
-    });
+    })
     
   } catch (error) {
-    console.error('❌ Failed to fetch projects for reporting:', error);
+    console.error('❌ Failed to fetch projects for reporting:', error)
     
     // Return mock data
     const mockProjects = [
@@ -1415,29 +1667,29 @@ router.get('/available-for-reporting', verifyToken, async (req, res) => {
         customer: 'XYZ Industries',
         status: 'active'
       }
-    ];
+    ]
     
     res.status(200).json({
       success: true,
       projects: mockProjects,
       count: mockProjects.length,
       isMockData: true
-    });
+    })
   }
-});
+})
 
 // Check if user can report on a specific project
 router.get('/:id/can-report', verifyToken, async (req, res) => {
   try {
-    const projectId = parseInt(req.params.id);
-    const userId = req.user.id;
-    const userRole = req.user.role;
+    const projectId = parseInt(req.params.id)
+    const userId = req.user.id
+    const userRole = req.user.role
     
     if (!projectId) {
       return res.status(400).json({ 
         success: false, 
         message: 'Invalid project ID' 
-      });
+      })
     }
     
     // Managers can always report
@@ -1446,42 +1698,42 @@ router.get('/:id/can-report', verifyToken, async (req, res) => {
         success: true,
         canReport: true,
         reason: 'User is a manager'
-      });
+      })
     }
     
     // Check if user is assigned to this project
     const [assignments] = await pool.execute(`
       SELECT 1 FROM project_assignments 
       WHERE project_id = ? AND employee_id = ?
-    `, [projectId, userId]);
+    `, [projectId, userId])
     
     const [collaborations] = await pool.execute(`
       SELECT 1 FROM project_collaborators 
       WHERE project_id = ? AND (user_id = ? OR collaborator_employee_id = ?)
-    `, [projectId, userId, req.user?.employee_id || req.user?.username]);
+    `, [projectId, userId, req.user?.employee_id || req.user?.username])
     
     const [createdByUser] = await pool.execute(`
       SELECT 1 FROM projects 
       WHERE id = ? AND created_by = ?
-    `, [projectId, userId]);
+    `, [projectId, userId])
     
     const canReport = assignments.length > 0 || 
                       collaborations.length > 0 || 
-                      createdByUser.length > 0;
+                      createdByUser.length > 0
     
     res.json({
       success: true,
       canReport: canReport,
       reason: canReport ? 'User is assigned to this project' : 'User is not assigned to this project'
-    });
+    })
     
   } catch (error) {
-    console.error('Failed to check reporting permission:', error);
+    console.error('Failed to check reporting permission:', error)
     res.status(500).json({
       success: false,
       message: 'Unable to check reporting permission'
-    });
+    })
   }
-});
+})
 
-export default router;
+export default router

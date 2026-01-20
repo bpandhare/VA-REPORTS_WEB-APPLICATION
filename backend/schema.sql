@@ -425,6 +425,18 @@ CREATE INDEX idx_location_type ON daily_target_reports(location_type);
 -- Add status column to projects table
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active';
 
+-- Add customer contact columns
+ALTER TABLE projects 
+ADD COLUMN customer_person VARCHAR(255) DEFAULT NULL AFTER end_customer;
+
+ALTER TABLE projects 
+ADD COLUMN customer_contact VARCHAR(50) DEFAULT NULL AFTER customer_person;
+
+ALTER TABLE projects 
+ADD COLUMN end_customer_person VARCHAR(255) DEFAULT NULL AFTER customer_contact;
+
+ALTER TABLE projects 
+ADD COLUMN end_customer_contact VARCHAR(50) DEFAULT NULL AFTER end_customer_person;
 -- Tasks table
 CREATE TABLE IF NOT EXISTS project_tasks (
   id INT PRIMARY KEY AUTO_INCREMENT,

@@ -514,6 +514,7 @@ const ProjectDetails = () => {
           workDetails: '',
           materialsUsed: '',
           equipmentUsed: '',
+          
           issues: ''
         })
         fetchProjectDetails()
