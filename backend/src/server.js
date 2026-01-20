@@ -14,71 +14,112 @@ import employeeActivityRouter from './routes/employeeActivity.js'
 import projectsRouter from './routes/projects.js'
 import pool from './db.js'
 import timeTrackingRoutes from './routes/timeTracking.js'
-// REMOVE THIS: import managerRoutes from './routes/authRoutes.js'
-import authRoutes from './routes/authRoutes.js' // Add this line
+import authRoutes from './routes/authRoutes.js'
+import jwt from 'jsonwebtoken'
 
 // ES Modules fix for __dirname
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+// Add this function to create MoM table in MySQL
+async function createMoMTable() {
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS mom_records (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        user_name VARCHAR(255) NOT NULL,
+        customer_name VARCHAR(255),
+        customer_person VARCHAR(255),
+        cust_contact VARCHAR(20),
+        cust_country_code VARCHAR(10) DEFAULT '+91',
+        end_cust_name VARCHAR(255),
+        end_cust_contact VARCHAR(20),
+        end_cust_country_code VARCHAR(10) DEFAULT '+91',
+        end_cust_person VARCHAR(255),
+        engg_name VARCHAR(255),
+        site_location TEXT,
+        mom_date VARCHAR(20),
+        reporting_time VARCHAR(10),
+        mom_close_time VARCHAR(10),
+        man_hours VARCHAR(10),
+        man_hours_more_than_9 VARCHAR(3) DEFAULT 'No',
+        billing_days VARCHAR(10),
+        site_start_date VARCHAR(20),
+        site_end_date VARCHAR(20),
+        project_name VARCHAR(255),
+        project_no VARCHAR(100),
+        observation_notes TEXT,
+        solution_notes TEXT,
+        conclusion TEXT,
+        location_lat VARCHAR(50),
+        location_lng VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `)
+    console.log('✓ Created mom_records table')
+  } catch (error) {
+    console.error('Error creating mom_records table:', error.message)
+  }
+}
 
 // Auto-migrate: Add missing columns to users table and create new tables
 async function migrateDatabase() {
   try {
     const dbName = process.env.DB_NAME ?? 'vickhardth_ops'
     
-    // Try to add dob column (will fail silently if it already exists)
+    // Try to add dob column
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN dob DATE')
       console.log('✓ Added dob column to users table')
     } catch (error) {
       if (error.code === 'ER_DUP_FIELDNAME') {
-        // Column already exists, that's fine
+        // Column already exists
       } else {
         throw error
       }
     }
 
-    // Try to add role column (will fail silently if it already exists)
+    // Try to add role column
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN role VARCHAR(80)')
       console.log('✓ Added role column to users table')
     } catch (error) {
       if (error.code === 'ER_DUP_FIELDNAME') {
-        // Column already exists, that's fine
+        // Column already exists
       } else {
         throw error
       }
     }
 
-    // Try to add manager_id column for hierarchical structure
+    // Try to add manager_id column
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN manager_id INT REFERENCES users(id)')
       console.log('✓ Added manager_id column to users table')
     } catch (error) {
       if (error.code === 'ER_DUP_FIELDNAME') {
-        // Column already exists, that's fine
+        // Column already exists
       } else {
         throw error
       }
     }
 
-    // Ensure users table has an assigned_project_id column to track current project assignment
+    // Ensure users table has an assigned_project_id column
     try {
       await pool.execute('ALTER TABLE users ADD COLUMN assigned_project_id INT NULL')
       console.log('✓ Added assigned_project_id column to users table')
     } catch (error) {
-      // Ignore duplicate column errors
       if (error.code === 'ER_DUP_FIELDNAME') {
         // already exists
       } else {
         try {
-          // Some MySQL versions return different codes; attempt safe add
           await pool.execute('ALTER TABLE users ADD COLUMN assigned_project_id INT NULL')
         } catch (e) {}
       }
     }
 
-    // Create activities table (NEW: Fixes the "Unable to fetch activities" error)
+    // Create activities table
     try {
       await pool.execute(`
         CREATE TABLE IF NOT EXISTS activities (
@@ -105,7 +146,7 @@ async function migrateDatabase() {
       console.error('Error creating activities table:', error.message)
     }
 
-    // Create hourly_reports table if it doesn't exist
+    // Create hourly_reports table
     try {
       await pool.execute(`
         CREATE TABLE IF NOT EXISTS hourly_reports (
@@ -125,17 +166,15 @@ async function migrateDatabase() {
       console.error('Error creating hourly_reports table:', error.message)
     }
 
-    // Ensure hourly_reports has user_id and time_period columns used by APIs
+    // Ensure hourly_reports has user_id and time_period columns
     try {
       await pool.execute('ALTER TABLE hourly_reports ADD COLUMN IF NOT EXISTS user_id INT NULL')
       await pool.execute("ALTER TABLE hourly_reports ADD COLUMN IF NOT EXISTS time_period VARCHAR(50) NULL")
       console.log('✓ Ensured hourly_reports has user_id and time_period columns')
     } catch (error) {
-      // Some MySQL versions don't support IF NOT EXISTS in ALTER TABLE for columns; ignore duplicate errors
       if (error.code && error.code === 'ER_DUP_FIELDNAME') {
         // already exists
       } else {
-        // Try a safer approach: add column without IF NOT EXISTS and ignore error
         try {
           await pool.execute('ALTER TABLE hourly_reports ADD COLUMN user_id INT NULL')
         } catch (e) {}
@@ -145,7 +184,7 @@ async function migrateDatabase() {
       }
     }
 
-    // Create projects and project_collaborators tables
+    // Create projects table
     try {
       await pool.execute(`
         CREATE TABLE IF NOT EXISTS projects (
@@ -161,6 +200,7 @@ async function migrateDatabase() {
       console.error('Error creating projects table:', error.message)
     }
 
+    // Create project_collaborators table
     try {
       await pool.execute(`
         CREATE TABLE IF NOT EXISTS project_collaborators (
@@ -178,7 +218,7 @@ async function migrateDatabase() {
       console.error('Error creating project_collaborators table:', error.message)
     }
 
-    // Create daily_target_reports table if it doesn't exist - UPDATED WITH leave_type
+    // Create daily_target_reports table
     try {
       await pool.execute(`
         CREATE TABLE IF NOT EXISTS daily_target_reports (
@@ -194,7 +234,7 @@ async function migrateDatabase() {
           end_customer_contact VARCHAR(20) NOT NULL,
           project_no VARCHAR(120) NOT NULL,
           location_type VARCHAR(20) NOT NULL,
-          leave_type VARCHAR(50) DEFAULT NULL,  -- ADDED THIS LINE
+          leave_type VARCHAR(50) DEFAULT NULL,
           site_location VARCHAR(255),
           location_lat DECIMAL(10, 8),
           location_lng DECIMAL(11, 8),
@@ -221,36 +261,38 @@ async function migrateDatabase() {
       console.error('Error creating daily_target_reports table:', error.message)
     }
 
-    // Add report_date column to daily_target_reports if it doesn't exist
+    // Add report_date column to daily_target_reports
     try {
       await pool.execute('ALTER TABLE daily_target_reports ADD COLUMN report_date DATE')
       console.log('✓ Added report_date column to daily_target_reports table')
     } catch (error) {
       if (error.code === 'ER_DUP_FIELDNAME') {
-        // Column already exists, that's fine
+        // Column already exists
       } else {
         console.error('Error adding report_date column:', error.message)
       }
     }
-try {
-  await pool.execute('ALTER TABLE users ADD COLUMN email VARCHAR(255)')
-  console.log('✓ Added email column to users table')
-} catch (error) {
-  if (error.code === 'ER_DUP_FIELDNAME') {
-    // Column already exists, that's fine
-    console.log('✓ Email column already exists')
-  } else {
-    console.error('Error adding email column:', error.message)
-  }
-}
-    // Add new columns to existing daily_target_reports table if they don't exist
+
+    // Add email column to users
+    try {
+      await pool.execute('ALTER TABLE users ADD COLUMN email VARCHAR(255)')
+      console.log('✓ Added email column to users table')
+    } catch (error) {
+      if (error.code === 'ER_DUP_FIELDNAME') {
+        console.log('✓ Email column already exists')
+      } else {
+        console.error('Error adding email column:', error.message)
+      }
+    }
+
+    // Add new columns to existing daily_target_reports table
     const newColumns = [
       { name: 'end_customer_name', type: 'VARCHAR(120) DEFAULT ""' },
       { name: 'end_customer_person', type: 'VARCHAR(120) DEFAULT ""' },
       { name: 'end_customer_contact', type: 'VARCHAR(20) DEFAULT ""' },
       { name: 'project_no', type: 'VARCHAR(120) DEFAULT ""' },
       { name: 'location_type', type: 'VARCHAR(20) DEFAULT ""' },
-      { name: 'leave_type', type: 'VARCHAR(50) DEFAULT NULL' }, // ADDED THIS LINE
+      { name: 'leave_type', type: 'VARCHAR(50) DEFAULT NULL' },
       { name: 'site_location', type: 'VARCHAR(255)' },
       { name: 'location_lat', type: 'DECIMAL(10, 8)' },
       { name: 'location_lng', type: 'DECIMAL(11, 8)' },
@@ -284,19 +326,18 @@ try {
         console.log(`✓ Added ${column.name} column to daily_target_reports table`)
       } catch (error) {
         if (error.code === 'ER_DUP_FIELDNAME') {
-          // Column already exists, that's fine
+          // Column already exists
         } else {
           console.error(`Error adding ${column.name} column:`, error.message)
         }
       }
     }
 
-    // Create index for leave_type (use plain CREATE INDEX and ignore duplicate-key errors)
+    // Create index for leave_type
     try {
       await pool.execute(`CREATE INDEX idx_leave_type ON daily_target_reports(location_type, leave_type, report_date)`)
       console.log('✓ Created idx_leave_type index')
     } catch (error) {
-      // MySQL may return different error codes for duplicate index; handle common cases
       if (error.code === 'ER_DUP_KEYNAME' || error.errno === 1061) {
         console.log('Index idx_leave_type already exists')
       } else {
@@ -304,41 +345,62 @@ try {
       }
     }
 
-    // Ensure updated_at column exists to avoid SELECT errors
+    // Ensure updated_at column exists
     try {
       await pool.execute('ALTER TABLE daily_target_reports ADD COLUMN updated_at TIMESTAMP NULL DEFAULT NULL')
       console.log('✓ Added updated_at column to daily_target_reports table')
     } catch (error) {
       if (error.code === 'ER_DUP_FIELDNAME') {
-        // Column already exists, that's fine
-      } else {
-        // Some MySQL variants return different codes; ignore duplicate-column errors
-        try {
-          // Try a safer approach: alter without IF NOT EXISTS may throw; ignore
-        } catch (e) {}
+        // Column already exists
       }
     }
+
+    // Create project_files table
+    try {
+      await pool.execute(`
+        CREATE TABLE IF NOT EXISTS project_files (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          project_id INT NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          description TEXT,
+          file_name VARCHAR(255) NOT NULL,
+          original_name VARCHAR(255) NOT NULL,
+          file_path VARCHAR(500) NOT NULL,
+          file_size INT NOT NULL,
+          mime_type VARCHAR(100) NOT NULL,
+          uploaded_by INT NOT NULL,
+          uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+          FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE CASCADE
+        )
+      `)
+      console.log('✓ Created project_files table')
+    } catch (error) {
+      console.error('Error creating project_files table:', error.message)
+    }
+
+    // Create MoM table
+    await createMoMTable();
 
   } catch (error) {
     console.error('Migration error (non-fatal):', error.message)
   }
 }
 
-// Initialize app FIRST
+// Initialize app
 const app = express()
 const PORT = process.env.PORT || 5000
 const HOST = '0.0.0.0'
 
-app.use('/api/time-tracking', timeTrackingRoutes)
 dotenv.config()
 
 // Security middleware
 app.use(helmet({
-  contentSecurityPolicy: false, // Disable CSP for now, configure as needed
+  contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
 }))
 
-// CORS configuration - SIMPLE VERSION FOR LOCAL TESTING
+// CORS configuration
 app.use(cors({
   origin: 'http://localhost:5173',
   credentials: true,
@@ -348,21 +410,20 @@ app.use(cors({
 
 // Rate limiting for API
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
 })
 
-// Apply rate limiting to API routes (only in production to avoid dev 429s)
 if (process.env.NODE_ENV === 'production') {
   app.use('/api', limiter)
 } else {
   console.log('⚠️ Skipping API rate limiter in non-production environment')
 }
 
-// Temporary request logger for API debugging (logs method and path)
+// Request logger for API debugging
 app.use('/api', (req, res, next) => {
   try {
     const auth = req.headers.authorization ? '[auth]' : '[no-auth]'
@@ -378,7 +439,7 @@ if (process.env.NODE_ENV === 'production') {
   app.use(compression())
 }
 
-app.use(express.json({ limit: '10mb' })) // Increased limit for file uploads
+app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
 // Health check endpoint
@@ -391,10 +452,7 @@ app.get('/health', (_req, res) => {
   })
 })
 
-// Add the user info endpoint HERE (after app is initialized)
-// You'll need to import or define verifyToken middleware
-import jwt from 'jsonwebtoken'
-
+// Verify token middleware
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization
   if ((!authHeader || !authHeader.startsWith('Bearer ')) && process.env.NODE_ENV !== 'production') {
@@ -420,6 +478,7 @@ const verifyToken = (req, res, next) => {
   }
 }
 
+// User info endpoint
 app.get('/api/users/me', verifyToken, async (req, res) => {
   try {
     const userId = req.user?.id
@@ -440,48 +499,193 @@ app.get('/api/users/me', verifyToken, async (req, res) => {
   }
 })
 
+// Create MoM routes inline (to avoid import issues)
+const createMomRoutes = () => {
+  const router = express.Router();
+
+  // Create MoM
+  router.post('/mom-records', verifyToken, async (req, res) => {
+    try {
+      const {
+        customerName, customerPerson, custContact, custCountryCode,
+        endCustName, endCustContact, endCustCountryCode, endCustPerson,
+        enggName, siteLocation, momDate, reportingTime, momCloseTime,
+        manHours, manHoursMoreThan9, billingDays, siteStartDate, siteEndDate,
+        projectName, projectNo, observationNotes, solutionNotes, conclusion,
+        locationLat, locationLng
+      } = req.body;
+
+      const [result] = await pool.execute(
+        `INSERT INTO mom_records (
+          user_id, user_name, customer_name, customer_person, cust_contact, cust_country_code,
+          end_cust_name, end_cust_contact, end_cust_country_code, end_cust_person,
+          engg_name, site_location, mom_date, reporting_time, mom_close_time,
+          man_hours, man_hours_more_than_9, billing_days, site_start_date, site_end_date,
+          project_name, project_no, observation_notes, solution_notes, conclusion,
+          location_lat, location_lng
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.id, req.user.username || req.user.name, customerName, customerPerson, 
+          custContact, custCountryCode || '+91', endCustName, endCustContact, 
+          endCustCountryCode || '+91', endCustPerson, enggName, siteLocation, momDate, 
+          reportingTime, momCloseTime, manHours, manHoursMoreThan9, billingDays, 
+          siteStartDate, siteEndDate, projectName, projectNo, observationNotes, 
+          solutionNotes, conclusion, locationLat, locationLng
+        ]
+      );
+
+      res.status(201).json({
+        success: true,
+        message: 'MoM created successfully',
+        momId: result.insertId
+      });
+    } catch (error) {
+      console.error('Error creating MoM:', error);
+      res.status(500).json({ error: 'Failed to create MoM' });
+    }
+  });
+
+  // Get all MoMs
+  router.get('/mom-records', verifyToken, async (req, res) => {
+    try {
+      const { date } = req.query;
+      let query = 'SELECT * FROM mom_records WHERE 1=1';
+      const params = [];
+
+      if (date) {
+        query += ' AND DATE(created_at) = ?';
+        params.push(date);
+      }
+
+      // Role-based filtering
+      if (!['manager', 'admin'].includes(req.user.role?.toLowerCase())) {
+        query += ' AND user_id = ?';
+        params.push(req.user.id);
+      }
+
+      query += ' ORDER BY created_at DESC';
+
+      const [rows] = await pool.execute(query, params);
+      
+      res.json({ success: true, moms: rows });
+    } catch (error) {
+      console.error('Error fetching MoM records:', error);
+      res.status(500).json({ error: 'Failed to fetch MoM records' });
+    }
+  });
+
+  // Get MoM by ID
+  router.get('/mom-records/:id', verifyToken, async (req, res) => {
+    try {
+      const [rows] = await pool.execute(
+        'SELECT * FROM mom_records WHERE id = ?',
+        [req.params.id]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'MoM not found' });
+      }
+
+      const mom = rows[0];
+
+      // Check permission
+      if (!['manager', 'admin'].includes(req.user.role?.toLowerCase()) && 
+          mom.user_id !== req.user.id) {
+        return res.status(403).json({ error: 'Unauthorized' });
+      }
+
+      res.json({ success: true, mom });
+    } catch (error) {
+      console.error('Error fetching MoM:', error);
+      res.status(500).json({ error: 'Failed to fetch MoM' });
+    }
+  });
+
+  // Get MoM statistics
+  router.get('/mom-stats', verifyToken, async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      let query = `SELECT 
+        COUNT(*) as totalMoms,
+        COUNT(DISTINCT customer_name) as uniqueCustomersCount,
+        COUNT(DISTINCT engg_name) as uniqueEngineersCount
+        FROM mom_records WHERE 1=1`;
+      const params = [];
+
+      if (startDate && endDate) {
+        query += ' AND DATE(created_at) BETWEEN ? AND ?';
+        params.push(startDate, endDate);
+      }
+
+      // Role-based filtering
+      if (!['manager', 'admin'].includes(req.user.role?.toLowerCase())) {
+        query += ' AND user_id = ?';
+        params.push(req.user.id);
+      }
+
+      const [rows] = await pool.execute(query, params);
+      
+      res.json({
+        success: true,
+        stats: rows[0] || {
+          totalMoms: 0,
+          uniqueCustomersCount: 0,
+          uniqueEngineersCount: 0
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching MoM stats:', error);
+      res.status(500).json({ error: 'Failed to fetch MoM statistics' });
+    }
+  });
+
+  // Get MoMs by employee
+  router.get('/mom-records/employee/:employeeId', verifyToken, async (req, res) => {
+    try {
+      const { employeeId } = req.params;
+      const { date } = req.query;
+      
+      let query = 'SELECT * FROM mom_records WHERE user_id = ?';
+      const params = [employeeId];
+
+      if (date) {
+        query += ' AND DATE(created_at) = ?';
+        params.push(date);
+      }
+
+      query += ' ORDER BY created_at DESC';
+
+      const [rows] = await pool.execute(query, params);
+      
+      res.json({ success: true, moms: rows });
+    } catch (error) {
+      console.error('Error fetching employee MoM records:', error);
+      res.status(500).json({ error: 'Failed to fetch employee MoM records' });
+    }
+  });
+
+  return router;
+};
+
 // API Routes
+app.use('/api/time-tracking', timeTrackingRoutes)
 app.use('/api/auth', authRouter)
-app.use('/api/auth', authRoutes) // Add this line for the new authRoutes
+app.use('/api/auth', authRoutes)
 app.use('/api/activity', activityRouter)
 app.use('/api/hourly-report', hourlyReportRouter)
 app.use('/api/daily-target', dailyTargetRouter)
 app.use('/api/employee-activity', employeeActivityRouter)
 app.use('/api/projects', verifyToken, projectsRouter)
 
-// Create project_files table (move this inside migrateDatabase function)
-try {
-  await pool.execute(`
-    CREATE TABLE IF NOT EXISTS project_files (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      project_id INT NOT NULL,
-      name VARCHAR(255) NOT NULL,
-      description TEXT,
-      file_name VARCHAR(255) NOT NULL,
-      original_name VARCHAR(255) NOT NULL,
-      file_path VARCHAR(500) NOT NULL,
-      file_size INT NOT NULL,
-      mime_type VARCHAR(100) NOT NULL,
-      uploaded_by INT NOT NULL,
-      uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-      FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `)
-  console.log('✓ Created project_files table')
-} catch (error) {
-  console.error('Error creating project_files table:', error.message)
-}
+// Add MoM routes
+app.use('/api/employee-activity', createMomRoutes())
 
 // Serve frontend static files in production
 if (process.env.NODE_ENV === 'production') {
-  // Assuming frontend is built in a folder relative to backend
   const frontendPath = path.join(__dirname, '../frontend/dist')
   
-  // Serve static files from frontend build
   app.use(express.static(frontendPath))
   
-  // Handle SPA routing - return index.html for all non-API routes
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) {
       res.sendFile(path.join(frontendPath, 'index.html'))
@@ -522,26 +726,32 @@ app.use((err, req, res, next) => {
 })
 
 // Graceful shutdown
+let server;
 process.on('SIGTERM', () => {
   console.log('SIGTERM received. Shutting down gracefully...')
-  server.close(() => {
-    console.log('Server closed')
-    pool.end(() => {
-      console.log('Database pool closed')
-      process.exit(0)
+  if (server) {
+    server.close(() => {
+      console.log('Server closed')
+      pool.end(() => {
+        console.log('Database pool closed')
+        process.exit(0)
+      })
     })
-  })
+  } else {
+    process.exit(0)
+  }
 })
 
 // Run migration on startup
 migrateDatabase().then(() => {
-  const server = app.listen(PORT, HOST, () => {
+  server = app.listen(PORT, HOST, () => {
     console.log(`🚀 Server running in ${process.env.NODE_ENV || 'development'} mode`)
     console.log(`📡 API server ready on http://${HOST}:${PORT}`)
     console.log(`🔐 Auth endpoint: http://${HOST}:${PORT}/api/auth/login`)
     console.log(`👥 Users endpoint: http://${HOST}:${PORT}/api/auth/users`)
     console.log(`🏥 Health check: http://${HOST}:${PORT}/health`)
     console.log(`👤 User info endpoint: http://${HOST}:${PORT}/api/users/me`)
+    console.log(`📝 MoM endpoints: http://${HOST}:${PORT}/api/employee-activity/mom-records`)
     
     if (process.env.NODE_ENV === 'production') {
       console.log(`🌐 Serving frontend from static build`)

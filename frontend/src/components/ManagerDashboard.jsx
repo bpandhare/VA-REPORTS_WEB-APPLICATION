@@ -6,6 +6,7 @@ function ManagerDashboard() {
   const { user, token } = useAuth();
   const [employees, setEmployees] = useState([]);
   const [activities, setActivities] = useState([]);
+  const [momRecords, setMomRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -14,9 +15,18 @@ function ManagerDashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [pendingLeaves, setPendingLeaves] = useState([]);
-  const [dailyTargets, setDailyTargets] = useState([]);
   const [consoleLogs, setConsoleLogs] = useState([]);
   const [selectedProject, setSelectedProject] = useState('all');
+  const [selectedMom, setSelectedMom] = useState(null);
+  const [showMomModal, setShowMomModal] = useState(false);
+  const [momLoading, setMomLoading] = useState(false);
+  const [employeeMomRecords, setEmployeeMomRecords] = useState({});
+  const [momStats, setMomStats] = useState({
+    totalMoms: 0,
+    uniqueCustomersCount: 0,
+    uniqueEngineersCount: 0,
+    overtimeCount: 0
+  });
 
   const BASE_URL = 'http://localhost:5000';
 
@@ -26,42 +36,28 @@ function ManagerDashboard() {
     }
   }, [token, user, selectedDate]);
 
- // In the fetchDashboardData function, remove fetchDailyTargets:
-const fetchDashboardData = async () => {
-  try {
-    setLoading(true);
-    setError('');
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+      setError('');
 
-    await Promise.all([
-      fetchHourlyReports(),
-      fetchAllUsers(),
-      fetchPendingLeaves(),
-      // Remove or comment this out: fetchDailyTargets(),
-      simulateConsoleLogs()
-    ]);
-  } catch (error) {
-    console.error('Error:', error);
-    setError('Failed to load dashboard data.');
-  } finally {
-    setLoading(false);
-  }
-};
+      // Fetch data in sequence to avoid race conditions
+      await fetchAllUsers(); // First fetch users
+      await Promise.all([
+        fetchHourlyReports(),
+        fetchPendingLeaves(),
+        fetchMomRecords(),
+        fetchMomStats()
+      ]);
+    } catch (error) {
+      console.error('Error:', error);
+      setError('Failed to load dashboard data. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-// Also comment out the state declaration:
-// const [dailyTargets, setDailyTargets] = useState([]);
-
-// And update the render section for Daily Target Report:
-<div className="report-card">
-  <h3>Daily Target Report</h3>
-  <p>View and manage daily targets</p>
-  <button 
-    className="btn-view-targets"
-    onClick={() => alert('Target report functionality coming soon')}
-  >
-    View Report
-  </button>
-</div>
-
+  // FIXED: Better fetchHourlyReports with error handling
   const fetchHourlyReports = async () => {
     try {
       const response = await fetch(`${BASE_URL}/api/hourly-report/${selectedDate}`, {
@@ -71,12 +67,21 @@ const fetchDashboardData = async () => {
         }
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        if (Array.isArray(data)) {
-          setActivities(data);
-          calculateAttendance(data);
-        }
+      if (!response.ok) {
+        console.warn(`Hourly reports fetch failed: ${response.status}`);
+        setActivities([]);
+        return;
+      }
+
+      const data = await response.json();
+      
+      // Process activities to include employee names
+      if (Array.isArray(data)) {
+        setActivities(data);
+        calculateAttendance(data);
+      } else if (data.activities && Array.isArray(data.activities)) {
+        setActivities(data.activities);
+        calculateAttendance(data.activities);
       } else {
         setActivities([]);
       }
@@ -86,6 +91,7 @@ const fetchDashboardData = async () => {
     }
   };
 
+  // FIXED: Enhanced fetchAllUsers with better error handling
   const fetchAllUsers = async () => {
     try {
       const response = await fetch(`${BASE_URL}/api/auth/users`, {
@@ -95,26 +101,120 @@ const fetchDashboardData = async () => {
         }
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        let usersData = [];
-        
-        if (Array.isArray(data)) {
-          usersData = data;
-        } else if (data.users && Array.isArray(data.users)) {
-          usersData = data.users;
-        }
-        
-        const filteredUsers = usersData.filter(u => 
-          u.role !== 'admin' && u.id !== user?.id
-        );
-        setEmployees(filteredUsers);
-      } else {
+      if (!response.ok) {
+        console.warn(`Users fetch failed: ${response.status}`);
         setEmployees([]);
+        return;
       }
+
+      const data = await response.json();
+      let usersData = [];
+      
+      if (Array.isArray(data)) {
+        usersData = data;
+      } else if (data.users && Array.isArray(data.users)) {
+        usersData = data.users;
+      } else if (data.data && Array.isArray(data.data)) {
+        usersData = data.data;
+      }
+      
+      console.log('Fetched users:', usersData.length); // Debug log
+      
+      // Filter out admin and current user
+      const filteredUsers = usersData.filter(u => {
+        const userRole = (u.role || '').toLowerCase();
+        return userRole !== 'admin' && 
+               u.id !== user?.id && 
+               u._id !== user?.id;
+      });
+      
+      // Normalize user data
+      const normalizedUsers = filteredUsers.map(user => ({
+        id: user.id || user._id,
+        username: user.username || user.name || 'Unknown',
+        employeeId: user.employeeId || user.employee_id || 'N/A',
+        role: user.role || 'Employee',
+        email: user.email || '',
+        phone: user.phone || ''
+      }));
+      
+      setEmployees(normalizedUsers);
     } catch (error) {
       console.error('Error fetching users:', error);
       setEmployees([]);
+    }
+  };
+
+  // FIXED: Updated fetchMomRecords with better error handling
+  const fetchMomRecords = async () => {
+    try {
+      setMomLoading(true);
+      console.log('Fetching MoM records for date:', selectedDate); // Debug log
+      
+      const response = await fetch(`${BASE_URL}/api/employee-activity/mom-records?date=${selectedDate}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log('MoM response status:', response.status); // Debug log
+      
+      if (!response.ok) {
+        console.warn(`MoM records fetch failed: ${response.status}`);
+        setMomRecords([]);
+        setEmployeeMomRecords({});
+        return;
+      }
+      
+      const data = await response.json();
+      console.log('MoM data received:', data); // Debug log
+      
+      if (data.success && Array.isArray(data.moms)) {
+        setMomRecords(data.moms);
+        
+        // Group MoMs by employee for quick access
+        const groupedByEmployee = {};
+        data.moms.forEach(mom => {
+          const employeeId = mom.user_id;
+          if (!groupedByEmployee[employeeId]) {
+            groupedByEmployee[employeeId] = [];
+          }
+          groupedByEmployee[employeeId].push(mom);
+        });
+        setEmployeeMomRecords(groupedByEmployee);
+      } else {
+        console.warn('MoM data format incorrect:', data);
+        setMomRecords([]);
+        setEmployeeMomRecords({});
+      }
+    } catch (error) {
+      console.error('Error fetching MoM records:', error);
+      setMomRecords([]);
+      setEmployeeMomRecords({});
+    } finally {
+      setMomLoading(false);
+    }
+  };
+
+  // New function to fetch MoM statistics
+  const fetchMomStats = async () => {
+    try {
+      const response = await fetch(`${BASE_URL}/api/employee-activity/mom-stats?startDate=${selectedDate}&endDate=${selectedDate}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.stats) {
+          setMomStats(data.stats);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching MoM stats:', error);
     }
   };
 
@@ -137,35 +237,14 @@ const fetchDashboardData = async () => {
     }
   };
 
-  const fetchDailyTargets = async () => {
-    try {
-      const response = await fetch(`${BASE_URL}/api/daily-target/${selectedDate}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setDailyTargets(Array.isArray(data) ? data : []);
-      }
-    } catch (error) {
-      console.error('Error fetching daily targets:', error);
-      setDailyTargets([]);
-    }
-  };
-
   const simulateConsoleLogs = () => {
     const logs = [
-      { id: 1, message: 'Token api.js:80 added to headers', type: 'info' },
-      { id: 2, message: '200 GET api.js:97 /api/projects', type: 'success' },
-      { id: 3, message: 'Response: { success: true, projects: Array(6) }', type: 'info' },
-      { id: 4, message: 'api.js:733 filtering for current user...', type: 'info' },
-      { id: 5, message: 'HourlyReportForm.jsx: Loading employee data...', type: 'info' },
-      { id: 6, message: 'Full API Response: { data: {...} }', type: 'info' },
-      { id: 7, message: 'Response data: { success: true, projects: Array(6) }', type: 'success' },
-      { id: 8, message: 'ENG IN 14-01-2026', type: 'warning' }
+      { id: 1, message: 'Dashboard initialized', type: 'success' },
+      { id: 2, message: `Loading data for date: ${selectedDate}`, type: 'info' },
+      { id: 3, message: `Found ${employees.length} employees`, type: 'info' },
+      { id: 4, message: `Found ${activities.length} activities`, type: 'success' },
+      { id: 5, message: `Found ${momRecords.length} MoM records`, type: 'success' },
+      { id: 6, message: 'Dashboard ready', type: 'success' }
     ];
     setConsoleLogs(logs);
   };
@@ -174,7 +253,9 @@ const fetchDashboardData = async () => {
     const userReports = {};
     
     reports.forEach(report => {
-      const userId = report.user_id;
+      const userId = report.user_id || report.userId;
+      if (!userId) return;
+      
       if (!userReports[userId]) {
         userReports[userId] = {
           reports: [],
@@ -183,7 +264,9 @@ const fetchDashboardData = async () => {
           lastReport: null,
           resolvedIssues: 0,
           projects: new Set(),
-          totalHours: 0
+          totalHours: 0,
+          momCount: 0,
+          employeeName: report.employeeName || 'Unknown'
         };
       }
       
@@ -210,8 +293,10 @@ const fetchDashboardData = async () => {
       }
     });
     
+    // Add MoM counts to each employee
     Object.keys(userReports).forEach(userId => {
       userReports[userId].projects = Array.from(userReports[userId].projects);
+      userReports[userId].momCount = employeeMomRecords[userId] ? employeeMomRecords[userId].length : 0;
     });
     
     setAttendanceSummary(userReports);
@@ -221,10 +306,6 @@ const fetchDashboardData = async () => {
     return attendanceSummary[userId] && attendanceSummary[userId].totalReports > 0;
   };
 
-  const getEmployeeReports = (userId) => {
-    return attendanceSummary[userId]?.reports || [];
-  };
-
   const getEmployeeStats = (userId) => {
     return attendanceSummary[userId] || { 
       totalReports: 0, 
@@ -232,11 +313,12 @@ const fetchDashboardData = async () => {
       projects: [], 
       totalHours: 0,
       firstReport: null,
-      lastReport: null
+      lastReport: null,
+      momCount: 0,
+      employeeName: 'Unknown'
     };
   };
 
-  // New function to get project list for filtering
   const getProjectList = () => {
     const projects = new Set();
     employees.forEach(emp => {
@@ -248,7 +330,6 @@ const fetchDashboardData = async () => {
     return Array.from(projects);
   };
 
-  // Filter employees based on search, status, and project
   const filteredEmployees = employees.filter(emp => {
     const matchesSearch = searchTerm === '' || 
       emp.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -313,16 +394,73 @@ const fetchDashboardData = async () => {
     setSelectedDate(tomorrow);
   };
 
-  // New function to handle project management
-  const manageProject = (projectName) => {
-    alert(`Manage project: ${projectName}`);
-    // Implement project management logic here
+  const viewMomDetails = (mom) => {
+    setSelectedMom(mom);
+    setShowMomModal(true);
   };
 
-  // New function to handle employee monitoring
+  const downloadMomPdf = async (mom) => {
+    try {
+      alert('PDF generation would start here');
+      // Your existing PDF download logic
+    } catch (err) {
+      console.error('Error generating PDF:', err);
+      alert('Failed to generate PDF');
+    }
+  };
+
+  const downloadMomTxt = (mom) => {
+    try {
+      // Your existing TXT download logic
+      const content = `
+MoM Details:
+Date: ${mom.mom_date}
+Customer: ${mom.customer_name}
+Engineer: ${mom.engg_name}
+Project: ${mom.project_name}
+Location: ${mom.site_location}
+Man Hours: ${mom.man_hours}
+      `;
+      
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `MoM_${mom.customer_name}_${mom.mom_date}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error generating TXT:', err);
+      alert('Failed to generate TXT file');
+    }
+  };
+
+  const manageProject = (projectName) => {
+    alert(`Manage project: ${projectName}`);
+  };
+
   const monitorEmployee = (employeeId) => {
     alert(`Monitoring employee: ${employeeId}`);
-    // Implement employee monitoring logic here
+  };
+
+  // Add this function to test the API endpoint
+  const testMomEndpoint = async () => {
+    try {
+      console.log('Testing MoM endpoint...');
+      const response = await fetch(`${BASE_URL}/api/employee-activity/mom-records`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      console.log('Test response:', response.status, response.statusText);
+      const data = await response.json();
+      console.log('Test data:', data);
+    } catch (error) {
+      console.error('Test error:', error);
+    }
   };
 
   if (loading) {
@@ -342,6 +480,7 @@ const fetchDashboardData = async () => {
           <h1>VICKHARDTH</h1>
           <p className="dashboard-subtitle">Daily reporting hub for site engineers</p>
           <p className="dashboard-subtitle">{formatDateDisplay(selectedDate)}</p>
+          <p className="dashboard-subtitle">User: {user?.username} | Role: {user?.role}</p>
         </div>
         
         <div className="date-controls">
@@ -355,6 +494,7 @@ const fetchDashboardData = async () => {
           />
           <button onClick={goToNextDay} className="date-btn">→</button>
           <button onClick={fetchDashboardData} className="refresh-btn">Refresh</button>
+          {/* <button onClick={testMomEndpoint} className="test-btn">Test API</button> */}
         </div>
       </div>
 
@@ -364,38 +504,225 @@ const fetchDashboardData = async () => {
         </div>
       )}
 
-      {/* Reports Section */}
-      <div className="reports-section">
-        <h2>REPORTS</h2>
-        <div className="reports-grid">
-          <div className="report-card">
-            <h3>All Employees - Daily Status</h3>
-            <p>Showing all {employees.length} employees • {Object.keys(attendanceSummary).length} present today</p>
+      {/* Navigation Tabs */}
+      <div className="dashboard-tabs">
+        <button 
+          className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
+          onClick={() => setActiveTab('overview')}
+        >
+          Overview
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'employees' ? 'active' : ''}`}
+          onClick={() => setActiveTab('employees')}
+        >
+          Employees ({employees.length})
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'mom' ? 'active' : ''}`}
+          onClick={() => setActiveTab('mom')}
+        >
+          MoM Records ({momRecords.length})
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'activities' ? 'active' : ''}`}
+          onClick={() => setActiveTab('activities')}
+        >
+          Activities ({activities.length})
+        </button>
+      </div>
+
+      {/* Overview Tab */}
+      {activeTab === 'overview' && (
+        <>
+          {/* Reports Section */}
+          <div className="reports-section">
+            <h2>REPORTS</h2>
+            <div className="reports-grid">
+              <div className="report-card">
+                <h3>All Employees - Daily Status</h3>
+                <p>Showing all {employees.length} employees • {Object.keys(attendanceSummary).length} present today</p>
+                <button 
+                  className="btn-view-details"
+                  onClick={() => setActiveTab('employees')}
+                >
+                  View Details
+                </button>
+              </div>
+              <div className="report-card">
+                <h3>Minutes of Meeting (MoM)</h3>
+                <p>{momStats.totalMoms} MoMs created today</p>
+                <p>{momStats.uniqueCustomersCount} unique customers</p>
+                <button 
+                  className="btn-view-moms"
+                  onClick={() => setActiveTab('mom')}
+                >
+                  View MoMs
+                </button>
+              </div>
+              <div className="report-card">
+                <h3>Hourly Activities</h3>
+                <p>{activities.length} hourly reports submitted</p>
+                <button 
+                  className="btn-view-activities"
+                  onClick={() => setActiveTab('activities')}
+                >
+                  View Activities
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="report-card">
-            <h3>Daily Target Report</h3>
-            <p>{dailyTargets.length} targets set for today</p>
-            {dailyTargets.length > 0 && (
-              <div className="targets-preview">
-                {dailyTargets.slice(0, 2).map(target => (
-                  <div key={target.id} className="target-item">
-                    {target.project_name}: {target.target_description}
+
+          {/* Quick Stats */}
+          <div className="quick-stats">
+            <div className="stat-card">
+              <h4>Total Employees</h4>
+              <p className="stat-number">{employees.length}</p>
+            </div>
+            <div className="stat-card">
+              <h4>Present Today</h4>
+              <p className="stat-number">{Object.keys(attendanceSummary).length}</p>
+            </div>
+            <div className="stat-card">
+              <h4>Total Reports</h4>
+              <p className="stat-number">{activities.length}</p>
+            </div>
+            <div className="stat-card">
+              <h4>Total MoMs</h4>
+              <p className="stat-number">{momStats.totalMoms}</p>
+            </div>
+          </div>
+
+          {/* Recent MoMs */}
+          <div className="recent-section">
+            <h3>Recent Minutes of Meeting</h3>
+            {momLoading ? (
+              <p>Loading MoMs...</p>
+            ) : momRecords.length === 0 ? (
+              <p>No MoM records found for today.</p>
+            ) : (
+              <div className="recent-moms">
+                {momRecords.slice(0, 5).map((mom, index) => (
+                  <div key={mom.id || index} className="mom-preview-card">
+                    <div className="mom-preview-header">
+                      <h4>{mom.customer_name || 'Unnamed Customer'}</h4>
+                      <span className="mom-date">{mom.mom_date || 'No date'}</span>
+                    </div>
+                    <div className="mom-preview-details">
+                      <p><strong>Engineer:</strong> {mom.engg_name || mom.user_name || 'Unknown'}</p>
+                      <p><strong>Project:</strong> {mom.project_name || 'N/A'}</p>
+                      <p><strong>Location:</strong> {mom.site_location ? (mom.site_location.length > 50 ? `${mom.site_location.substring(0, 50)}...` : mom.site_location) : 'N/A'}</p>
+                    </div>
+                    <div className="mom-preview-actions">
+                      <button onClick={() => viewMomDetails(mom)}>View</button>
+                      <button onClick={() => downloadMomTxt(mom)}>Download</button>
+                    </div>
                   </div>
                 ))}
-                {dailyTargets.length > 2 && <div>+{dailyTargets.length - 2} more</div>}
               </div>
             )}
           </div>
-        </div>
-      </div>
+        </>
+      )}
 
-      {/* Employee Details Table */}
-      <div className="employee-details-section">
-        <h2>EMPLOYEE DETAILS</h2>
-        
-        {/* Filters */}
-        <div className="details-filters">
-          <div className="filter-group">
+      {/* MoM Records Tab */}
+      {activeTab === 'mom' && (
+        <div className="mom-section">
+          <div className="mom-header">
+            <h2>Minutes of Meeting Records</h2>
+            <div className="mom-header-info">
+              <p>Showing MoMs for: {formatDateDisplay(selectedDate)}</p>
+              <div className="mom-stats-badge">
+                <span>Total: {momStats.totalMoms}</span>
+                <span>Customers: {momStats.uniqueCustomersCount}</span>
+                <span>Engineers: {momStats.uniqueEngineersCount}</span>
+                <span>Overtime: {momStats.overtimeCount}</span>
+              </div>
+            </div>
+          </div>
+          
+          {momLoading ? (
+            <div className="loading-moms">
+              <div className="spinner-small"></div>
+              <p>Loading MoM records...</p>
+            </div>
+          ) : momRecords.length === 0 ? (
+            <div className="no-moms">
+              <p>No MoM records found for this date.</p>
+              <button onClick={fetchMomRecords} className="btn-retry">Retry</button>
+            </div>
+          ) : (
+            <>
+              <div className="mom-table-container">
+                <table className="mom-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Customer</th>
+                      <th>Engineer</th>
+                      <th>Project</th>
+                      <th>Site Location</th>
+                      <th>Man Hours</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {momRecords.map((mom, index) => (
+                      <tr key={mom.id || index}>
+                        <td>{mom.mom_date || new Date(mom.created_at).toLocaleDateString()}</td>
+                        <td>
+                          <strong>{mom.customer_name || 'N/A'}</strong>
+                          {mom.customer_person && <div className="small-text">Contact: {mom.customer_person}</div>}
+                        </td>
+                        <td>{mom.engg_name || mom.user_name || 'N/A'}</td>
+                        <td>
+                          {mom.project_name || 'N/A'}
+                          {mom.project_no && <div className="small-text">#{mom.project_no}</div>}
+                        </td>
+                        <td className="location-cell">
+                          {mom.site_location ? 
+                            (mom.site_location.length > 30 ? 
+                              `${mom.site_location.substring(0, 30)}...` : 
+                              mom.site_location) : 
+                            'N/A'}
+                        </td>
+                        <td>
+                          <span className={`hours-badge ${mom.man_hours_more_than_9 === 'Yes' ? 'overtime' : 'normal'}`}>
+                            {mom.man_hours || 'N/A'}
+                            {mom.man_hours_more_than_9 === 'Yes' && <span className="overtime-indicator">+</span>}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="mom-actions">
+                            <button 
+                              onClick={() => viewMomDetails(mom)}
+                              className="btn-view"
+                            >
+                              View
+                            </button>
+                            <button 
+                              onClick={() => downloadMomTxt(mom)}
+                              className="btn-download"
+                            >
+                              TXT
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Employees Tab */}
+      {activeTab === 'employees' && (
+        <div className="detailed-employees-section">
+          <h2>Employee Directory</h2>
+          <div className="employee-filters">
             <input
               type="text"
               placeholder="Search employees..."
@@ -403,8 +730,6 @@ const fetchDashboardData = async () => {
               onChange={(e) => setSearchTerm(e.target.value)}
               className="filter-input"
             />
-          </div>
-          <div className="filter-group">
             <select 
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -415,154 +740,237 @@ const fetchDashboardData = async () => {
               <option value="absent">Absent</option>
             </select>
           </div>
-          <div className="filter-group">
-            <select 
-              value={selectedProject}
-              onChange={(e) => setSelectedProject(e.target.value)}
-              className="filter-select"
-            >
-              <option value="all">All Projects</option>
-              {getProjectList().map(project => (
-                <option key={project} value={project}>{project}</option>
-              ))}
-            </select>
+          
+          <div className="employee-cards">
+            {filteredEmployees.map((emp, index) => {
+              const isPresent = isEmployeePresent(emp.id);
+              const stats = getEmployeeStats(emp.id);
+              
+              return (
+                <div key={emp.id || index} className="employee-card">
+                  <div className="employee-card-header">
+                    <div className="employee-avatar-large">
+                      {emp.username?.charAt(0) || 'E'}
+                    </div>
+                    <div className="employee-info">
+                      <h3>{emp.username}</h3>
+                      <p className="employee-id">{emp.employeeId}</p>
+                      <p className="employee-role">{emp.role}</p>
+                      <span className={`status-badge-large ${isPresent ? 'present' : 'absent'}`}>
+                        {isPresent ? 'PRESENT TODAY' : 'ABSENT TODAY'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="employee-stats">
+                    <div className="stat-item">
+                      <span className="stat-label">Reports</span>
+                      <span className="stat-value">{stats.totalReports}</span>
+                    </div>
+                    <div className="stat-item">
+                      <span className="stat-label">Resolved</span>
+                      <span className="stat-value">{stats.resolvedIssues}</span>
+                    </div>
+                    <div className="stat-item">
+                      <span className="stat-label">MoMs</span>
+                      <span className="stat-value">{stats.momCount}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="employee-actions">
+                    <button 
+                      onClick={() => monitorEmployee(emp.id)}
+                      className="btn-monitor-full"
+                    >
+                      View Activities
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
+      )}
 
-        {/* Table Section */}
-        <div className="details-table-container">
-          <div className="table-section">
-            <h3>MONITORING</h3>
-            <table className="details-table">
+      {/* Activities Tab */}
+      {activeTab === 'activities' && (
+        <div className="activities-section">
+          <h2>Hourly Activities Report</h2>
+          <p>Date: {formatDateDisplay(selectedDate)} • Total Reports: {activities.length}</p>
+          
+          <div className="activities-table-container">
+            <table className="activities-table">
               <thead>
                 <tr>
                   <th>Employee</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredEmployees.map((emp, index) => {
-                  const isPresent = isEmployeePresent(emp.id);
-                  const stats = getEmployeeStats(emp.id);
-                  
-                  return (
-                    <tr key={emp.id || index}>
-                      <td>
-                        <div className="table-employee">
-                          <div className="table-avatar">
-                            {emp.username?.charAt(0) || 'E'}
-                          </div>
-                          <div>
-                            <div className="table-name">{emp.username}</div>
-                            <div className="table-id">{emp.employeeId || emp.id}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <span className={`status-badge ${isPresent ? 'present' : 'absent'}`}>
-                          {isPresent ? 'Present' : 'Absent'}
-                        </span>
-                      </td>
-                      <td>
-                        <button 
-                          onClick={() => monitorEmployee(emp.id)}
-                          className="btn-monitor"
-                        >
-                          Monitor
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="table-section">
-            <h3>PROJECTS (Manage)</h3>
-            <table className="details-table">
-              <thead>
-                <tr>
+                  <th>Time</th>
                   <th>Project</th>
-                  <th>Assigned To</th>
-                  <th>Progress</th>
+                  <th>Activity</th>
+                  <th>Problem Resolved</th>
                 </tr>
               </thead>
               <tbody>
-                {getProjectList().slice(0, 5).map((project, index) => {
-                  const assignedEmployees = employees.filter(emp => {
-                    const stats = getEmployeeStats(emp.id);
-                    return stats.projects.includes(project);
-                  });
-                  
-                  return (
-                    <tr key={index}>
-                      <td>{project}</td>
-                      <td>
-                        {assignedEmployees.slice(0, 2).map(emp => (
-                          <div key={emp.id} className="assigned-employee">
-                            {emp.username}
+                {activities.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" className="no-data">
+                      No activities found for this date.
+                    </td>
+                  </tr>
+                ) : (
+                  activities.map((activity, index) => {
+                    // Find employee name
+                    const employee = employees.find(emp => emp.id === activity.user_id);
+                    return (
+                      <tr key={index}>
+                        <td>
+                          <div className="activity-employee">
+                            <div className="activity-avatar">
+                              {employee?.username?.charAt(0) || activity.employeeName?.charAt(0) || 'U'}
+                            </div>
+                            <div>
+                              <div className="activity-name">{employee?.username || activity.employeeName || 'Unknown'}</div>
+                              <div className="activity-id">{employee?.employeeId || 'N/A'}</div>
+                            </div>
                           </div>
-                        ))}
-                        {assignedEmployees.length > 2 && (
-                          <div>+{assignedEmployees.length - 2} more</div>
-                        )}
-                      </td>
-                      <td>
-                        <button 
-                          onClick={() => manageProject(project)}
-                          className="btn-manage"
-                        >
-                          Manage
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                        </td>
+                        <td>{activity.time_period || 'N/A'}</td>
+                        <td>{activity.project_name || 'N/A'}</td>
+                        <td className="activity-description">
+                          {activity.hourly_activity || activity.daily_target_achieved || 'N/A'}
+                        </td>
+                        <td>
+                          <span className={`resolved-badge ${activity.problem_resolved_or_not === 'yes' ? 'resolved' : 'pending'}`}>
+                            {activity.problem_resolved_or_not === 'yes' ? 'Yes' : 'No'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Additional Info Sections */}
-      <div className="info-sections">
-        <div className="info-section">
-          <h3>Today's Activities Summary</h3>
-          <div className="activity-stats">
-            <div className="activity-stat">
-              <span className="stat-value">{activities.length}</span>
-              <span className="stat-label">Total Reports</span>
+      {/* MoM Details Modal */}
+      {showMomModal && selectedMom && (
+        <div className="mom-modal-overlay">
+          <div className="mom-modal">
+            <div className="mom-modal-header">
+              <h3>Minutes of Meeting Details</h3>
+              <button 
+                onClick={() => setShowMomModal(false)}
+                className="close-modal"
+              >
+                ×
+              </button>
             </div>
-            <div className="activity-stat">
-              <span className="stat-value">
-                {activities.filter(a => a.problem_resolved_or_not === 'yes').length}
-              </span>
-              <span className="stat-label">Resolved Issues</span>
-            </div>
-            <div className="activity-stat">
-              <span className="stat-value">{getProjectList().length}</span>
-              <span className="stat-label">Active Projects</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="info-section">
-          <h3>Console</h3>
-          <div className="console-container">
-            {consoleLogs.map(log => (
-              <div key={log.id} className={`console-log ${log.type}`}>
-                {log.message}
+            
+            <div className="mom-modal-content">
+              <div className="mom-details-grid">
+                <div className="detail-group">
+                  <h4>Customer Information</h4>
+                  <div className="detail-row">
+                    <span>Customer Name:</span>
+                    <strong>{selectedMom.customer_name || 'N/A'}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Contact Person:</span>
+                    <span>{selectedMom.customer_person || 'N/A'}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span>Contact Number:</span>
+                    <span>{selectedMom.cust_country_code || '+91'} {selectedMom.cust_contact || 'N/A'}</span>
+                  </div>
+                </div>
+                
+                <div className="detail-group">
+                  <h4>Site Details</h4>
+                  <div className="detail-row">
+                    <span>Engineer:</span>
+                    <strong>{selectedMom.engg_name || selectedMom.user_name || 'N/A'}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Project:</span>
+                    <span>{selectedMom.project_name || 'N/A'} ({selectedMom.project_no || 'N/A'})</span>
+                  </div>
+                  <div className="detail-row">
+                    <span>Site Location:</span>
+                    <span>{selectedMom.site_location || 'N/A'}</span>
+                  </div>
+                </div>
+                
+                <div className="detail-group">
+                  <h4>Timing Information</h4>
+                  <div className="detail-row">
+                    <span>Date:</span>
+                    <span>{selectedMom.mom_date || 'N/A'}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span>Reporting Time:</span>
+                    <span>{selectedMom.reporting_time || 'N/A'}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span>Close Time:</span>
+                    <span>{selectedMom.mom_close_time || 'N/A'}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span>Man Hours:</span>
+                    <span>{selectedMom.man_hours || 'N/A'} {selectedMom.man_hours_more_than_9 === 'Yes' ? '(Overtime)' : ''}</span>
+                  </div>
+                </div>
               </div>
-            ))}
+              
+              {selectedMom.observation_notes && (
+                <div className="detail-section">
+                  <h4>Observations</h4>
+                  <div className="notes-box">
+                    {selectedMom.observation_notes}
+                  </div>
+                </div>
+              )}
+              
+              {selectedMom.solution_notes && (
+                <div className="detail-section">
+                  <h4>Solutions</h4>
+                  <div className="notes-box">
+                    {selectedMom.solution_notes}
+                  </div>
+                </div>
+              )}
+              
+              {selectedMom.conclusion && (
+                <div className="detail-section">
+                  <h4>Conclusion</h4>
+                  <div className="conclusion-box">
+                    {selectedMom.conclusion}
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div className="mom-modal-footer">
+              <button 
+                onClick={() => downloadMomTxt(selectedMom)}
+                className="btn-download"
+              >
+                Download TXT
+              </button>
+              <button 
+                onClick={() => setShowMomModal(false)}
+                className="btn-close"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Footer Info */}
       <div className="info-footer">
-        <small>VICKHARDTH Site Engineering Dashboard • {new Date().toLocaleDateString()}</small>
+        <small>VICKHARDTH Site Engineering Dashboard • {new Date().toLocaleDateString()} • Total Employees: {employees.length}</small>
       </div>
     </div>
   );
