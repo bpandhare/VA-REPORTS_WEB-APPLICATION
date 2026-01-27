@@ -827,64 +827,25 @@ export const getEmployeeAssignments = async (projectId) => {
 };
 
 // Update this function in your api.js file:
+// In services/api.js
 export const getAssignedProjects = async () => {
-  console.log('📤 Fetching assigned projects for current user');
-  
+  const token = localStorage.getItem('token');
   try {
-    // DIRECT CALL: Use the endpoint that definitely exists
-    const response = await api.get('/api/projects/assigned-projects');
-    console.log('✅ Assigned projects response:', {
-      success: response.data.success,
-      count: response.data.count || 0,
-      projects: response.data.projects || []
+    const response = await fetch(`${API_URL}/api/projects/assigned`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
     });
-    return response;
-  } catch (error) {
-    console.error('❌ /api/projects/assigned-projects failed:', error);
     
-    // Try the simplest possible endpoint
-    try {
-      const response = await api.get('/api/projects');
-      console.log('✅ /api/projects worked, filtering for current user...');
-      
-      // Filter projects for current user manually
-      const allProjects = response.data.projects || [];
-      const userId = localStorage.getItem('userId');
-      const employeeId = localStorage.getItem('employeeId');
-      const username = localStorage.getItem('username');
-      
-      // Filter projects this user has access to (same logic as backend)
-      const userProjects = allProjects.filter(project => {
-        // If user is creator
-        if (project.created_by == userId) return true;
-        
-        // If project has collaborators, check if user is in them
-        // This is simplified - in real app you'd have a better way
-        return true; // For now, return all projects
-      });
-      
-      return {
-        data: {
-          success: true,
-          projects: userProjects,
-          count: userProjects.length,
-          message: 'Filtered from all projects'
-        }
-      };
-      
-    } catch (fallbackError) {
-      console.error('❌ Fallback also failed:', fallbackError);
-      
-      // Return empty but successful response
-      return Promise.resolve({
-        data: {
-          success: true,
-          projects: [],
-          count: 0,
-          message: 'No endpoints available'
-        }
-      });
+    if (!response.ok) {
+      throw new Error('Failed to fetch assigned projects');
     }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching assigned projects:', error);
+    throw error;
   }
 };
 

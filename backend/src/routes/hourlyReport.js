@@ -440,6 +440,7 @@ router.post('/', verifyToken, async (req, res) => {
 })
 
 // PUT route to update existing hourly reports
+// PUT route to update existing hourly reports
 router.put('/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params
@@ -536,12 +537,29 @@ router.put('/:id', verifyToken, async (req, res) => {
     const role = (req.user.role || '').toLowerCase()
     const isManagerish = role.includes('manager') || role.includes('team leader') || role.includes('group leader')
 
+    // Check if report exists and get its current details
+    const [existingReport] = await pool.execute('SELECT * FROM hourly_reports WHERE id = ?', [id])
+    if (existingReport.length === 0) return res.status(404).json({ message: 'Hourly report not found' })
+    
+    const report = existingReport[0]
+    const ownerId = report.user_id
+    
     // Ensure ownership unless manager
-    const [existing] = await pool.execute('SELECT user_id FROM hourly_reports WHERE id = ?', [id])
-    if (existing.length === 0) return res.status(404).json({ message: 'Hourly report not found' })
-    const ownerId = existing[0].user_id
     if (!isManagerish && ownerId !== userId) {
       return res.status(403).json({ message: 'Not authorized to update this hourly report' })
+    }
+
+    // Check if another report exists for same date and time period (excluding current report)
+    // This prevents duplicate reports but allows editing the existing one
+    const [duplicateCheck] = await pool.execute(
+      'SELECT id FROM hourly_reports WHERE report_date = ? AND time_period = ? AND user_id = ? AND id != ?',
+      [normalized.reportDate, normalized.timePeriod, userId, id]
+    )
+
+    if (duplicateCheck.length > 0) {
+      return res.status(409).json({ 
+        message: `Another hourly report already exists for ${normalized.timePeriod} on ${normalized.reportDate}. Please delete it first or edit that report instead.` 
+      })
     }
 
     // Build UPDATE query dynamically based on available columns

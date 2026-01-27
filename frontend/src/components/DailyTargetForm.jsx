@@ -89,6 +89,12 @@ function DailyTargetForm() {
   const [showHourlyAchievements, setShowHourlyAchievements] = useState(false)
   const [autoMergeHourly, setAutoMergeHourly] = useState(true)
 
+  // ========== DAILY PLANS STATES ==========
+  const [dailyPlans, setDailyPlans] = useState([
+    { id: 1, text: '', activities: [], completed: false }
+  ])
+  const [nextPlanId, setNextPlanId] = useState(2)
+
   // Country code options
   const countryCodes = [
     { code: '+91', name: 'India', flag: '🇮🇳' },
@@ -209,108 +215,108 @@ function DailyTargetForm() {
   )
 
   // ========== FUNCTION TO FETCH HOURLY ACHIEVEMENTS ==========
- // ========== FUNCTION TO FETCH HOURLY ACHIEVEMENTS ==========
-const fetchHourlyAchievements = async () => {
-  if (!token || !formData.reportDate || formData.locationType === 'leave') {
-    setAlert({ type: 'warning', message: 'Select a date first' });
-    return;
-  }
+  const fetchHourlyAchievements = async () => {
+    if (!token || !formData.reportDate || formData.locationType === 'leave') {
+      setAlert({ type: 'warning', message: 'Select a date first' });
+      return;
+    }
 
-  setLoadingHourlyData(true);
-  try {
-    console.log('🔍 Fetching hourly achievements for date:', formData.reportDate);
-    
-    const hourlyEndpoint = import.meta.env.VITE_API_URL?.replace('/api/activity', '/api/hourly-report') 
-      ?? 'http://localhost:5000/api/hourly-report';
-    
-    const response = await fetch(
-      `${hourlyEndpoint}/${formData.reportDate}`,
-      {
-        headers: { 
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    
-    if (response.ok) {
-      const data = await response.json();
-      console.log('✅ Hourly reports fetched:', data);
+    setLoadingHourlyData(true);
+    try {
+      console.log('🔍 Fetching hourly achievements for date:', formData.reportDate);
       
-      if (data.length > 0) {
-        // Process each hourly report
-        const achievements = data.map((report, index) => {
-          // Get achievement text - prioritize achievements over activities
-          let achievement = '';
+      const hourlyEndpoint = import.meta.env.VITE_API_URL?.replace('/api/activity', '/api/hourly-report') 
+        ?? 'http://localhost:5000/api/hourly-report';
+      
+      const response = await fetch(
+        `${hourlyEndpoint}/${formData.reportDate}`,
+        {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('✅ Hourly reports fetched:', data);
+        
+        if (data.length > 0) {
+          // Process each hourly report
+          const achievements = data.map((report, index) => {
+            // Get achievement text - prioritize achievements over activities
+            let achievement = '';
+            
+            if (report.hourly_achieved && report.hourly_achieved.trim()) {
+              // Extract just the achievement text without the "Achieved X: " prefix
+              achievement = report.hourly_achieved.trim();
+              // Remove any "Achieved X: " prefix if present
+              achievement = achievement.replace(/^Achieved \d+:\s*/i, '');
+            } else if (report.daily_target_achieved && report.daily_target_achieved.trim()) {
+              achievement = report.daily_target_achieved.trim();
+            } else if (report.hourly_activity && report.hourly_activity.trim()) {
+              // If no achievements, fall back to activity but format it differently
+              achievement = `Activity: ${report.hourly_activity.trim()}`;
+              // Remove any "Activity X: " prefix if present
+              achievement = achievement.replace(/^Activity \d+:\s*/i, '');
+            }
+            
+            // Clean up formatting
+            achievement = achievement
+              .replace(/\n+/g, ' ')
+              .trim();
+            
+            return {
+              id: report.id || `hourly-${index}`,
+              timePeriod: report.time_period || `Session ${index + 1}`,
+              periodName: report.period_name || `Period ${index + 1}`,
+              achievement: achievement,
+              project: report.project_name || 'N/A',
+              hasData: !!achievement,
+              rawData: report
+            };
+          }).filter(item => item.hasData);
           
-          if (report.hourly_achieved && report.hourly_achieved.trim()) {
-            // Extract just the achievement text without the "Achieved X: " prefix
-            achievement = report.hourly_achieved.trim();
-            // Remove any "Achieved X: " prefix if present
-            achievement = achievement.replace(/^Achieved \d+:\s*/i, '');
-          } else if (report.daily_target_achieved && report.daily_target_achieved.trim()) {
-            achievement = report.daily_target_achieved.trim();
-          } else if (report.hourly_activity && report.hourly_activity.trim()) {
-            // If no achievements, fall back to activity but format it differently
-            achievement = `Activity: ${report.hourly_activity.trim()}`;
-            // Remove any "Activity X: " prefix if present
-            achievement = achievement.replace(/^Activity \d+:\s*/i, '');
+          setHourlyAchievements(achievements);
+          
+          // Auto-merge if enabled
+          if (autoMergeHourly && achievements.length > 0) {
+            const allAchievements = achievements
+              .map((item, idx) => `${idx + 1}. ${item.timePeriod}: ${item.achievement}`)
+              .join('\n');
+            
+            setFormData(prev => ({
+              ...prev,
+              dailyTargetAchieved: allAchievements
+            }));
+            setIsDirty(true);
           }
           
-          // Clean up formatting
-          achievement = achievement
-            .replace(/\n+/g, ' ')
-            .trim();
-          
-          return {
-            id: report.id || `hourly-${index}`,
-            timePeriod: report.time_period || `Session ${index + 1}`,
-            periodName: report.period_name || `Period ${index + 1}`,
-            achievement: achievement,
-            project: report.project_name || 'N/A',
-            hasData: !!achievement,
-            rawData: report
-          };
-        }).filter(item => item.hasData);
-        
-        setHourlyAchievements(achievements);
-        
-        // Auto-merge if enabled
-        if (autoMergeHourly && achievements.length > 0) {
-          const allAchievements = achievements
-            .map((item, idx) => `${idx + 1}. ${item.timePeriod}: ${item.achievement}`)
-            .join('\n');
-          
-          setFormData(prev => ({
-            ...prev,
-            dailyTargetAchieved: allAchievements
-          }));
-          setIsDirty(true);
-        }
-        
-        if (achievements.length > 0) {
-          setShowHourlyAchievements(true);
-          setAlert({ 
-            type: 'success', 
-            message: `Loaded ${achievements.length} hourly achievement(s)` 
-          });
+          if (achievements.length > 0) {
+            setShowHourlyAchievements(true);
+            setAlert({ 
+              type: 'success', 
+              message: `Loaded ${achievements.length} hourly achievement(s)` 
+            });
+          } else {
+            setAlert({ type: 'info', message: 'No achievements found in hourly reports' });
+          }
         } else {
-          setAlert({ type: 'info', message: 'No achievements found in hourly reports' });
+          setHourlyAchievements([]);
+          setAlert({ type: 'info', message: 'No hourly reports found for this date' });
         }
       } else {
-        setHourlyAchievements([]);
-        setAlert({ type: 'info', message: 'No hourly reports found for this date' });
+        setAlert({ type: 'warning', message: 'Unable to fetch hourly reports' });
       }
-    } else {
-      setAlert({ type: 'warning', message: 'Unable to fetch hourly reports' });
+    } catch (error) {
+      console.error('❌ Failed to fetch hourly achievements:', error);
+      setAlert({ type: 'error', message: 'Error fetching hourly data' });
+    } finally {
+      setLoadingHourlyData(false);
     }
-  } catch (error) {
-    console.error('❌ Failed to fetch hourly achievements:', error);
-    setAlert({ type: 'error', message: 'Error fetching hourly data' });
-  } finally {
-    setLoadingHourlyData(false);
-  }
-};
+  };
+
   // ========== FUNCTION TO ADD ACHIEVEMENT TO DAILY TARGET ==========
   const addAchievementToDailyTarget = (achievementText) => {
     if (!achievementText.trim()) return;
@@ -355,6 +361,124 @@ const fetchHourlyAchievements = async () => {
     });
   };
 
+  // ========== FUNCTION TO ADD NEW PLAN ==========
+  const addPlan = () => {
+    const newPlan = { 
+      id: nextPlanId, 
+      text: '', 
+      activities: [], 
+      completed: false 
+    };
+    setDailyPlans([...dailyPlans, newPlan]);
+    setNextPlanId(nextPlanId + 1);
+    setIsDirty(true);
+  };
+
+  // ========== FUNCTION TO UPDATE PLAN TEXT ==========
+  const updatePlan = (id, text) => {
+    const updatedPlans = dailyPlans.map(plan => 
+      plan.id === id ? { ...plan, text } : plan
+    );
+    setDailyPlans(updatedPlans);
+    setIsDirty(true);
+    
+    // Update formData.dailyTargetPlanned
+    const formattedPlans = updatedPlans
+      .filter(plan => plan.text.trim())
+      .map((plan, index) => `${index + 1}. ${plan.text}`)
+      .join('\n');
+    
+    setFormData(prev => ({
+      ...prev,
+      dailyTargetPlanned: formattedPlans
+    }));
+  };
+
+  // ========== FUNCTION TO REMOVE PLAN ==========
+  const removePlan = (id) => {
+    if (dailyPlans.length <= 1) {
+      setAlert({ type: 'warning', message: 'At least one plan is required' });
+      return;
+    }
+    
+    const updatedPlans = dailyPlans.filter(plan => plan.id !== id);
+    setDailyPlans(updatedPlans);
+    setIsDirty(true);
+    
+    // Update formData.dailyTargetPlanned
+    const formattedPlans = updatedPlans
+      .filter(plan => plan.text.trim())
+      .map((plan, index) => `${index + 1}. ${plan.text}`)
+      .join('\n');
+    
+    setFormData(prev => ({
+      ...prev,
+      dailyTargetPlanned: formattedPlans
+    }));
+  };
+
+  // ========== FUNCTION TO SAVE PLANS FOR HOURLY ==========
+  const savePlansForHourly = () => {
+    if (!user?.id || dailyPlans.length === 0) return;
+    
+    const plansData = {
+      plans: dailyPlans,
+      date: formData.reportDate || new Date().toISOString().slice(0, 10),
+      timestamp: new Date().toISOString()
+    };
+    
+    localStorage.setItem(`daily-plans-${user.id}`, JSON.stringify(plansData));
+    
+    const plansText = dailyPlans
+      .filter(plan => plan.text.trim())
+      .map((plan, index) => `${index + 1}. ${plan.text}`)
+      .join('\n');
+    
+    localStorage.setItem(`daily-target-planned-${user.id}`, plansText);
+    
+    setAlert({ type: 'success', message: 'Daily plans saved for hourly reporting' });
+  };
+
+  // ========== FUNCTION TO LOAD PLANS FROM SAVED DATA ==========
+  const loadPlansFromSavedData = (savedData) => {
+    if (!savedData) return;
+    
+    // Try to load from saved plans data
+    const savedPlansData = savedData.plans || savedData.dailyPlans;
+    
+    if (savedPlansData && Array.isArray(savedPlansData)) {
+      setDailyPlans(savedPlansData);
+      const maxId = Math.max(...savedPlansData.map(p => p.id), 0);
+      setNextPlanId(maxId + 1);
+      
+      // Also update formData
+      const formattedPlans = savedPlansData
+        .filter(plan => plan.text && plan.text.trim())
+        .map((plan, index) => `${index + 1}. ${plan.text}`)
+        .join('\n');
+      
+      setFormData(prev => ({
+        ...prev,
+        dailyTargetPlanned: formattedPlans
+      }));
+    } else if (savedData.dailyTargetPlanned) {
+      // If no saved plans array but we have dailyTargetPlanned text
+      // Parse the text back into plans
+      const planTexts = savedData.dailyTargetPlanned.split('\n').filter(text => text.trim());
+      const parsedPlans = planTexts.map((text, index) => ({
+        id: index + 1,
+        text: text.replace(/^\d+\.\s*/, '').trim(),
+        activities: [],
+        completed: false
+      }));
+      
+      if (parsedPlans.length > 0) {
+        setDailyPlans(parsedPlans);
+        setNextPlanId(parsedPlans.length + 1);
+      }
+    }
+  };
+
   // ========== AUTO-FETCH WHEN DATE CHANGES ==========
   useEffect(() => {
     if (formData.reportDate && token && formData.locationType !== 'leave') {
@@ -367,38 +491,189 @@ const fetchHourlyAchievements = async () => {
     }
   }, [formData.reportDate, formData.locationType, token]);
 
-  // Show notification about auto-saved data on mount (but don't auto-load)
-useEffect(() => {
-  const checkForAutoSavedData = () => {
-    const saved = localStorage.getItem(`daily-report-auto-save-${user?.id}`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        // Only show notification if it's from today
-        if (parsed.date === new Date().toISOString().slice(0, 10)) {
-          setSavedData(parsed);
-          setLastSaved(parsed.timestamp);
-          
-          // Show notification about saved data
-          setAlert({
-            type: 'info',
-            message: 'Found auto-saved data from today. Click "Load Auto-saved" to restore it.',
-            autoClear: true
-          });
-          
-          setTimeout(() => setAlert(null), 5000);
+  // Show notification about auto-saved data on mount
+  useEffect(() => {
+    const checkForAutoSavedData = () => {
+      const saved = localStorage.getItem(`daily-report-auto-save-${user?.id}`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          // Only show notification if it's from today
+          if (parsed.date === new Date().toISOString().slice(0, 10)) {
+            setSavedData(parsed);
+            setLastSaved(parsed.timestamp);
+            
+            // Show notification about saved data
+            setAlert({
+              type: 'info',
+              message: 'Found auto-saved data from today. Click "Load Auto-saved" to restore it.',
+              autoClear: true
+            });
+            
+            setTimeout(() => setAlert(null), 5000);
+          }
+        } catch (error) {
+          console.error('Failed to parse auto-saved data:', error);
         }
-      } catch (error) {
-        console.error('Failed to parse auto-saved data:', error);
       }
+    };
+
+    if (user?.id) {
+      checkForAutoSavedData();
+    }
+  }, [user]);
+
+  // ========== LOAD AUTO-SAVED DATA FUNCTION ==========
+  const loadAutoSavedData = () => {
+    if (!user?.id) {
+      setAlert({ type: 'warning', message: 'User not found' });
+      return;
+    }
+
+    let saved = null;
+    
+    // Try to load from localStorage first (for auto-saved data)
+    const localSaved = localStorage.getItem(`daily-report-auto-save-${user.id}`);
+    if (localSaved) {
+      try {
+        saved = JSON.parse(localSaved);
+        console.log('📂 Loaded from localStorage:', saved);
+      } catch (error) {
+        console.error('Failed to parse localStorage data:', error);
+      }
+    }
+    
+    // If no localStorage data, try sessionStorage
+    if (!saved) {
+      const sessionSaved = sessionStorage.getItem(`daily-report-session-${user.id}`);
+      if (sessionSaved) {
+        try {
+          saved = JSON.parse(sessionSaved);
+          console.log('📂 Loaded from sessionStorage:', saved);
+        } catch (error) {
+          console.error('Failed to parse sessionStorage data:', error);
+        }
+      }
+    }
+    
+    if (saved) {
+      // Check if the saved data is for today
+      const today = new Date().toISOString().slice(0, 10);
+      const savedDate = saved.date || saved.reportDate || today;
+      
+      if (savedDate === today) {
+        // Update savedData state
+        setSavedData({
+          ...saved,
+          timestamp: saved.timestamp || new Date().toISOString()
+        });
+        setLastSaved(saved.timestamp || new Date().toISOString());
+        
+        // Load ALL form data
+        setFormData(prev => {
+          const newData = {
+            ...prev,
+            reportDate: saved.reportDate || prev.reportDate,
+            inTime: saved.inTime || prev.inTime,
+            outTime: saved.outTime || prev.outTime,
+            customerName: saved.customerName || prev.customerName,
+            customerPerson: saved.customerPerson || prev.customerPerson,
+            customerContact: saved.customerContact || prev.customerContact,
+            customerCountryCode: saved.customerCountryCode || prev.customerCountryCode,
+            customerAddress: saved.customerAddress || prev.customerAddress,
+            endCustomerName: saved.endCustomerName || prev.endCustomerName,
+            endCustomerPerson: saved.endCustomerPerson || prev.endCustomerPerson,
+            endCustomerContact: saved.endCustomerContact || prev.endCustomerContact,
+            endCustomerCountryCode: saved.endCustomerCountryCode || prev.endCustomerCountryCode,
+            endCustomerAddress: saved.endCustomerAddress || prev.endCustomerAddress,
+            projectNo: saved.projectNo || prev.projectNo,
+            locationType: saved.locationType || prev.locationType,
+            leaveType: saved.leaveType || prev.leaveType,
+            siteLocation: saved.siteLocation || prev.siteLocation,
+            locationLat: saved.locationLat || prev.locationLat,
+            locationLng: saved.locationLng || prev.locationLng,
+            dailyTargetPlanned: saved.dailyTargetPlanned || prev.dailyTargetPlanned,
+            dailyTargetAchieved: saved.dailyTargetAchieved || prev.dailyTargetAchieved,
+            additionalActivity: saved.additionalActivity || prev.additionalActivity,
+            additionalActivityDetails: saved.additionalActivityDetails || prev.additionalActivityDetails,
+            whoAddedActivity: saved.whoAddedActivity || prev.whoAddedActivity,
+            dailyPendingTarget: saved.dailyPendingTarget || prev.dailyPendingTarget,
+            pendingTargetDetails: saved.pendingTargetDetails || prev.pendingTargetDetails,
+            reasonPendingTarget: saved.reasonPendingTarget || prev.reasonPendingTarget,
+            problemFaced: saved.problemFaced || prev.problemFaced,
+            problemDetails: saved.problemDetails || prev.problemDetails,
+            problemResolved: saved.problemResolved || prev.problemResolved,
+            problemResolutionDetails: saved.problemResolutionDetails || prev.problemResolutionDetails,
+            onlineSupportRequired: saved.onlineSupportRequired || prev.onlineSupportRequired,
+            supportEngineerName: saved.supportEngineerName || prev.supportEngineerName,
+            siteStartDate: saved.siteStartDate || prev.siteStartDate,
+            siteEndDate: saved.siteEndDate || prev.siteEndDate,
+            incharge: saved.incharge || prev.incharge,
+            remark: saved.remark || prev.remark
+          };
+          
+          console.log('✅ Loaded auto-saved data:', newData);
+          return newData;
+        });
+        
+        // Load plans from saved data
+        loadPlansFromSavedData(saved);
+        
+        // Handle location data if it exists
+        if (saved.locationType === 'site' && saved.locationLat && saved.locationLng) {
+          setLocationAccess(true);
+          // Reverse geocode the location
+          const lat = parseFloat(saved.locationLat);
+          const lng = parseFloat(saved.locationLng);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            reverseGeocode(lat, lng).then((address) => {
+              if (address && address !== `${lat.toFixed(6)}, ${lng.toFixed(6)}`) {
+                setFormData(prev => ({
+                  ...prev,
+                  siteLocation: address,
+                }));
+              }
+            });
+          }
+        }
+        
+        // Handle leave type if it exists
+        if (saved.locationType === 'leave' && saved.leaveType) {
+          const typeDetails = leaveTypes.find(lt => lt.id === saved.leaveType);
+          setSelectedLeaveType(typeDetails);
+        }
+        
+        setIsDirty(false);
+        setAlert({
+          type: 'success',
+          message: `Auto-saved data loaded (${new Date(saved.timestamp).toLocaleTimeString()})`
+        });
+        
+        // Clear alert after 3 seconds
+        setTimeout(() => setAlert(null), 3000);
+        
+      } else {
+        setAlert({ 
+          type: 'warning', 
+          message: `Auto-saved data is from ${savedDate}. Only today's data (${today}) can be loaded.` 
+        });
+      }
+    } else {
+      setAlert({ 
+        type: 'info', 
+        message: 'No auto-saved data found for today.' 
+      });
     }
   };
 
-  if (user?.id) {
-    checkForAutoSavedData();
-  }
-}, [user]);
-  // Fetch customers from API or use predefined
+  // ========== INITIAL LOAD OF SAVED DATA ==========
+  useEffect(() => {
+    if (user?.id) {
+      loadAutoSavedData();
+    }
+  }, [user]);
+
+  // ========== FETCH CUSTOMERS FUNCTION ==========
   const fetchCustomers = async () => {
     setLoadingCustomers(true)
     try {
@@ -433,151 +708,6 @@ useEffect(() => {
     }
   }
 
-  // Load auto-saved data on component mount
-useEffect(() => {
- const loadAutoSavedData = () => {
-  if (!user?.id) {
-    setAlert({ type: 'warning', message: 'User not found' });
-    return;
-  }
-
-  let saved = null;
-  
-  // Try to load from localStorage first (for auto-saved data)
-  const localSaved = localStorage.getItem(`daily-report-auto-save-${user.id}`);
-  if (localSaved) {
-    try {
-      saved = JSON.parse(localSaved);
-      console.log('📂 Loaded from localStorage:', saved);
-    } catch (error) {
-      console.error('Failed to parse localStorage data:', error);
-    }
-  }
-  
-  // If no localStorage data, try sessionStorage
-  if (!saved) {
-    const sessionSaved = sessionStorage.getItem(`daily-report-session-${user.id}`);
-    if (sessionSaved) {
-      try {
-        saved = JSON.parse(sessionSaved);
-        console.log('📂 Loaded from sessionStorage:', saved);
-      } catch (error) {
-        console.error('Failed to parse sessionStorage data:', error);
-      }
-    }
-  }
-  
-  if (saved) {
-    // Check if the saved data is for today
-    const today = new Date().toISOString().slice(0, 10);
-    const savedDate = saved.date || saved.reportDate || today;
-    
-    if (savedDate === today) {
-      // Update savedData state
-      setSavedData({
-        ...saved,
-        timestamp: saved.timestamp || new Date().toISOString()
-      });
-      setLastSaved(saved.timestamp || new Date().toISOString());
-      
-      // Load ALL form data, not just partial fields
-      setFormData(prev => {
-        const newData = {
-          ...prev,
-          reportDate: saved.reportDate || prev.reportDate,
-          inTime: saved.inTime || prev.inTime,
-          outTime: saved.outTime || prev.outTime,
-          customerName: saved.customerName || prev.customerName,
-          customerPerson: saved.customerPerson || prev.customerPerson,
-          customerContact: saved.customerContact || prev.customerContact,
-          customerCountryCode: saved.customerCountryCode || prev.customerCountryCode,
-          customerAddress: saved.customerAddress || prev.customerAddress,
-          endCustomerName: saved.endCustomerName || prev.endCustomerName,
-          endCustomerPerson: saved.endCustomerPerson || prev.endCustomerPerson,
-          endCustomerContact: saved.endCustomerContact || prev.endCustomerContact,
-          endCustomerCountryCode: saved.endCustomerCountryCode || prev.endCustomerCountryCode,
-          endCustomerAddress: saved.endCustomerAddress || prev.endCustomerAddress,
-          projectNo: saved.projectNo || prev.projectNo,
-          locationType: saved.locationType || prev.locationType,
-          leaveType: saved.leaveType || prev.leaveType,
-          siteLocation: saved.siteLocation || prev.siteLocation,
-          locationLat: saved.locationLat || prev.locationLat,
-          locationLng: saved.locationLng || prev.locationLng,
-          dailyTargetPlanned: saved.dailyTargetPlanned || prev.dailyTargetPlanned,
-          dailyTargetAchieved: saved.dailyTargetAchieved || prev.dailyTargetAchieved,
-          additionalActivity: saved.additionalActivity || prev.additionalActivity,
-          additionalActivityDetails: saved.additionalActivityDetails || prev.additionalActivityDetails,
-          whoAddedActivity: saved.whoAddedActivity || prev.whoAddedActivity,
-          dailyPendingTarget: saved.dailyPendingTarget || prev.dailyPendingTarget,
-          pendingTargetDetails: saved.pendingTargetDetails || prev.pendingTargetDetails,
-          reasonPendingTarget: saved.reasonPendingTarget || prev.reasonPendingTarget,
-          problemFaced: saved.problemFaced || prev.problemFaced,
-          problemDetails: saved.problemDetails || prev.problemDetails,
-          problemResolved: saved.problemResolved || prev.problemResolved,
-          problemResolutionDetails: saved.problemResolutionDetails || prev.problemResolutionDetails,
-          onlineSupportRequired: saved.onlineSupportRequired || prev.onlineSupportRequired,
-          supportEngineerName: saved.supportEngineerName || prev.supportEngineerName,
-          siteStartDate: saved.siteStartDate || prev.siteStartDate,
-          siteEndDate: saved.siteEndDate || prev.siteEndDate,
-          incharge: saved.incharge || prev.incharge,
-          remark: saved.remark || prev.remark
-        };
-        
-        console.log('✅ Loaded auto-saved data:', newData);
-        return newData;
-      });
-      
-      // Handle location data if it exists
-      if (saved.locationType === 'site' && saved.locationLat && saved.locationLng) {
-        setLocationAccess(true);
-        // Reverse geocode the location
-        const lat = parseFloat(saved.locationLat);
-        const lng = parseFloat(saved.locationLng);
-        if (!isNaN(lat) && !isNaN(lng)) {
-          reverseGeocode(lat, lng).then((address) => {
-            if (address && address !== `${lat.toFixed(6)}, ${lng.toFixed(6)}`) {
-              setFormData(prev => ({
-                ...prev,
-                siteLocation: address,
-              }));
-            }
-          });
-        }
-      }
-      
-      // Handle leave type if it exists
-      if (saved.locationType === 'leave' && saved.leaveType) {
-        const typeDetails = leaveTypes.find(lt => lt.id === saved.leaveType);
-        setSelectedLeaveType(typeDetails);
-      }
-      
-      setIsDirty(false);
-      setAlert({
-        type: 'success',
-        message: `Auto-saved data loaded (${new Date(saved.timestamp).toLocaleTimeString()})`
-      });
-      
-      // Clear alert after 3 seconds
-      setTimeout(() => setAlert(null), 3000);
-      
-    } else {
-      setAlert({ 
-        type: 'warning', 
-        message: `Auto-saved data is from ${savedDate}. Only today's data (${today}) can be loaded.` 
-      });
-    }
-  } else {
-    setAlert({ 
-      type: 'info', 
-      message: 'No auto-saved data found for today.' 
-    });
-  }
-};
-
-  if (user?.id) {
-    loadAutoSavedData()
-  }
-}, [user])
   // Handle customer selection change
   const handleCustomerChange = (customerName) => {
     if (customerName === "Other") {
@@ -778,146 +908,6 @@ useEffect(() => {
     }
   }, [token])
 
-  // Load auto-saved data on component mount
-  useEffect(() => {
-   const loadAutoSavedData = () => {
-  if (!user?.id) {
-    setAlert({ type: 'warning', message: 'User not found' });
-    return;
-  }
-
-  let saved = null;
-  
-  // Try to load from localStorage first (for auto-saved data)
-  const localSaved = localStorage.getItem(`daily-report-auto-save-${user.id}`);
-  if (localSaved) {
-    try {
-      saved = JSON.parse(localSaved);
-      console.log('📂 Loaded from localStorage:', saved);
-    } catch (error) {
-      console.error('Failed to parse localStorage data:', error);
-    }
-  }
-  
-  // If no localStorage data, try sessionStorage
-  if (!saved) {
-    const sessionSaved = sessionStorage.getItem(`daily-report-session-${user.id}`);
-    if (sessionSaved) {
-      try {
-        saved = JSON.parse(sessionSaved);
-        console.log('📂 Loaded from sessionStorage:', saved);
-      } catch (error) {
-        console.error('Failed to parse sessionStorage data:', error);
-      }
-    }
-  }
-  
-  if (saved) {
-    // Check if the saved data is for today
-    const today = new Date().toISOString().slice(0, 10);
-    const savedDate = saved.date || saved.reportDate || today;
-    
-    if (savedDate === today) {
-      // Update savedData state
-      setSavedData({
-        ...saved,
-        timestamp: saved.timestamp || new Date().toISOString()
-      });
-      setLastSaved(saved.timestamp || new Date().toISOString());
-      
-      // Load the data into the form
-      setFormData(prev => ({
-        ...prev,
-        reportDate: saved.reportDate || prev.reportDate,
-        customerName: saved.customerName || prev.customerName,
-        customerPerson: saved.customerPerson || prev.customerPerson,
-        customerContact: saved.customerContact || prev.customerContact,
-        customerCountryCode: saved.customerCountryCode || prev.customerCountryCode,
-        customerAddress: saved.customerAddress || prev.customerAddress,
-        endCustomerName: saved.endCustomerName || prev.endCustomerName,
-        endCustomerPerson: saved.endCustomerPerson || prev.endCustomerPerson,
-        endCustomerContact: saved.endCustomerContact || prev.endCustomerContact,
-        endCustomerCountryCode: saved.endCustomerCountryCode || prev.endCustomerCountryCode,
-        endCustomerAddress: saved.endCustomerAddress || prev.endCustomerAddress,
-        projectNo: saved.projectNo || prev.projectNo,
-        locationType: saved.locationType || prev.locationType,
-        leaveType: saved.leaveType || prev.leaveType,
-        siteLocation: saved.siteLocation || prev.siteLocation,
-        locationLat: saved.locationLat || prev.locationLat,
-        locationLng: saved.locationLng || prev.locationLng,
-        dailyTargetPlanned: saved.dailyTargetPlanned || prev.dailyTargetPlanned,
-        dailyTargetAchieved: saved.dailyTargetAchieved || prev.dailyTargetAchieved,
-        additionalActivity: saved.additionalActivity || prev.additionalActivity,
-        additionalActivityDetails: saved.additionalActivityDetails || prev.additionalActivityDetails,
-        whoAddedActivity: saved.whoAddedActivity || prev.whoAddedActivity,
-        dailyPendingTarget: saved.dailyPendingTarget || prev.dailyPendingTarget,
-        pendingTargetDetails: saved.pendingTargetDetails || prev.pendingTargetDetails,
-        reasonPendingTarget: saved.reasonPendingTarget || prev.reasonPendingTarget,
-        problemFaced: saved.problemFaced || prev.problemFaced,
-        problemDetails: saved.problemDetails || prev.problemDetails,
-        problemResolved: saved.problemResolved || prev.problemResolved,
-        problemResolutionDetails: saved.problemResolutionDetails || prev.problemResolutionDetails,
-        onlineSupportRequired: saved.onlineSupportRequired || prev.onlineSupportRequired,
-        supportEngineerName: saved.supportEngineerName || prev.supportEngineerName,
-        siteStartDate: saved.siteStartDate || prev.siteStartDate,
-        siteEndDate: saved.siteEndDate || prev.siteEndDate,
-        incharge: saved.incharge || prev.incharge,
-        remark: saved.remark || prev.remark,
-        inTime: saved.inTime || prev.inTime,
-        outTime: saved.outTime || prev.outTime
-      }));
-      
-      // Handle location data if it exists
-      if (saved.locationType === 'site' && saved.locationLat && saved.locationLng) {
-        setLocationAccess(true);
-        // Reverse geocode the location
-        const lat = parseFloat(saved.locationLat);
-        const lng = parseFloat(saved.locationLng);
-        if (!isNaN(lat) && !isNaN(lng)) {
-          reverseGeocode(lat, lng).then((address) => {
-            if (address && address !== `${lat.toFixed(6)}, ${lng.toFixed(6)}`) {
-              setFormData(prev => ({
-                ...prev,
-                siteLocation: address,
-              }));
-            }
-          });
-        }
-      }
-      
-      // Handle leave type if it exists
-      if (saved.locationType === 'leave' && saved.leaveType) {
-        const typeDetails = leaveTypes.find(lt => lt.id === saved.leaveType);
-        setSelectedLeaveType(typeDetails);
-      }
-      
-      setIsDirty(false);
-      setAlert({
-        type: 'success',
-        message: `Auto-saved data loaded (${new Date(saved.timestamp).toLocaleTimeString()})`
-      });
-      
-      // Clear alert after 3 seconds
-      setTimeout(() => setAlert(null), 3000);
-      
-    } else {
-      setAlert({ 
-        type: 'warning', 
-        message: `Auto-saved data is from ${savedDate}. Only today's data (${today}) can be loaded.` 
-      });
-    }
-  } else {
-    setAlert({ 
-      type: 'info', 
-      message: 'No auto-saved data found for today.' 
-    });
-  }
-};
-    if (user?.id) {
-      loadAutoSavedData()
-    }
-  }, [user])
-
   // Auto-save timer
   useEffect(() => {
     if (!autoSaveEnabled || !isDirty) return
@@ -927,7 +917,7 @@ useEffect(() => {
     }, 5000)
 
     return () => clearTimeout(autoSaveTimer)
-  }, [formData, autoSaveEnabled, isDirty])
+  }, [formData, autoSaveEnabled, isDirty, dailyPlans])
 
   // Get user's location when site location is selected
   useEffect(() => {
@@ -1100,40 +1090,6 @@ useEffect(() => {
     return { valid: true }
   }
 
-  // In your daily report submission function
-const handleDailyReportSubmit = async (reportData) => {
-  try {
-    // First, check if user has any rejected leaves for this date
-    const leaveStatusResponse = await fetch(`/api/leaves/status?date=${reportData.date}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
-    
-    const leaveStatus = await leaveStatusResponse.json();
-    
-    // If leave was rejected, ensure we don't mark as absent
-    if (leaveStatus.status === 'rejected') {
-      // Override any leave-related flags
-      reportData.attendanceStatus = 'present';
-      reportData.isOnLeave = false;
-    }
-    
-    // Proceed with submission
-    const response = await fetch('/api/daily-reports', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(reportData)
-    });
-    
-    // Handle response...
-  } catch (error) {
-    console.error('Error submitting daily report:', error);
-  }
-};
   const reverseGeocode = async (lat, lng) => {
     try {
       setFetchingLocation(true)
@@ -1371,20 +1327,21 @@ const handleDailyReportSubmit = async (reportData) => {
     )
   }
 
-  // Auto-save functions
+  // Auto-save function
   const performAutoSave = () => {
     if (!user?.id || !isDirty) return;
 
     try {
       const saveData = {
         ...formData,
+        dailyPlans: dailyPlans, // Save plans array
         date: formData.reportDate,
         timestamp: new Date().toISOString(),
         userId: user.id,
         formType: 'daily-report'
       };
 
-    // Save to both localStorage and sessionStorage
+      // Save to both localStorage and sessionStorage
       localStorage.setItem(`daily-report-auto-save-${user.id}`, JSON.stringify(saveData));
       sessionStorage.setItem(`daily-report-session-${user.id}`, JSON.stringify(saveData));
       
@@ -1405,52 +1362,6 @@ const handleDailyReportSubmit = async (reportData) => {
       console.error('Auto-save failed:', error);
     }
   };
-
-  // Load from both sources on mount
-  useEffect(() => {
-    const loadSavedData = () => {
-      let saved = null;
-      
-      // Try session storage first (for current session)
-      const sessionSaved = sessionStorage.getItem(`daily-report-session-${user?.id}`);
-      if (sessionSaved) {
-        try {
-          saved = JSON.parse(sessionSaved);
-        } catch (error) {
-          console.error('Failed to parse session data:', error);
-        }
-      }
-      
-      // Fallback to localStorage
-      if (!saved) {
-        const localSaved = localStorage.getItem(`daily-report-auto-save-${user?.id}`);
-        if (localSaved) {
-          try {
-            saved = JSON.parse(localSaved);
-          } catch (error) {
-            console.error('Failed to parse local data:', error);
-          }
-        }
-      }
-      
-      if (saved) {
-        // Only load if it's from today or same date
-        if (!saved.date || saved.date === new Date().toISOString().slice(0, 10)) {
-          setSavedData(saved);
-          setLastSaved(saved.timestamp);
-          
-          // Optional: Auto-load if user wants
-          if (window.confirm('Found saved data from today. Load it?')) {
-            loadAutoSavedData();
-          }
-        }
-      }
-    };
-
-    if (user?.id) {
-      loadSavedData();
-    }
-  }, [user]);
 
   const handleChange = (event) => {
     const { name, value, type, files } = event.target
@@ -1571,49 +1482,6 @@ const handleDailyReportSubmit = async (reportData) => {
       type: 'success',
       message: 'Progress saved successfully'
     })
-  }
-
-  const loadAutoSavedData = () => {
-    if (savedData) {
-      setFormData(prev => ({
-        ...prev,
-        customerName: savedData.customerName || prev.customerName,
-        customerPerson: savedData.customerPerson || prev.customerPerson,
-        customerContact: savedData.customerContact || prev.customerContact,
-        customerCountryCode: savedData.customerCountryCode || prev.customerCountryCode,
-        endCustomerName: savedData.endCustomerName || prev.endCustomerName,
-        endCustomerPerson: savedData.endCustomerPerson || prev.endCustomerPerson,
-        endCustomerContact: savedData.endCustomerContact || prev.endCustomerContact,
-        endCustomerCountryCode: savedData.endCustomerCountryCode || prev.endCustomerCountryCode,
-        projectNo: savedData.projectNo || prev.projectNo,
-        locationType: savedData.locationType || prev.locationType,
-        leaveType: savedData.leaveType || prev.leaveType,
-        siteLocation: savedData.siteLocation || prev.siteLocation,
-        dailyTargetPlanned: savedData.dailyTargetPlanned || prev.dailyTargetPlanned,
-        dailyTargetAchieved: savedData.dailyTargetAchieved || prev.dailyTargetAchieved,
-        additionalActivity: savedData.additionalActivity || prev.additionalActivity,
-        additionalActivityDetails: savedData.additionalActivityDetails || prev.additionalActivityDetails,
-        whoAddedActivity: savedData.whoAddedActivity || prev.whoAddedActivity,
-        dailyPendingTarget: savedData.dailyPendingTarget || prev.dailyPendingTarget,
-        pendingTargetDetails: savedData.pendingTargetDetails || prev.pendingTargetDetails,
-        reasonPendingTarget: savedData.reasonPendingTarget || prev.reasonPendingTarget,
-        problemFaced: savedData.problemFaced || prev.problemFaced,
-        problemDetails: savedData.problemDetails || prev.problemDetails,
-        problemResolved: savedData.problemResolved || prev.problemResolved,
-        problemResolutionDetails: savedData.problemResolutionDetails || prev.problemResolutionDetails,
-        onlineSupportRequired: savedData.onlineSupportRequired || prev.onlineSupportRequired,
-        supportEngineerName: savedData.supportEngineerName || prev.supportEngineerName,
-        siteStartDate: savedData.siteStartDate || prev.siteStartDate,
-        siteEndDate: savedData.siteEndDate || prev.siteEndDate,
-        incharge: savedData.incharge || prev.incharge,
-        remark: savedData.remark || prev.remark
-      }))
-      setIsDirty(false)
-      setAlert({
-        type: 'info',
-        message: 'Auto-saved data loaded'
-      })
-    }
   }
 
   const clearAutoSavedData = () => {
@@ -1758,6 +1626,7 @@ const handleDailyReportSubmit = async (reportData) => {
     console.log('Location type:', formData.locationType)
     console.log('Leave type:', formData.leaveType)
     console.log('Form data:', formData)
+    console.log('Daily plans:', dailyPlans)
 
     setSubmitting(true)
     setAlert(null)
@@ -2000,6 +1869,7 @@ const handleDailyReportSubmit = async (reportData) => {
       // Store submitted data
       const submittedFormData = {
         ...dataToSubmit,
+        dailyPlans: dailyPlans, // Include plans in submitted data
         id: isEditMode ? submittedData.id : responseData.id,
         submittedAt: isEditMode ? submittedData.submittedAt : new Date().toISOString(),
         momReportName: dataToSubmit.momReport ? dataToSubmit.momReport.name : (isEditMode ? submittedData.momReportName : null),
@@ -2018,6 +1888,8 @@ const handleDailyReportSubmit = async (reportData) => {
       // Reset form
       const newFormData = defaultPayload()
       setFormData(newFormData)
+      setDailyPlans([{ id: 1, text: '', activities: [], completed: false }])
+      setNextPlanId(2)
       setLocationAccess(false)
       setLocationError('')
       setSelectedLeaveType(null)
@@ -2061,6 +1933,93 @@ const handleDailyReportSubmit = async (reportData) => {
       setSubmitting(false)
     }
   }
+
+  // ========== FUNCTION TO HANDLE EDIT ==========
+  const handleEdit = (submittedData) => {
+    const editData = { ...submittedData };
+    
+    // Remove metadata fields
+    delete editData.momReportName;
+    delete editData.id;
+    delete editData.submittedAt;
+    delete editData.locationName;
+    
+    if (!editData.reportDate) {
+      editData.reportDate = new Date().toISOString().slice(0, 10);
+    }
+    
+    // Set form data
+    setFormData(editData);
+    setIsEditMode(true);
+    
+    // Load plans from submitted data
+    loadPlansFromSubmittedData(submittedData);
+    
+    // Handle location data
+    if (editData.locationType === 'site' && editData.locationLat && editData.locationLng) {
+      setLocationAccess(true);
+      setLocationError('');
+      const restoredLocationName = submittedData.locationName || editData.siteLocation || '';
+      setLocationName(restoredLocationName);
+      
+      if (editData.locationLat && editData.locationLng && !restoredLocationName.includes('Location:')) {
+        const lat = parseFloat(editData.locationLat);
+        const lng = parseFloat(editData.locationLng);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          reverseGeocode(lat, lng).then((address) => {
+            if (address && address !== `${lat.toFixed(6)}, ${lng.toFixed(6)}`) {
+              setFormData((prev) => ({
+                ...prev,
+                siteLocation: address,
+              }));
+            }
+          });
+        }
+      }
+    }
+    
+    // Handle leave type
+    if (editData.locationType === 'leave' && editData.leaveType) {
+      const typeDetails = leaveTypes.find(lt => lt.id === editData.leaveType);
+      setSelectedLeaveType(typeDetails);
+    }
+    
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    
+    setAlert({
+      type: 'info',
+      message: 'Now editing the submitted report. Make your changes and click "Update Report".'
+    });
+  };
+
+  // ========== FUNCTION TO LOAD PLANS FROM SUBMITTED DATA ==========
+  const loadPlansFromSubmittedData = (submittedData) => {
+    if (!submittedData) return;
+    
+    // Try to load from submitted data
+    const savedPlansData = submittedData.dailyPlans || submittedData.plans;
+    
+    if (savedPlansData && Array.isArray(savedPlansData)) {
+      setDailyPlans(savedPlansData);
+      const maxId = Math.max(...savedPlansData.map(p => p.id), 0);
+      setNextPlanId(maxId + 1);
+    } else if (submittedData.dailyTargetPlanned) {
+      // Parse the text back into plans
+      const planTexts = submittedData.dailyTargetPlanned.split('\n').filter(text => text.trim());
+      const parsedPlans = planTexts.map((text, index) => ({
+        id: index + 1,
+        text: text.replace(/^\d+\.\s*/, '').trim(),
+        activities: [],
+        completed: false
+      }));
+      
+      if (parsedPlans.length > 0) {
+        setDailyPlans(parsedPlans);
+        setNextPlanId(parsedPlans.length + 1);
+      }
+    }
+  };
 
   const canUploadPDF = formData.locationType === 'site' && locationAccess
 
@@ -2232,6 +2191,7 @@ const handleDailyReportSubmit = async (reportData) => {
         </div>
       )}
 
+      {/* Submitted Data Display with Edit Option */}
       {submittedData && !isEditMode && (
         <div style={{ 
           background: '#f0f9ff', 
@@ -2247,43 +2207,7 @@ const handleDailyReportSubmit = async (reportData) => {
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
                 type="button"
-                onClick={() => {
-                  const editData = { ...submittedData }
-                  delete editData.momReportName
-                  delete editData.id
-                  delete editData.submittedAt
-                  delete editData.locationName
-                  
-                  if (!editData.reportDate) {
-                    editData.reportDate = new Date().toISOString().slice(0, 10)
-                  }
-                  setFormData(editData)
-                  setIsEditMode(true)
-                  if (editData.locationType === 'site' && editData.locationLat && editData.locationLng) {
-                    setLocationAccess(true)
-                    setLocationError('')
-                    const restoredLocationName = submittedData.locationName || editData.siteLocation || ''
-                    setLocationName(restoredLocationName)
-                    if (editData.locationLat && editData.locationLng && !restoredLocationName.includes('Location:')) {
-                      const lat = parseFloat(editData.locationLat)
-                      const lng = parseFloat(editData.locationLng)
-                      if (!isNaN(lat) && !isNaN(lng)) {
-                        reverseGeocode(lat, lng).then((address) => {
-                          if (address && address !== `${lat.toFixed(6)}, ${lng.toFixed(6)}`) {
-                            setFormData((prev) => ({
-                              ...prev,
-                              siteLocation: address,
-                            }))
-                          }
-                        })
-                      }
-                    }
-                  }
-                  if (editData.locationType === 'leave' && editData.leaveType) {
-                    const typeDetails = leaveTypes.find(lt => lt.id === editData.leaveType)
-                    setSelectedLeaveType(typeDetails)
-                  }
-                }}
+                onClick={() => handleEdit(submittedData)}
                 style={{
                   padding: '0.5rem 1rem',
                   background: '#2ad1ff',
@@ -2294,13 +2218,13 @@ const handleDailyReportSubmit = async (reportData) => {
                   fontSize: '0.9rem',
                 }}
               >
-                Edit
+                Edit Report
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setSubmittedData(null)
-                  setIsEditMode(false)
+                  setSubmittedData(null);
+                  setIsEditMode(false);
                 }}
                 style={{
                   padding: '0.5rem 1rem',
@@ -2356,6 +2280,104 @@ const handleDailyReportSubmit = async (reportData) => {
               </div>
             )}
           </div>
+          
+          {/* Display Daily Plans from submitted data */}
+          {submittedData.dailyPlans && submittedData.dailyPlans.length > 0 && (
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid #2ad1ff' }}>
+              <h4 style={{ marginBottom: '0.5rem', color: '#092544' }}>Daily Plans</h4>
+              <div style={{ 
+                background: 'white', 
+                borderRadius: '8px', 
+                padding: '1rem',
+                border: '1px solid #e9ecef'
+              }}>
+                {submittedData.dailyPlans
+                  .filter(plan => plan.text && plan.text.trim())
+                  .map((plan, index) => (
+                    <div key={plan.id} style={{ 
+                      marginBottom: '0.75rem',
+                      paddingBottom: '0.75rem',
+                      borderBottom: index < submittedData.dailyPlans.length - 1 ? '1px solid #e9ecef' : 'none'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                        <span style={{
+                          background: '#092544',
+                          color: 'white',
+                          minWidth: '24px',
+                          height: '24px',
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '0.75rem'
+                        }}>
+                          {index + 1}
+                        </span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: '500', marginBottom: '0.25rem' }}>
+                            {plan.text}
+                          </div>
+                          {plan.activities && plan.activities.length > 0 && (
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              color: '#6c757d',
+                              marginTop: '0.25rem'
+                            }}>
+                              <strong>Activities:</strong> {plan.activities.join(', ')}
+                            </div>
+                          )}
+                        </div>
+                        {plan.completed && (
+                          <span style={{
+                            background: '#28a745',
+                            color: 'white',
+                            padding: '0.25rem 0.5rem',
+                            borderRadius: '12px',
+                            fontSize: '0.75rem',
+                            fontWeight: 'bold'
+                          }}>
+                            ✓
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+          
+          {submittedData.dailyTargetPlanned && !submittedData.dailyPlans && (
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid #2ad1ff' }}>
+              <strong>Daily Target Planned:</strong>
+              <pre style={{ 
+                margin: '0.5rem 0', 
+                whiteSpace: 'pre-wrap',
+                fontFamily: 'inherit',
+                background: '#f8f9fa',
+                padding: '1rem',
+                borderRadius: '8px'
+              }}>
+                {submittedData.dailyTargetPlanned}
+              </pre>
+            </div>
+          )}
+          
+          {submittedData.dailyTargetAchieved && (
+            <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid #2ad1ff' }}>
+              <strong>Daily Target Achieved:</strong>
+              <pre style={{ 
+                margin: '0.5rem 0', 
+                whiteSpace: 'pre-wrap',
+                fontFamily: 'inherit',
+                background: '#f8f9fa',
+                padding: '1rem',
+                borderRadius: '8px'
+              }}>
+                {submittedData.dailyTargetAchieved}
+              </pre>
+            </div>
+          )}
+          
           {submittedData.remark && (
             <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid #2ad1ff' }}>
               <strong>Remark:</strong> {submittedData.remark}
@@ -2706,199 +2728,338 @@ const handleDailyReportSubmit = async (reportData) => {
                 />
               </label>
 
-              {/* Daily Target Information */}
-              <div className="vh-grid">
-                <label className="vh-span-2">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>Daily Target Planned</span>
-                    {formData.dailyTargetPlanned && formData.projectNo && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFormData(prev => ({
-                            ...prev,
-                            dailyTargetPlanned: ''
-                          }))
-                        }}
-                        style={{
-                          padding: '0.25rem 0.5rem',
-                          background: 'transparent',
-                          color: '#ff7a7a',
-                          border: '1px solid #ff7a7a',
-                          borderRadius: '4px',
-                          cursor: 'pointer',
-                          fontSize: '0.8rem'
-                        }}
-                      >
-                        Clear auto-filled target
-                      </button>
-                    )}
-                  </div>
-                  <textarea
-                    rows={3}
-                    name="dailyTargetPlanned"
-                    value={formData.dailyTargetPlanned}
-                    onChange={handleChange}
-                    placeholder="Describe what you plan to achieve today..."
-                  />
-                  <small style={{ color: '#6c757d', marginTop: '0.25rem', display: 'block' }}>
-                    Describe your planned activities and targets for the day
-                  </small>
-                </label>
-
-                <label className="vh-span-2">
-                  <span>Daily Target Achieved</span>
-                  <textarea
-                    rows={3}
-                    name="dailyTargetAchieved"
-                    value={formData.dailyTargetAchieved}
-                    onChange={handleChange}
-                    placeholder="Describe achieved daily targets"
-                    required={formData.locationType !== 'leave'}
-                  />
-                  <small style={{ color: '#06c167', marginTop: '0.25rem', display: 'block' }}>
-                    Describe what you actually achieved today
-                  </small>
-                </label>
-
-                {/* ========== HOURLY ACHIEVEMENTS SECTION ========== */}
-                {formData.locationType !== 'leave' && (
-                  <div className="vh-span-2" style={{
-                    padding: '1rem',
-                    background: '#f0f9ff',
-                    border: '1px solid #2ad1ff',
-                    borderRadius: '8px',
-                    marginBottom: '1rem'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                      <h4 style={{ margin: 0, color: '#092544' }}>Hourly Achievements</h4>
-                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                          <input
-                            type="checkbox"
-                            id="autoMergeToggle"
-                            checked={autoMergeHourly}
-                            onChange={(e) => setAutoMergeHourly(e.target.checked)}
-                            style={{ margin: 0 }}
-                          />
-                          <label htmlFor="autoMergeToggle" style={{ margin: 0, fontSize: '0.85rem' }}>
-                            Auto-merge
-                          </label>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={fetchHourlyAchievements}
-                          disabled={loadingHourlyData || !formData.reportDate}
-                          style={{
-                            padding: '0.5rem 1rem',
-                            background: loadingHourlyData ? '#8892aa' : '#2ad1ff',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '6px',
-                            cursor: loadingHourlyData ? 'not-allowed' : 'pointer',
-                            fontSize: '0.85rem',
-                            opacity: loadingHourlyData ? 0.7 : 1
-                          }}
-                        >
-                          {loadingHourlyData ? 'Loading...' : 'Fetch Hourly Data'}
-                        </button>
-                      </div>
-                    </div>
+              {/* Daily Target Planned - New Enhanced Version */}
+              <label className="vh-span-2">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <span>Daily Target Planned *</span>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      type="button"
+                      onClick={addPlan}
+                      style={{
+                        padding: '0.5rem 1rem',
+                        background: '#2ad1ff',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.25rem'
+                      }}
+                    >
+                      <span>+</span>
+                      Add Plan
+                    </button>
                     
-                    {loadingHourlyData ? (
-                      <div style={{ textAlign: 'center', padding: '1rem', color: '#6c757d' }}>
-                        Loading hourly achievements...
-                      </div>
-                    ) : hourlyAchievements.length > 0 ? (
-                      <>
-                        <div style={{ 
-                          background: 'white', 
-                          borderRadius: '6px', 
-                          border: '1px solid #e9ecef',
-                          maxHeight: '200px',
-                          overflowY: 'auto',
-                          marginBottom: '1rem'
+                    <button
+                      type="button"
+                      onClick={savePlansForHourly}
+                      style={{
+                        padding: '0.5rem 1rem',
+                        background: '#06c167',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.25rem'
+                      }}
+                    >
+                      <span>💾</span>
+                      Save for Hourly
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Daily Plans List */}
+                <div style={{ 
+                  border: '1px solid #d5e0f2',
+                  borderRadius: '8px',
+                  padding: '1rem',
+                  background: '#f8f9fa',
+                  minHeight: '200px',
+                  maxHeight: '400px',
+                  overflowY: 'auto'
+                }}>
+                  {dailyPlans.map((plan, index) => (
+                    <div key={plan.id} style={{ marginBottom: '1rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                        <span style={{
+                          background: '#092544',
+                          color: 'white',
+                          minWidth: '24px',
+                          height: '24px',
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '0.75rem',
+                          marginTop: '0.5rem'
                         }}>
-                          {hourlyAchievements.map((item, index) => (
-                            <div 
-                              key={item.id}
-                              style={{
-                                padding: '0.75rem',
-                                borderBottom: index < hourlyAchievements.length - 1 ? '1px solid #e9ecef' : 'none',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'flex-start',
-                                background: index % 2 === 0 ? '#f8f9fa' : 'white'
-                              }}
-                            >
-                              <div style={{ flex: 1 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                                  <strong style={{ color: '#092544' }}>{item.timePeriod}</strong>
-                                  <span style={{ 
-                                    fontSize: '0.75rem', 
-                                    background: '#e9ecef', 
-                                    padding: '0.125rem 0.5rem', 
-                                    borderRadius: '12px' 
-                                  }}>
-                                    {item.project}
-                                  </span>
-                                </div>
-                                <div style={{ fontSize: '0.9rem', color: '#495057' }}>
-                                  {item.achievement}
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => addAchievementToDailyTarget(item.achievement)}
-                                style={{
-                                  padding: '0.25rem 0.5rem',
-                                  background: 'transparent',
-                                  color: '#2ad1ff',
-                                  border: '1px solid #2ad1ff',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  fontSize: '0.8rem',
-                                  marginLeft: '0.5rem'
-                                }}
-                              >
-                                Add
-                              </button>
+                          {index + 1}
+                        </span>
+                        
+                        <div style={{ flex: 1 }}>
+                          <textarea
+                            rows={2}
+                            value={plan.text}
+                            onChange={(e) => updatePlan(plan.id, e.target.value)}
+                            placeholder={`Plan ${index + 1}: Describe what you plan to achieve...`}
+                            style={{ 
+                              width: '100%', 
+                              marginBottom: '0.5rem',
+                              border: '1px solid #d5e0f2',
+                              borderRadius: '6px',
+                              padding: '0.75rem',
+                              fontSize: '0.9rem',
+                              fontFamily: 'inherit'
+                            }}
+                            required={formData.locationType !== 'leave'}
+                          />
+                          
+                          {/* Activity list for this plan (for reference) */}
+                          {plan.activities.length > 0 && (
+                            <div style={{
+                              fontSize: '0.85rem',
+                              color: '#6c757d',
+                              background: '#e9ecef',
+                              padding: '0.5rem',
+                              borderRadius: '4px',
+                              marginTop: '0.25rem'
+                            }}>
+                              <strong>Linked Activities ({plan.activities.length}):</strong>
+                              <ul style={{ margin: '0.25rem 0', paddingLeft: '1rem' }}>
+                                {plan.activities.map(activity => (
+                                  <li key={activity}>{activity}</li>
+                                ))}
+                              </ul>
                             </div>
-                          ))}
+                          )}
                         </div>
                         
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ fontSize: '0.85rem', color: '#6c757d' }}>
-                            Found {hourlyAchievements.length} hourly achievement(s) for {formData.reportDate}
-                          </div>
+                        {dailyPlans.length > 1 && (
                           <button
                             type="button"
-                            onClick={addAllAchievementsToDailyTarget}
+                            onClick={() => removePlan(plan.id)}
                             style={{
-                              padding: '0.5rem 1rem',
-                              background: '#06c167',
+                              padding: '0.25rem 0.5rem',
+                              background: '#ff7a7a',
                               color: 'white',
                               border: 'none',
                               borderRadius: '6px',
                               cursor: 'pointer',
-                              fontSize: '0.85rem'
+                              fontSize: '0.75rem',
+                              marginTop: '0.5rem',
+                              height: '24px'
                             }}
                           >
-                            Add All to Daily Target
+                            ✕
                           </button>
-                        </div>
-                      </>
-                    ) : (
-                      <div style={{ textAlign: 'center', padding: '1rem', color: '#6c757d' }}>
-                        No hourly achievements found for {formData.reportDate || 'selected date'}
-                        <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
-                          Click "Fetch Hourly Data" to load achievements from hourly reports
-                        </div>
+                        )}
                       </div>
-                    )}
+                    </div>
+                  ))}
+                  
+                  {dailyPlans.length === 0 && (
+                    <div style={{ 
+                      textAlign: 'center', 
+                      padding: '2rem', 
+                      color: '#6c757d',
+                      fontStyle: 'italic'
+                    }}>
+                      No plans added yet. Click "Add Plan" to start planning your daily targets.
+                    </div>
+                  )}
+                </div>
+                
+                {/* Auto-generated text for backward compatibility */}
+                {formData.dailyTargetPlanned && (
+                  <div style={{ 
+                    marginTop: '1rem',
+                    padding: '0.75rem',
+                    background: '#e6f7ff',
+                    border: '1px solid #2ad1ff',
+                    borderRadius: '8px',
+                    fontSize: '0.9rem'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <strong>Auto-generated target:</strong>
+                      <span style={{ fontSize: '0.8rem', color: '#2ad1ff' }}>
+                        {dailyPlans.filter(p => p.text.trim()).length} plan(s)
+                      </span>
+                    </div>
+                    <pre style={{ 
+                      margin: '0.5rem 0', 
+                      whiteSpace: 'pre-wrap',
+                      fontFamily: 'inherit',
+                      fontSize: '0.85rem'
+                    }}>
+                      {formData.dailyTargetPlanned}
+                    </pre>
                   </div>
                 )}
-              </div>
+                
+                <small style={{ color: '#06c167', marginTop: '0.5rem', display: 'block' }}>
+                  Add multiple plans for your day. Each plan will be saved and can be referenced in hourly reports.
+                </small>
+              </label>
+
+              <label className="vh-span-2">
+                <span>Daily Target Achieved *</span>
+                <textarea
+                  rows={3}
+                  name="dailyTargetAchieved"
+                  value={formData.dailyTargetAchieved}
+                  onChange={handleChange}
+                  placeholder="Describe achieved daily targets"
+                  required={formData.locationType !== 'leave'}
+                />
+                <small style={{ color: '#06c167', marginTop: '0.25rem', display: 'block' }}>
+                  Describe what you actually achieved today
+                </small>
+              </label>
+
+              {/* ========== HOURLY ACHIEVEMENTS SECTION ========== */}
+              {formData.locationType !== 'leave' && (
+                <div className="vh-span-2" style={{
+                  padding: '1rem',
+                  background: '#f0f9ff',
+                  border: '1px solid #2ad1ff',
+                  borderRadius: '8px',
+                  marginBottom: '1rem'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                    <h4 style={{ margin: 0, color: '#092544' }}>Hourly Achievements</h4>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                        <input
+                          type="checkbox"
+                          id="autoMergeToggle"
+                          checked={autoMergeHourly}
+                          onChange={(e) => setAutoMergeHourly(e.target.checked)}
+                          style={{ margin: 0 }}
+                        />
+                        <label htmlFor="autoMergeToggle" style={{ margin: 0, fontSize: '0.85rem' }}>
+                          Auto-merge
+                        </label>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={fetchHourlyAchievements}
+                        disabled={loadingHourlyData || !formData.reportDate}
+                        style={{
+                          padding: '0.5rem 1rem',
+                          background: loadingHourlyData ? '#8892aa' : '#2ad1ff',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: loadingHourlyData ? 'not-allowed' : 'pointer',
+                          fontSize: '0.85rem',
+                          opacity: loadingHourlyData ? 0.7 : 1
+                        }}
+                      >
+                        {loadingHourlyData ? 'Loading...' : 'Fetch Hourly Data'}
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {loadingHourlyData ? (
+                    <div style={{ textAlign: 'center', padding: '1rem', color: '#6c757d' }}>
+                      Loading hourly achievements...
+                    </div>
+                  ) : hourlyAchievements.length > 0 ? (
+                    <>
+                      <div style={{ 
+                        background: 'white', 
+                        borderRadius: '6px', 
+                        border: '1px solid #e9ecef',
+                        maxHeight: '200px',
+                        overflowY: 'auto',
+                        marginBottom: '1rem'
+                      }}>
+                        {hourlyAchievements.map((item, index) => (
+                          <div 
+                            key={item.id}
+                            style={{
+                              padding: '0.75rem',
+                              borderBottom: index < hourlyAchievements.length - 1 ? '1px solid #e9ecef' : 'none',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-start',
+                              background: index % 2 === 0 ? '#f8f9fa' : 'white'
+                            }}
+                          >
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                                <strong style={{ color: '#092544' }}>{item.timePeriod}</strong>
+                                <span style={{ 
+                                  fontSize: '0.75rem', 
+                                  background: '#e9ecef', 
+                                  padding: '0.125rem 0.5rem', 
+                                  borderRadius: '12px' 
+                                }}>
+                                  {item.project}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: '0.9rem', color: '#495057' }}>
+                                {item.achievement}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => addAchievementToDailyTarget(item.achievement)}
+                              style={{
+                                padding: '0.25rem 0.5rem',
+                                background: 'transparent',
+                                color: '#2ad1ff',
+                                border: '1px solid #2ad1ff',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '0.8rem',
+                                marginLeft: '0.5rem'
+                              }}
+                            >
+                              Add
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontSize: '0.85rem', color: '#6c757d' }}>
+                          Found {hourlyAchievements.length} hourly achievement(s) for {formData.reportDate}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={addAllAchievementsToDailyTarget}
+                          style={{
+                            padding: '0.5rem 1rem',
+                            background: '#06c167',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            fontSize: '0.85rem'
+                          }}
+                        >
+                          Add All to Daily Target
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '1rem', color: '#6c757d' }}>
+                      No hourly achievements found for {formData.reportDate || 'selected date'}
+                      <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                        Click "Fetch Hourly Data" to load achievements from hourly reports
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <label>
                 <span>Incharge *</span>
@@ -3361,6 +3522,8 @@ const handleDailyReportSubmit = async (reportData) => {
               onClick={() => {
                 setIsEditMode(false)
                 setFormData(defaultPayload())
+                setDailyPlans([{ id: 1, text: '', activities: [], completed: false }])
+                setNextPlanId(2)
                 setLocationAccess(false)
                 setLocationError('')
                 setSelectedLeaveType(null)
@@ -3389,6 +3552,8 @@ const handleDailyReportSubmit = async (reportData) => {
             onClick={() => {
               const newFormData = defaultPayload()
               setFormData(newFormData)
+              setDailyPlans([{ id: 1, text: '', activities: [], completed: false }])
+              setNextPlanId(2)
               setLocationAccess(false)
               setLocationError('')
               setSubmittedData(null)
