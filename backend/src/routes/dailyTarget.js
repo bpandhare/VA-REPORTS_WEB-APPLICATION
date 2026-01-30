@@ -259,7 +259,7 @@ router.get('/attendance/:date', verifyToken, async (req, res) => {
     } else if (hasHourlyReport) {
       // Get hourly report details
       const [hourlyDetails] = await pool.execute(
-        `SELECT hourly_achieved 
+        `SELECT hourly_activity, problem_faced_by_engineer_hourly 
          FROM hourly_reports 
          WHERE user_id = ? AND report_date = ?
          ORDER BY created_at DESC
@@ -269,7 +269,8 @@ router.get('/attendance/:date', verifyToken, async (req, res) => {
       
       details = {
         hasHourlyReport: true,
-        hourly_achieved: hourlyDetails[0]?.hourly_achieved || ''
+        hourly_activity: hourlyDetails[0]?.hourly_activity || '',
+        problem_faced: hourlyDetails[0]?.problem_faced_by_engineer_hourly || ''
       };
     }
     
@@ -451,16 +452,16 @@ router.get('/hourly-achievements/:date', verifyToken, async (req, res) => {
     const userId = req.user.id;
     
     const [hourlyReports] = await pool.execute(
-      `SELECT hourly_achieved, daily_target_achieved 
+      `SELECT hourly_activity, problem_faced_by_engineer_hourly 
        FROM hourly_reports 
        WHERE user_id = ? AND report_date = ? 
-       AND (hourly_achieved IS NOT NULL OR daily_target_achieved IS NOT NULL)`,
+       AND hourly_activity IS NOT NULL`,
       [userId, date]
     );
     
-    // Combine all achievements
+    // Combine all activities
     const achievements = hourlyReports
-      .map(report => report.hourly_achieved || report.daily_target_achieved)
+      .map(report => report.hourly_activity)
       .filter(Boolean)
       .join('\n');
     
@@ -785,6 +786,7 @@ router.get('/check-leave-availability', verifyToken, async (req, res) => {
          FROM daily_target_reports 
          WHERE user_id = ? 
          AND location_type = 'leave' 
+         AND (leave_status IS NULL OR leave_status != 'rejected')
          AND report_date BETWEEN ? AND ?`,
         [userId, startDate, endDate]
       )
@@ -795,6 +797,7 @@ router.get('/check-leave-availability', verifyToken, async (req, res) => {
          FROM daily_target_reports 
          WHERE user_id = ? 
          AND location_type = 'leave' 
+         AND (leave_status IS NULL OR leave_status != 'rejected')
          AND report_date = ?`,
         [userId, startDate]
       )
@@ -841,7 +844,11 @@ router.get('/leave-history', verifyToken, async (req, res) => {
         leave_status,
         leave_approved_by,
         leave_approved_at,
-        leave_approval_remark
+        leave_approval_remark,
+        number_of_days,
+        site_start_date,
+        site_end_date,
+        site_location
       FROM daily_target_reports 
       WHERE user_id = ? 
       AND location_type = 'leave' 
@@ -1930,20 +1937,7 @@ router.post('/apply-leave', verifyToken, async (req, res) => {
     const finalStartDate = startDate || finalReportDate;
     const finalEndDate = endDate || finalReportDate;
 
-    // Check for existing report
-    console.log('📝 Checking for existing report...');
-    const [existing] = await pool.execute(
-      `SELECT id FROM daily_target_reports WHERE user_id = ? AND report_date = ? LIMIT 1`,
-      [userId, finalReportDate]
-    );
-
-    if (existing.length > 0) {
-      console.log('❌ Report already exists for this date');
-      return res.status(409).json({ 
-        success: false,
-        message: 'Only one report allowed per day' 
-      });
-    }
+    // Note: multiple leave reports per day are allowed. Skipping uniqueness check.
 
     // Validate leave date
     if (finalReportDate) {
@@ -2000,10 +1994,10 @@ router.post('/apply-leave', verifyToken, async (req, res) => {
       INSERT INTO daily_target_reports
       (report_date, in_time, out_time, customer_name, customer_person, customer_contact,
        end_customer_name, end_customer_person, end_customer_contact,
-       project_no, location_type, leave_type, site_location, 
+       project_no, location_type, leave_type, number_of_days, site_location, 
        daily_target_planned, daily_target_achieved,
        site_start_date, site_end_date, incharge, remark, user_id, leave_status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     const params = [
@@ -2019,7 +2013,8 @@ router.post('/apply-leave', verifyToken, async (req, res) => {
       'N/A',   // project_no
       'leave', // location_type
       leaveType,
-      null,    // site_location
+      Number(numberOfDays) || 1, // number_of_days
+      req.body.siteLocation || null, // site_location
       'N/A',   // daily_target_planned
       'N/A',   // daily_target_achieved
       finalStartDate, // site_start_date
@@ -2640,6 +2635,10 @@ router.get('/pending-leaves', verifyToken, async (req, res) => {
         dtr.leave_approved_by,
         dtr.leave_approved_at,
         dtr.leave_approval_remark,
+        dtr.number_of_days,
+        dtr.site_start_date,
+        dtr.site_end_date,
+        dtr.site_location,
         u.id as employeeId,
         u.username as employeeName,
         u.employee_id as employeeCode,
@@ -2659,6 +2658,10 @@ router.get('/pending-leaves', verifyToken, async (req, res) => {
       const typeInfo = LEAVE_TYPES.find(lt => lt.id === leave.leave_type) || {};
       return {
         ...leave,
+        numberOfDays: leave.number_of_days || leave.numberOfDays || 1,
+        site_start_date: leave.site_start_date || leave.siteStartDate || null,
+        site_end_date: leave.site_end_date || leave.siteEndDate || null,
+        site_location: leave.site_location || leave.siteLocation || null,
         leaveTypeName: typeInfo.name || leave.leave_type,
         leaveTypeDescription: typeInfo.description || '',
         requiresApproval: true // All leaves require approval

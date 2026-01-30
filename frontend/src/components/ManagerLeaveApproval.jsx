@@ -92,16 +92,13 @@ const ManagerLeaveApproval = () => {
 
   // Calculate number of days for multi-day leaves
   const getNumberOfDays = (leave) => {
-    // Check if numberOfDays field exists
-    if (leave.numberOfDays) return parseInt(leave.numberOfDays);
-    
-    // Check if number_of_days field exists
-    if (leave.number_of_days) return parseInt(leave.number_of_days);
-    
-    // Calculate from date range
-    const startDate = leave.startDate || leave.leaveDate;
-    const endDate = leave.endDate || leave.leaveDate;
-    
+    // Prefer explicit number_of_days from backend
+    if (leave.number_of_days || leave.numberOfDays) return parseInt(leave.number_of_days || leave.numberOfDays) || 1;
+
+    // Calculate from site start/end if present
+    const startDate = leave.site_start_date || leave.startDate || leave.leaveDate;
+    const endDate = leave.site_end_date || leave.endDate || leave.leaveDate;
+
     if (startDate && endDate && startDate !== endDate) {
       const start = new Date(startDate);
       const end = new Date(endDate);
@@ -109,21 +106,23 @@ const ManagerLeaveApproval = () => {
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
       return diffDays + 1; // Inclusive count
     }
-    
+
     return 1; // Default to 1 day
   };
 
   // Format date range for display
   const getDateRangeDisplay = (leave) => {
     const numberOfDays = getNumberOfDays(leave);
-    
+
+    const startDate = leave.site_start_date || leave.startDate || leave.leaveDate;
+    const endDate = leave.site_end_date || leave.endDate || leave.startDate || leave.leaveDate;
+
+    if (!startDate) return '-';
+
     if (numberOfDays === 1) {
-      return new Date(leave.leaveDate).toLocaleDateString('en-IN');
+      return new Date(startDate).toLocaleDateString('en-IN');
     }
-    
-    const startDate = leave.startDate || leave.leaveDate;
-    const endDate = leave.endDate || leave.startDate || leave.leaveDate;
-    
+
     return `${new Date(startDate).toLocaleDateString('en-IN')} to ${new Date(endDate).toLocaleDateString('en-IN')}`;
   };
 

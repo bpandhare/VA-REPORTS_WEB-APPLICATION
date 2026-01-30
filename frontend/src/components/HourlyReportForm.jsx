@@ -4,6 +4,9 @@ import './OnboardingForm.css'
 import { useAuth } from './AuthContext'
 import { getAssignedProjects } from '../services/api'
 
+const DEBUG = false
+const log = (...args) => { if (DEBUG) console.log(...args) }
+
 // Format date for backend (ensure YYYY-MM-DD format)
 const formatDateForBackend = (dateValue) => {
   if (!dateValue) return new Date().toISOString().slice(0, 10)
@@ -16,12 +19,11 @@ const formatDateForBackend = (dateValue) => {
   return date.toISOString().slice(0, 10)
 }
 
-// Generate 3-hour time periods from 9am to 6pm
+// Generate time periods: 9am-1pm and 2pm-4pm for manager analysis after 4pm
 const generateTimePeriods = () => {
   const periodDefinitions = [
-    { startHour: 9, endHour: 12, label: '9am-12pm', name: 'Morning Session' },
-    { startHour: 12, endHour: 15, label: '12pm-3pm', name: 'Afternoon Session' },
-    { startHour: 15, endHour: 18, label: '3pm-6pm', name: 'Evening Session' }
+    { startHour: 9, endHour: 13, label: '9am-1pm', name: 'Morning Session' },
+    { startHour: 14, endHour: 16, label: '2pm-4pm', name: 'Afternoon Session' }
   ]
   
   return periodDefinitions.map(period => ({
@@ -68,13 +70,23 @@ const isFuturePeriod = (startHour, currentDate = new Date()) => {
   return currentHour < startHour || (currentHour === startHour && currentMinutes < 0)
 }
 
+// Helper to get today's date in YYYY-MM-DD format (local time, not UTC)
+const getTodayDateString = () => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 const createHourlyEntry = () => ({
   timePeriod: '',
   periodName: '',
   hourlyActivity: '',
-  hourlyActivityEntries: [''], // Array for multiple activities
+    hourlyActivityEntries: ['', '', ''], // 3 mandatory planned activities
+  unplannedActivities: [], // NEW: Array for unplanned/other activities
   hourlyAchieved: '',
-  hourlyAchievedEntries: [''], // Array for multiple achievements
+  hourlyAchievedEntries: [], // Start with empty array - user must click + to add
   problemFacedByEngineerHourly: '',
   problemFacedEntries: [''], // Array for multiple problems
   problemFaced: 'No', // New field: "Problem Faced?" with Yes/No
@@ -89,9 +101,13 @@ const createHourlyEntry = () => ({
 })
 
 const defaultPayload = () => {
+  // Use local date, not UTC date from ISO string
   const now = new Date()
-  const date = now.toISOString().slice(0, 10)
-  console.log('🔍 defaultPayload date:', date)
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  const date = `${year}-${month}-${day}`
+  log('defaultPayload date (local):', date)
 
   return {
     reportDate: date,
@@ -135,6 +151,7 @@ function HourlyReportForm() {
   const [totalAchieved, setTotalAchieved] = useState('')
   const [projectList, setProjectList] = useState([])
   const [loadingProjects, setLoadingProjects] = useState(false)
+  const [highlightedReportId, setHighlightedReportId] = useState(null)
   
   // Daily plans related states
   const [dailyPlans, setDailyPlans] = useState([])
@@ -145,12 +162,12 @@ function HourlyReportForm() {
   // Function to load daily plans
   const loadDailyPlans = () => {
     if (!user?.id) {
-      console.log('❌ No user ID available')
+      log('No user ID available')
       return []
     }
     
     try {
-      console.log('📋 Loading daily plans for user:', user.id)
+      log('Loading daily plans for user', user.id)
       
       // Try multiple sources for daily plans
       let plans = []
@@ -162,7 +179,7 @@ function HourlyReportForm() {
       if (savedPlans) {
         try {
           const parsedPlans = JSON.parse(savedPlans)
-          console.log('📦 Found saved plans in localStorage:', parsedPlans)
+          log('Found saved plans in localStorage')
           
           // Check if plans are for today
           const today = new Date().toISOString().slice(0, 10)
@@ -170,18 +187,16 @@ function HourlyReportForm() {
           
           if (planDate === today || planDate === formData.reportDate || !planDate) {
             plans = parsedPlans.plans || []
-            console.log(`✅ Loaded ${plans.length} plans from localStorage`)
-          } else {
-            console.log('⚠️ Saved plans are for a different date:', planDate)
+            log(`Loaded ${plans.length} plans from localStorage`)
           }
         } catch (e) {
-          console.error('❌ Error parsing saved plans:', e)
+          console.error('Error parsing saved plans:', e)
         }
       }
       
       // 2. If no plans from localStorage, try to parse from dailyTargetPlanned
       if (plans.length === 0 && formData.dailyTargetPlanned) {
-        console.log('📝 Parsing plans from dailyTargetPlanned')
+        log('Parsing plans from dailyTargetPlanned')
         const dailyTarget = formData.dailyTargetPlanned
         const planLines = dailyTarget.split('\n')
         
@@ -202,7 +217,7 @@ function HourlyReportForm() {
           })
           .filter(plan => plan !== null)
         
-        console.log(`✅ Parsed ${plans.length} plans from dailyTargetPlanned`)
+        log(`Parsed ${plans.length} plans from dailyTargetPlanned`)
       }
       
       // 3. If still no plans, check session storage
@@ -234,17 +249,17 @@ function HourlyReportForm() {
                 })
                 .filter(plan => plan !== null)
               
-              console.log(`✅ Loaded ${plans.length} plans from sessionStorage`)
+              log(`Loaded ${plans.length} plans from sessionStorage`)
             }
           } catch (e) {
-            console.error('❌ Error parsing session plans:', e)
+            console.error('Error parsing session plans:', e)
           }
         }
       }
       
       // 4. If still no plans, create some default plans based on selected project
       if (plans.length === 0 && formData.projectName) {
-        console.log('🔧 Creating default plans based on project')
+        log('Creating default plans based on project')
         const defaultPlans = [
           { id: 1, text: 'Complete project setup and configuration', activities: [], completed: false },
           { id: 2, text: 'Test and validate system components', activities: [], completed: false },
@@ -259,19 +274,19 @@ function HourlyReportForm() {
         
         try {
           localStorage.setItem(savedPlansKey, JSON.stringify(plansToSave))
-          console.log('💾 Saved default plans to localStorage')
+          log('Saved default plans to localStorage')
         } catch (e) {
-          console.error('❌ Error saving default plans:', e)
+          console.error('Error saving default plans:', e)
         }
         
         plans = defaultPlans
       }
       
-      console.log(`📊 Total plans loaded for user ${user.id}:`, plans.length)
+      log(`Total plans loaded for user ${user.id}: ${plans.length}`)
       return plans
       
     } catch (error) {
-      console.error('❌ Error loading daily plans:', error)
+      console.error('Error loading daily plans:', error)
       return []
     }
   }
@@ -405,29 +420,7 @@ function HourlyReportForm() {
       ...prev,
       [key]: status
     }))
-    
-    // If achievement is "Yes", automatically update the corresponding achievement field
-    if (status === 'Yes') {
-      const activityText = formData.hourlyEntries[sessionIndex]?.hourlyActivityEntries?.[activityIndex] || ''
-      if (activityText.trim()) {
-        // Check if there's already an achievement entry for this activity
-        const entry = formData.hourlyEntries[sessionIndex]
-        const achievedEntries = entry.hourlyAchievedEntries || ['']
-        
-        // Look for an achievement that matches this activity
-        const hasMatchingAchievement = achievedEntries.some(achieved => 
-          achieved.toLowerCase().includes(activityText.toLowerCase().substring(0, 30))
-        )
-        
-        if (!hasMatchingAchievement) {
-          // Add a new achievement entry
-          addAchievedEntry(sessionIndex)
-          const lastIndex = achievedEntries.length - 1
-          // Set achievement to the activity text by default
-          updateAchievedEntry(sessionIndex, lastIndex, activityText)
-        }
-      }
-    }
+    // NOTE: Do NOT auto-add achievement entries. Users should click the + button to add achievements.
   }
 
   // Function to track plan completion
@@ -451,7 +444,7 @@ const checkPlanCompletion = (planId) => {
     })
     .filter(item => item.activity)
   
-  console.log(`🔍 Plan ${planId} linked activities:`, linkedActivities)
+  log(`Plan ${planId} linked activities:`, linkedActivities)
   
   // Count completed activities
   const completedActivities = linkedActivities.filter(item => item.isAchieved).length
@@ -464,7 +457,7 @@ const checkPlanCompletion = (planId) => {
     isCompleted: totalActivities > 0 && completedActivities === totalActivities
   }
   
-  console.log(`📊 Plan ${planId} progress:`, progress)
+  log(`Plan ${planId} progress:`, progress)
   
   setPlanProgress(prev => ({
     ...prev,
@@ -477,7 +470,7 @@ const checkPlanCompletion = (planId) => {
 // Update the getPlanProgressDisplay function:
 const getPlanProgressDisplay = (planId) => {
   const progress = planProgress[planId]
-  console.log(`🔍 Getting progress display for plan ${planId}:`, progress)
+  log(`Getting progress display for plan ${planId}:`, progress)
   
   if (!progress) {
     return { 
@@ -550,50 +543,87 @@ const getPlanProgressDisplay = (planId) => {
 
   // Function to refresh existing reports
  // Update the refreshExistingReports function:
+
 const refreshExistingReports = async () => {
   if (!token || !formData.reportDate) {
     console.log('❌ Cannot refresh reports: No token or date');
     return;
   }
-  
+
   try {
-    console.log('🔄 Refreshing existing reports for date:', formData.reportDate);
-    
-    // Try the correct endpoint from your logs
-    const url = `${import.meta.env.VITE_API_URL}/hourly-report/${formData.reportDate}`;
-    console.log('🔗 Trying endpoint:', url);
-    
+      log('Refreshing existing reports for date:', formData.reportDate);
+      
+      // Ensure we send only the date part (YYYY-MM-DD), not the full ISO string
+      let cleanDate = formData.reportDate;
+      if (cleanDate.includes('T')) {
+        cleanDate = cleanDate.split('T')[0];
+      }
+      
+    const url = `${endpoint}/${cleanDate}`;
+    console.log('📡 Fetching reports from:', url);
+
     const response = await fetch(url, {
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json'
-      },
-    });
-    
-    console.log('🔍 Refresh response status:', response.status);
-    
-    if (response.ok) {
-      const reports = await response.json();
-      console.log(`✅ Loaded ${reports.length} existing reports:`, reports);
-      setExistingReports(reports);
-      
-      // Also update the endpoint constant
-      const endpoint = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-      return;
-    } else if (response.status === 404) {
-      console.log('⚠️ No reports found for this date');
-      setExistingReports([]);
-      return;
-    } else {
-      console.error('❌ Failed to refresh existing reports:', response.status);
-      setExistingReports([]);
+      }
+    })
+
+    if (!response.ok) {
+      console.error('Failed to refresh existing reports:', response.status)
+      return
+    }
+
+    const reports = await response.json()
+    const normalized = Array.isArray(reports) ? reports : (reports.reports || [])
+    log('Refreshed reports count:', normalized.length)
+    setExistingReports(normalized)
+
+    // If we recently highlighted a report, scroll to it and add a temporary highlight
+    if (highlightedReportId) {
+      setTimeout(() => {
+        const el = document.querySelector(`[data-report-id="${highlightedReportId}"]`)
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          const prev = el.style.boxShadow
+          el.style.boxShadow = '0 0 0 4px rgba(42,209,255,0.25)'
+          setTimeout(() => { el.style.boxShadow = prev || '' }, 3000)
+          // clear highlight state
+          setHighlightedReportId(null)
+        }
+      }, 150)
     }
   } catch (error) {
-    console.error('❌ Failed to refresh existing reports:', error);
-    setExistingReports([]);
+    console.error('❌ Failed to refresh existing reports:', error)
   }
-};
+}
 
+// Function to clear a specific session's form
+const clearSessionForm = (sessionIndex) => {
+  setFormData(prev => ({
+    ...prev,
+    hourlyEntries: prev.hourlyEntries.map((hourlyEntry, idx) => 
+      idx === sessionIndex
+        ? {
+            ...createHourlyEntry(),
+            timePeriod: hourlyEntry.timePeriod,
+            periodName: hourlyEntry.periodName,
+            startHour: hourlyEntry.startHour,
+            endHour: hourlyEntry.endHour
+          }
+        : hourlyEntry
+    )
+  }));
+  
+  // Also clear any plan links for this session
+  Object.keys(selectedPlanForActivity).forEach(key => {
+    const [sessionIdx] = key.split('-').map(Number);
+    if (sessionIdx === sessionIndex) {
+      delete selectedPlanForActivity[key];
+      delete planAchievementStatus[key];
+    }
+  });
+};
 // Update the endpoint constant:
 
 
@@ -634,7 +664,7 @@ const processReportForEditing = (report) => {
   
   // Parse achievements
   const parseAchievements = (achievementString) => {
-    if (!achievementString) return [''];
+    if (!achievementString) return [];
     
     const achievements = [];
     const lines = achievementString.split('\n');
@@ -649,7 +679,7 @@ const processReportForEditing = (report) => {
       }
     });
     
-    return achievements.length > 0 ? achievements : [''];
+    return achievements;
   };
   
   // Parse problems
@@ -688,12 +718,19 @@ const processReportForEditing = (report) => {
     });
     
     // Now populate the specific session
+    const parsedActivities = parseActivities(report.hourly_activity)
+    const parsedAchievements = parseAchievements(report.hourly_achieved)
+    // Ensure at least 3 planned activity slots
+    while (parsedActivities.length < 3) parsedActivities.push('')
+    // Ensure achievements length matches activities
+    while (parsedAchievements.length < parsedActivities.length) parsedAchievements.push('')
+
     updatedEntries[sessionIndex] = {
       ...updatedEntries[sessionIndex],
       hourlyActivity: report.hourly_activity || '',
-      hourlyActivityEntries: parseActivities(report.hourly_activity),
+      hourlyActivityEntries: parsedActivities,
       hourlyAchieved: report.hourly_achieved || '',
-      hourlyAchievedEntries: parseAchievements(report.hourly_achieved),
+      hourlyAchievedEntries: parsedAchievements,
       problemFacedByEngineerHourly: report.problem_faced_by_engineer_hourly || '',
       problemFacedEntries: parseProblems(report.problem_faced_by_engineer_hourly),
       problemFaced: report.problem_faced || 'No',
@@ -709,7 +746,8 @@ const processReportForEditing = (report) => {
     
     return {
       ...prev,
-      reportDate: report.report_date || prev.reportDate,
+      // DO NOT change reportDate - keep it as today's date for the form
+      // This allows View Activities to show all today's reports
       projectName: report.project_name || prev.projectName,
       dailyTargetPlanned: report.daily_target || prev.dailyTargetPlanned,
       dailyTargetAchieved: report.daily_target_achieved || prev.dailyTargetAchieved,
@@ -741,12 +779,11 @@ const loadReportForEditing = async (reportId) => {
   }
   
   try {
-    console.log('🔍 Loading report for editing:', reportId);
+    log('Loading report for editing:', reportId);
     
-    // Use the correct endpoint from your logs
-    const url = `${import.meta.env.VITE_API_URL}/hourly-report/${reportId}`;
-    console.log('🔗 Using endpoint:', url);
-    
+    // Use the API endpoint for fetching a single report by id
+    const url = `${endpoint}/id/${reportId}`;
+
     const response = await fetch(url, {
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -759,7 +796,7 @@ const loadReportForEditing = async (reportId) => {
     }
     
     const report = await response.json();
-    console.log('✅ Report loaded for editing:', report);
+    console.log('📝 Report loaded for editing:', report);
     
     // Process the report for editing
     processReportForEditing(report);
@@ -774,12 +811,24 @@ const loadReportForEditing = async (reportId) => {
         id: report.id,
         timePeriod: report.time_period,
         sessionIndex: sessionIndex,
-        isFilled: report.hourly_activity || report.hourly_achieved || report.problem_faced_by_engineer_hourly
+        isFilled: report.hourly_activity || report.hourly_achieved || report.problem_faced_by_engineer_hourly,
+        originalDate: report.report_date  // Store original date for reference
       });
       
       setAlert({
         type: 'info',
-        message: `Now editing ${report.time_period} report. Make your changes and click "Update Report".`
+        message: `Now editing ${report.time_period} report from ${report.report_date}. Make your changes and click "Update Report".`
+      });
+      
+      // Scroll to the editing section
+      scrollToEditingSection();
+      
+      // Refresh existing reports to show the report being edited
+      await refreshExistingReports();
+    } else {
+      setAlert({
+        type: 'error',
+        message: `Could not find ${report.time_period} session in form. Please refresh the page.`
       });
     }
     
@@ -1076,23 +1125,26 @@ const deleteReport = async (reportId) => {
     if (!token || !formData.reportDate) return
     
     try {
-      // Make sure the endpoint URL is correct
-      const url = `${endpoint}/date/${formData.reportDate}`
-      console.log('📅 Fetching reports from:', url)
+      // Ensure reportDate is YYYY-MM-DD format, not ISO datetime
+      let cleanDate = formData.reportDate
+      if (cleanDate.includes('T')) {
+        cleanDate = cleanDate.split('T')[0]
+      }
       
+      const url = `${endpoint}/${cleanDate}`
+      log('Fetching reports from date:', cleanDate)
+
       const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
-        },
+        }
       })
 
-      console.log('🔍 Response status:', response.status)
-      
       if (response.ok) {
         const reports = await response.json()
-        console.log('📋 Reports fetched:', reports)
-        setExistingReports(reports)
+        log('Reports fetched:', Array.isArray(reports) ? reports.length : (reports.reports || []).length)
+        setExistingReports(Array.isArray(reports) ? reports : (reports.reports || []))
       } else {
         console.error('Failed to fetch existing reports:', response.status)
         setExistingReports([])
@@ -1205,6 +1257,9 @@ const deleteReport = async (reportId) => {
       
       // Add new empty entry
       session.hourlyActivityEntries.push('')
+      // Keep achievements array in sync
+      if (!session.hourlyAchievedEntries) session.hourlyAchievedEntries = []
+      session.hourlyAchievedEntries.push('')
       
       updatedEntries[sessionIndex] = session
       return { ...prev, hourlyEntries: updatedEntries }
@@ -1225,6 +1280,12 @@ const deleteReport = async (reportId) => {
       // Update entry
       session.hourlyActivityEntries[activityIndex] = value
       
+      // Ensure achievements array exists and has at least same length
+      if (!session.hourlyAchievedEntries) session.hourlyAchievedEntries = []
+      while (session.hourlyAchievedEntries.length < session.hourlyActivityEntries.length) {
+        session.hourlyAchievedEntries.push('')
+      }
+
       // Update hourlyActivity field for backward compatibility
       session.hourlyActivity = session.hourlyActivityEntries
         .filter(entry => entry.trim())
@@ -1235,12 +1296,78 @@ const deleteReport = async (reportId) => {
       return { ...prev, hourlyEntries: updatedEntries }
     })
   }
+
+  // Add unplanned/other activity entry
+  const addUnplannedActivityEntry = (sessionIndex) => {
+    setFormData(prev => {
+      const updatedEntries = [...prev.hourlyEntries]
+      const session = { ...updatedEntries[sessionIndex] }
+      
+      // Ensure we have the array
+      if (!session.unplannedActivities) {
+        session.unplannedActivities = []
+      }
+      
+      // Add new empty entry
+      session.unplannedActivities.push({
+        activity: '',
+        reason: '',
+        priority: 'Normal'
+      })
+      
+      updatedEntries[sessionIndex] = session
+      return { ...prev, hourlyEntries: updatedEntries }
+    })
+  }
+
+  // Update unplanned activity entry
+  const updateUnplannedActivityEntry = (sessionIndex, activityIndex, field, value) => {
+    setFormData(prev => {
+      const updatedEntries = [...prev.hourlyEntries]
+      const session = { ...updatedEntries[sessionIndex] }
+      
+      // Ensure we have the array
+      if (!session.unplannedActivities) {
+        session.unplannedActivities = []
+      }
+      
+      // Update entry
+      if (!session.unplannedActivities[activityIndex]) {
+        session.unplannedActivities[activityIndex] = {
+          activity: '',
+          reason: '',
+          priority: 'Normal'
+        }
+      }
+      
+      session.unplannedActivities[activityIndex][field] = value
+      
+      updatedEntries[sessionIndex] = session
+      return { ...prev, hourlyEntries: updatedEntries }
+    })
+  }
+
+  // Remove unplanned activity entry
+  const removeUnplannedActivityEntry = (sessionIndex, activityIndex) => {
+    setFormData(prev => {
+      const updatedEntries = [...prev.hourlyEntries]
+      const session = { ...updatedEntries[sessionIndex] }
+      
+      if (session.unplannedActivities) {
+        session.unplannedActivities.splice(activityIndex, 1)
+      }
+      
+      updatedEntries[sessionIndex] = session
+      return { ...prev, hourlyEntries: updatedEntries }
+    })
+  }
+
 // Add this function near the other helper functions
 const getSessionStatus = (period, now = new Date()) => {
   const { startHour, endHour, label } = period
   const currentHour = now.getHours()
   const currentMinutes = now.getMinutes()
-  const isToday = formData.reportDate === new Date().toISOString().slice(0, 10)
+  const isToday = formData.reportDate === getTodayDateString()
   
   // Check existing report first
   const existingReport = existingReports.find(report => report.time_period === label)
@@ -1307,6 +1434,10 @@ const getSessionStatus = (period, now = new Date()) => {
       
       // Remove the entry
       session.hourlyActivityEntries = session.hourlyActivityEntries.filter((_, idx) => idx !== activityIndex)
+      // Also remove corresponding achievement entry if present
+      if (session.hourlyAchievedEntries && session.hourlyAchievedEntries.length > activityIndex) {
+        session.hourlyAchievedEntries.splice(activityIndex, 1)
+      }
       
       // Update hourlyActivity field for backward compatibility
       session.hourlyActivity = session.hourlyActivityEntries
@@ -1589,33 +1720,19 @@ if (existingReportForPeriod) {
                         existingReportForPeriod.hourly_achieved || 
                         existingReportForPeriod.problem_faced_by_engineer_hourly;
   
+  // Store the existing report ID for easy access
+  const existingReportId = existingReportForPeriod.id;
+  
   setAlert({
     type: 'warning',
     message: `Report for ${entry.timePeriod} already exists for ${formData.reportDate}. ${
       isReportFilled 
-        ? 'This report already contains data. Click "Edit Report" to view/modify it.'
-        : 'This report appears to be empty. Click "Edit Report" to fill it.'
-    }`
+        ? 'This report already contains data.'
+        : 'This report appears to be empty.'
+    } Click "Edit Report" to view/modify it.`,
+    existingReportId: existingReportId, // Add report ID to alert
+    existingReportTimePeriod: entry.timePeriod // Add time period
   });
-  
-  // Auto-switch to edit mode and load the existing report
-  setEditingReport({
-    id: existingReportForPeriod.id,
-    timePeriod: existingReportForPeriod.time_period,
-    sessionIndex: sessionIndex,
-    isFilled: isReportFilled
-  });
-  
-  // Load the existing report for editing IMMEDIATELY
-  await loadReportForEditing(existingReportForPeriod.id);
-  
-  // Scroll to the editing section
-  setTimeout(() => {
-    const editingSection = document.querySelector('[style*="EDITING MODE"]');
-    if (editingSection) {
-      editingSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  }, 500);
   
   setSubmitting(false);
   return;
@@ -1627,38 +1744,42 @@ if (existingReportForPeriod) {
       
       // Check date
       const formattedDate = formatDateForBackend(formData.reportDate);
-      console.log('📅 Formatted date:', formattedDate);
+      log('Formatted date:', formattedDate);
       if (!formattedDate || formattedDate === 'Invalid Date') {
         validationErrors.push('Report Date is required');
       }
       
       // Check time period
-      console.log('⏰ Time period:', entry.timePeriod?.trim());
+      log('Time period:', entry.timePeriod?.trim());
       if (!entry.timePeriod?.trim()) {
         validationErrors.push('Time Period is required');
       }
       
       // Check project name
-      console.log('🏢 Project name:', formData.projectName?.trim());
+      log('Project name:', formData.projectName?.trim());
       if (!formData.projectName?.trim()) {
         validationErrors.push('Project Name is required');
       }
       
       // Check daily target planned (always provide a default)
       const dailyTargetPlanned = formData.dailyTargetPlanned?.trim() || "Auto-generated from hourly session activities";
-      console.log('🎯 Daily target planned:', dailyTargetPlanned);
+      log('Daily target planned:', dailyTargetPlanned);
       if (!dailyTargetPlanned) {
         validationErrors.push('Daily Target Planned is required');
       }
       
-      // Check if at least one activity is entered
-      const hasActivity = entry.hourlyActivityEntries?.some(activity => activity.trim());
-      console.log('💼 Hourly activities:', entry.hourlyActivityEntries);
+      // Check if at least one activity is entered (check both string and array)
+      const hasActivityFromString = entry.hourlyActivity?.trim();
+      const hasActivityFromArray = entry.hourlyActivityEntries?.some(activity => activity?.trim());
+      const hasActivity = hasActivityFromString || hasActivityFromArray;
+      log('Activity string:', entry.hourlyActivity);
+      log('Activity entries:', entry.hourlyActivityEntries);
+      log('Has activity (either source):', hasActivity);
       if (!hasActivity) {
         validationErrors.push('At least one Activity is required');
       }
 
-      console.log('❌ Validation errors:', validationErrors);
+      log('Validation errors:', validationErrors);
       
       if (validationErrors.length > 0) {
         throw new Error(`Validation errors:\n${validationErrors.join('\n')}`);
@@ -1671,22 +1792,62 @@ if (existingReportForPeriod) {
       }
 
       // Format activities with numbering
-      const formattedActivities = entry.hourlyActivityEntries
-        .filter(activity => activity.trim())
-        .map((activity, idx) => `Activity ${idx + 1}: ${activity}`)
-        .join('\n');
+      let formattedActivities = '';
+      if (entry.hourlyActivityEntries && entry.hourlyActivityEntries.length > 0) {
+        formattedActivities = entry.hourlyActivityEntries
+          .filter(activity => activity?.trim())
+          .map((activity, idx) => `Activity ${idx + 1}: ${activity}`)
+          .join('\n');
+      } else if (entry.hourlyActivity?.trim()) {
+        // Use existing hourlyActivity if entries array is not filled
+        formattedActivities = entry.hourlyActivity;
+      }
 
-      // Format achievements with numbering - Store JUST the achievement text
-      const formattedAchievements = entry.hourlyAchievedEntries
-        .filter(achieved => achieved.trim())
-        .map((achieved, idx) => achieved.trim()) // Just the achievement text, no prefix
-        .join('\n');
+      // Add unplanned activities if any
+      if (entry.unplannedActivities && entry.unplannedActivities.length > 0) {
+        const unplannedList = entry.unplannedActivities
+          .filter(act => act?.activity?.trim())
+          .map((act, idx) => {
+            let text = `[UNPLANNED ${idx + 1}] ${act.activity}`;
+            if (act.reason?.trim()) {
+              text += ` (Reason: ${act.reason})`;
+            }
+            if (act.priority && act.priority !== 'Normal') {
+              text += ` [Priority: ${act.priority}]`;
+            }
+            return text;
+          })
+          .join('\n');
+        
+        if (unplannedList) {
+          formattedActivities = formattedActivities 
+            ? `${formattedActivities}\n\n--- Other/Unplanned Activities ---\n${unplannedList}`
+            : `--- Other/Unplanned Activities ---\n${unplannedList}`;
+        }
+      }
+
+      // Format achievements - ONLY if entries exist (empty array = no achievements)
+      let formattedAchievements = '';
+      if (entry.hourlyAchievedEntries && Array.isArray(entry.hourlyAchievedEntries) && entry.hourlyAchievedEntries.length > 0) {
+        formattedAchievements = entry.hourlyAchievedEntries
+          .filter(achieved => achieved?.trim()) // Only keep non-empty
+          .map((achieved) => achieved.trim()) // Just the achievement text, no prefix
+          .join('\n');
+      } else if (entry.hourlyAchieved?.trim()) {
+        // Fallback to string field if array is empty
+        formattedAchievements = entry.hourlyAchieved;
+      }
 
       // Format problems with numbering
-      const formattedProblems = entry.problemFacedEntries
-        .filter(problem => problem.trim())
-        .map((problem, idx) => `Problem ${idx + 1}: ${problem}`)
-        .join('\n');
+      let formattedProblems = '';
+      if (entry.problemFacedEntries && entry.problemFacedEntries.length > 0) {
+        formattedProblems = entry.problemFacedEntries
+          .filter(problem => problem?.trim())
+          .map((problem, idx) => `Problem ${idx + 1}: ${problem}`)
+          .join('\n');
+      } else if (entry.problemFacedByEngineerHourly?.trim()) {
+        formattedProblems = entry.problemFacedByEngineerHourly;
+      }
 
       // Create payload with proper time period format
       const payload = {
@@ -1739,14 +1900,16 @@ if (existingReportForPeriod) {
         payload.planAchievementData = planData;
       }
 
-      console.log('📤 PAYLOAD:', JSON.stringify(payload, null, 2));
+      log('PAYLOAD:', payload)
 
       let response;
       let url = endpoint;
       
       if (editingReport) {
-        // Update existing report
+        // Update existing report - add edit timestamp
         url = `${endpoint}/${editingReport.id}`;
+        payload.edited_at = new Date().toISOString();
+        payload.edited_by = user?.username || user?.name || user?.id || 'Unknown';
         console.log('🔄 Updating report at:', url);
         
         // Double-check we're not creating a duplicate when editing
@@ -1755,9 +1918,18 @@ if (existingReportForPeriod) {
           report.report_date === formattedDate &&
           report.time_period.toLowerCase().replace(/\s+/g, '') === entry.timePeriod.toLowerCase().replace(/\s+/g, '')
         );
-        
+
         if (existingReportCheck) {
-          throw new Error(`Cannot update report: Another report already exists for ${entry.timePeriod} on ${formattedDate}. Please delete the duplicate first.`);
+          const role = (user?.role || '').toLowerCase()
+          const isManagerish = role.includes('manager') || role.includes('team leader') || role.includes('group leader')
+          if (!isManagerish) {
+            throw new Error(`Cannot update report: Another report already exists for ${entry.timePeriod} on ${formattedDate}. Please delete the duplicate first.`);
+          } else {
+            const confirmOverride = window.confirm(`Another report exists for ${entry.timePeriod} on ${formattedDate}. As a manager you can override and update this report. Proceed?`)
+            if (!confirmOverride) {
+              throw new Error('Update cancelled by user')
+            }
+          }
         }
         
         response = await fetch(url, {
@@ -1770,7 +1942,46 @@ if (existingReportForPeriod) {
         });
       } else {
         // Create new report
-        console.log('🆕 Creating new report at:', url);
+        log('Creating new report')
+        // If a site location is provided, create a MoM record first (compulsory)
+        try {
+          const momEndpoint = endpoint.replace('/api/hourly-report', '/api/employee-activity')
+          if (formData.siteLocation && formData.siteLocation.trim()) {
+            const momPayload = {
+              enggName: user?.username || user?.name || '',
+              siteLocation: formData.siteLocation,
+              momDate: formattedDate,
+              reportingTime: entry.startHour ? `${entry.startHour}:00` : '',
+              momCloseTime: entry.endHour ? `${entry.endHour}:00` : '',
+              manHours: totalAchieved || '',
+              siteStartDate: formData.siteStartDate || formattedDate,
+              siteEndDate: formData.siteEndDate || formattedDate,
+              projectName: formData.projectName || '',
+              observationNotes: formattedActivities || '',
+              solutionNotes: formattedAchievements || '',
+              conclusion: ''
+            }
+
+            const momRes = await fetch(`${momEndpoint}/mom-records`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify(momPayload)
+            })
+
+            if (momRes.ok) {
+              const momData = await momRes.json()
+              try { localStorage.setItem('momCreated', JSON.stringify({ momId: momData.momId || momData.momId || momData.insertId || null, date: formattedDate, siteLocation: formData.siteLocation })) } catch(e) { }
+            } else {
+              console.warn('Failed to create MoM automatically for site location')
+            }
+          }
+        } catch (e) {
+          console.error('Error creating MoM before hourly report:', e)
+        }
+
         response = await fetch(url, {
           method: 'POST',
           headers: {
@@ -1810,24 +2021,56 @@ if (existingReportForPeriod) {
       }
 
       const result = await response.json();
-      console.log(`✅ Successfully ${editingReport ? 'updated' : 'saved'} hourly report:`, result);
+      log(`Successfully ${editingReport ? 'updated' : 'saved'} hourly report`, result);
       
-      // Refresh existing reports after successful submission
+      // Trigger ActivityDisplay refresh via localStorage
+      if (editingReport) {
+        localStorage.setItem('hourlyReportEdited', new Date().toISOString())
+      }
+      
+      // Highlight the created/updated report and then refresh the list
+      if (result && result.id) setHighlightedReportId(result.id)
       await refreshExistingReports();
-      
+
       setAlert({
         type: 'success',
         message: `${entry.timePeriod} report ${editingReport ? 'updated' : 'saved'} successfully!`
       });
 
       if (editingReport) {
-        // Reset editing state
+        // Reset editing state after successful update
+        const sessionIdx = editingReport.sessionIndex;
+        const editedEntry = formData.hourlyEntries[sessionIdx];
+        
+        // Reset the form for this session to allow new entries
+        setFormData(prev => ({
+          ...prev,
+          hourlyEntries: prev.hourlyEntries.map((hourlyEntry, idx) => 
+            idx === sessionIdx
+              ? {
+                  ...createHourlyEntry(),
+                  timePeriod: editedEntry.timePeriod,
+                  periodName: editedEntry.periodName,
+                  startHour: editedEntry.startHour,
+                  endHour: editedEntry.endHour
+                }
+              : hourlyEntry
+          )
+        }));
+        
+        // Clear editing state
         setEditingReport(null);
         
-        // Don't reset the form for edit mode - let user continue editing or create new
+        // Ensure form date is back to today
+        const todayDate = getTodayDateString();
+        setFormData(prev => ({
+          ...prev,
+          reportDate: todayDate
+        }));
+        
         setAlert({
           type: 'success',
-          message: `Report updated successfully! You can continue editing or create a new report.`
+          message: `${entry.timePeriod} report updated successfully! The updated report is now visible in the View Activities section.`
         });
       } else {
         // Reset only the submitted hourly entry for new reports
@@ -2047,7 +2290,7 @@ const findExistingReportByPeriod = (timePeriod) => {
       <header className="vh-form-header">
         <div>
           <p className="vh-form-label">Hourly Activity Report</p>
-          <h2>Log your activities in 3-hour sessions (9am - 6pm)</h2>
+          <h2>Log your activities in two sessions: 9am-1pm and 2pm-4pm</h2>
           <p>
             Record your activities, achievements, and problems. Click "+" to add more entries as needed.
             {editingReport && (
@@ -2106,35 +2349,213 @@ const findExistingReportByPeriod = (timePeriod) => {
       </header>
 
       {/* Update the alert display section */}
+{/* Update the alert display section */}
 {alert && (
-  <div className={`vh-alert ${alert.type}`}>
+  <div className={`vh-alert ${alert.type}`} style={{ 
+    ...(alert.type === 'warning' && { 
+      border: '2px solid #ffc107',
+      background: '#fffcf0'
+    })
+  }}>
     <p>{alert.message}</p>
-    {alert.type === 'warning' && alert.message.includes('Report already exists') && (
-      <button
-        onClick={() => {
-          // Find the existing report and load it for editing
-          const period = alert.message.match(/for (\d+(?:am|pm)-\d+(?:am|pm))/)?.[1];
-          if (period && existingReports.length > 0) {
-            const report = existingReports.find(r => r.time_period === period);
-            if (report) {
-              loadReportForEditing(report.id);
-            }
-          }
-        }}
-        style={{
-          marginTop: '0.5rem',
-          padding: '0.25rem 0.75rem',
-          background: '#ffc107',
-          color: '#092544',
-          border: 'none',
+    <button
+  onClick={() => {
+    const now = new Date();
+    const currentActiveEntry = formData.hourlyEntries.find(entry => 
+      isWithinEditingWindow(entry.startHour, entry.endHour, now)
+    );
+    
+    if (currentActiveEntry) {
+      const sessionIndex = formData.hourlyEntries.indexOf(currentActiveEntry);
+      clearSessionForm(sessionIndex);
+      
+      setAlert({
+        type: 'info',
+        message: `Form cleared for ${currentActiveEntry.timePeriod}. You can now fill a new report.`
+      });
+    }
+  }}
+  style={{
+    padding: '0.5rem 1rem',
+    background: '#f8f9fa',
+    color: '#6c757d',
+    border: '1px solid #dee2e6',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '0.9rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem'
+  }}
+>
+  <span>🔄</span> Clear Form & Start New
+</button>
+    {/* Show Edit button when report already exists */}
+    {(alert.type === 'warning' && alert.message.includes('Report already exists')) && (
+      <div style={{ marginTop: '1rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button
+            onClick={async () => {
+              if (alert.existingReportId) {
+                // Load the existing report for editing
+                await loadReportForEditing(alert.existingReportId);
+                
+                // Clear the alert
+                setAlert(null);
+                
+                // Scroll to editing section
+                setTimeout(() => {
+                  const editingSection = document.querySelector('[style*="EDITING MODE"]');
+                  if (editingSection) {
+                    editingSection.scrollIntoView({ 
+                      behavior: 'smooth', 
+                      block: 'center' 
+                    });
+                  }
+                }, 300);
+              } else {
+                // Fallback: find report by time period
+                const period = alert.existingReportTimePeriod || alert.message.match(/for (.*?) on/)?.[1];
+                if (period && existingReports.length > 0) {
+                  const report = existingReports.find(r => r.time_period === period);
+                  if (report) {
+                    await loadReportForEditing(report.id);
+                    setAlert(null);
+                    
+                    setTimeout(() => {
+                      const editingSection = document.querySelector('[style*="EDITING MODE"]');
+                      if (editingSection) {
+                        editingSection.scrollIntoView({ 
+                          behavior: 'smooth', 
+                          block: 'center' 
+                        });
+                      }
+                    }, 300);
+                  }
+                }
+              }
+            }}
+            style={{
+              padding: '0.5rem 1rem',
+              background: '#ffc107',
+              color: '#092544',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}
+          >
+            <span>✏️</span> Edit Existing Report
+          </button>
+          
+          <button
+            onClick={() => {
+              // Clear the form for this session and allow new submission
+              const now = new Date();
+              const currentActiveEntry = formData.hourlyEntries.find(entry => 
+                isWithinEditingWindow(entry.startHour, entry.endHour, now)
+              );
+              
+              if (currentActiveEntry) {
+                const sessionIndex = formData.hourlyEntries.indexOf(currentActiveEntry);
+                
+                // Reset just this session's form
+                setFormData(prev => ({
+                  ...prev,
+                  hourlyEntries: prev.hourlyEntries.map((hourlyEntry, idx) => 
+                    idx === sessionIndex
+                      ? {
+                          ...createHourlyEntry(),
+                          timePeriod: hourlyEntry.timePeriod,
+                          periodName: hourlyEntry.periodName,
+                          startHour: hourlyEntry.startHour,
+                          endHour: hourlyEntry.endHour
+                        }
+                      : hourlyEntry
+                  )
+                }));
+                
+                setAlert({
+                  type: 'info',
+                  message: `Form cleared for ${currentActiveEntry.timePeriod}. You can now fill a new report.`
+                });
+              }
+            }}
+            style={{
+              padding: '0.5rem 1rem',
+              background: '#f8f9fa',
+              color: '#6c757d',
+              border: '1px solid #dee2e6',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}
+          >
+            <span>🔄</span> Clear Form & Start New
+          </button>
+          
+          <button
+            onClick={() => setAlert(null)}
+            style={{
+              padding: '0.5rem 1rem',
+              background: 'transparent',
+              color: '#6c757d',
+              border: '1px solid #dee2e6',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.9rem'
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
+        
+        <div style={{ 
+          fontSize: '0.85rem', 
+          color: '#856404', 
+          marginTop: '0.75rem',
+          padding: '0.5rem',
+          background: '#fff3cd',
           borderRadius: '4px',
+          borderLeft: '3px solid #ffc107'
+        }}>
+          <strong>ℹ️ Options:</strong>
+          <ul style={{ margin: '0.25rem 0 0 1rem', padding: 0 }}>
+            <li><strong>Edit Existing Report:</strong> Modify your submitted report</li>
+            <li><strong>Clear Form & Start New:</strong> Start fresh (but cannot submit duplicate)</li>
+            <li><strong>Dismiss:</strong> Close this message</li>
+          </ul>
+        </div>
+      </div>
+    )}
+    
+    {/* For other alerts, show dismiss button */}
+    {alert.type !== 'warning' || !alert.message.includes('Report already exists') ? (
+      <button
+        onClick={() => setAlert(null)}
+        style={{
+          marginTop: '0.75rem',
+          padding: '0.5rem 1rem',
+          background: 'transparent',
+          color: alert.type === 'success' ? '#155724' : 
+                 alert.type === 'error' ? '#721c24' : '#856404',
+          border: `1px solid ${alert.type === 'success' ? '#c3e6cb' : 
+                            alert.type === 'error' ? '#f5c6cb' : '#ffeaa7'}`,
+          borderRadius: '6px',
           cursor: 'pointer',
-          fontWeight: 'bold'
+          fontSize: '0.85rem'
         }}
       >
-        ✏️ Click here to Edit Report
+        Dismiss
       </button>
-    )}
+    ) : null}
   </div>
 )}
 
@@ -2240,22 +2661,27 @@ const findExistingReportByPeriod = (timePeriod) => {
     })}
   </div>
 </div>
-      {/* Existing Reports List */}
-      {existingReports.length > 0 && (
+      {/* View Activities Section - Shows only today's submitted reports */}
+      {existingReports.filter(r => r.report_date === formData.reportDate).length > 0 && (
         <div style={{ 
           marginBottom: '2rem',
-          background: '#f8f9fa',
+          background: '#f0f7ff',
           padding: '1.5rem',
           borderRadius: '12px',
-          border: '1px solid #dee2e6'
+          border: '2px solid #2ad1ff'
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h3 style={{ color: '#092544', margin: 0 }}>
-              Submitted Reports for {formData.reportDate}
-              <span style={{ fontSize: '0.9rem', color: '#6c757d', marginLeft: '0.5rem' }}>
-                ({existingReports.length} reports)
-              </span>
-            </h3>
+            <div>
+              <h3 style={{ color: '#092544', margin: '0 0 0.25rem 0' }}>
+                📋 View Activities & Achievements
+                <span style={{ fontSize: '0.9rem', color: '#6c757d', marginLeft: '0.5rem' }}>
+                  ({existingReports.filter(r => r.report_date === formData.reportDate).length} for {formData.reportDate})
+                </span>
+              </h3>
+              <p style={{ color: '#6c757d', fontSize: '0.85rem', margin: 0 }}>
+                All reports submitted today. Click "Edit Report" to modify any submission.
+              </p>
+            </div>
             <button
               type="button"
               onClick={refreshExistingReports}
@@ -2274,7 +2700,7 @@ const findExistingReportByPeriod = (timePeriod) => {
           </div>
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
-            {existingReports.map((report, index) => {
+            {existingReports.filter(r => r.report_date === formData.reportDate).map((report, index) => {
               const isBeingEdited = editingReport?.id === report.id;
               const canEdit = true; // Always allow editing of submitted reports
               const isReportFilled = report.hourly_activity || 
@@ -2282,7 +2708,7 @@ const findExistingReportByPeriod = (timePeriod) => {
                                    report.problem_faced_by_engineer_hourly;
               
               return (
-                <div key={index} style={{
+                <div key={index} data-report-id={report.id} style={{
                   padding: '1rem',
                   background: isBeingEdited ? '#fffcf0' : (isReportFilled ? '#f0fff4' : 'white'),
                   borderRadius: '8px',
@@ -2855,11 +3281,15 @@ export default HourlyReportForm
                             fontSize: '0.85rem'
                           }}
                         >
-                          <span style={{ fontSize: '1rem' }}>+</span> Add Activity
+                          <span style={{ fontSize: '1rem' }}>+</span> Add More Activity
                         </button>
                       </div>
                       
-                      {(entry.hourlyActivityEntries || ['']).map((activity, activityIndex) => {
+                      {(() => {
+                        const existing = entry.hourlyActivityEntries || []
+                        const displayCount = Math.max(3, existing.length)
+                        const displayPlanned = Array.from({ length: displayCount }).map((_, i) => existing[i] || '')
+                        return displayPlanned.map((activity, activityIndex) => {
                         const key = `${sessionIndex}-${activityIndex}`
                         const planId = selectedPlanForActivity[key]
                         const selectedPlan = dailyPlans.find(p => p.id === planId)
@@ -2958,13 +3388,13 @@ export default HourlyReportForm
 )}
 
                                   
-                                  <textarea
-                                    rows={2}
-                                    value={activity}
-                                    onChange={(e) => updateActivityEntry(sessionIndex, activityIndex, e.target.value)}
-                                    placeholder={`Describe activity ${activityIndex + 1}...`}
-                                    required={activityIndex === 0}
-                                  />
+                                    <textarea
+                                      rows={2}
+                                      value={activity}
+                                      onChange={(e) => updateActivityEntry(sessionIndex, activityIndex, e.target.value)}
+                                      placeholder={`Describe activity ${activityIndex + 1}...`}
+                                      required={false}
+                                    />
                                 </label>
                                 
                                 {/* Achievement section specifically for this activity */}
@@ -3018,7 +3448,8 @@ export default HourlyReportForm
                             </div>
                           </div>
                         )
-                      })}
+                        })
+                      })()}
                     </div>
 
                     {/* Achievements Section */}
@@ -3047,55 +3478,61 @@ export default HourlyReportForm
                         </button>
                       </div>
                       
-                      {(entry.hourlyAchievedEntries || ['']).map((achieved, achievedIndex) => (
-                        <div key={achievedIndex} style={{ marginBottom: '1rem', position: 'relative' }}>
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
-                            <span style={{
-                              background: '#06c167',
-                              color: 'white',
-                              minWidth: '24px',
-                              height: '24px',
-                              borderRadius: '50%',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: '0.75rem',
-                              marginTop: '0.5rem'
-                            }}>
-                              {achievedIndex + 1}
-                            </span>
-                            <div style={{ flex: 1 }}>
-                              <label>
-                                <span>Achievement {achievedIndex + 1}</span>
-                                <textarea
-                                  rows={2}
-                                  value={achieved}
-                                  onChange={(e) => updateAchievedEntry(sessionIndex, achievedIndex, e.target.value)}
-                                  placeholder={`Describe achievement ${achievedIndex + 1}...`}
-                                />
-                              </label>
+                      {(entry.hourlyAchievedEntries && entry.hourlyAchievedEntries.length > 0) ? (
+                        entry.hourlyAchievedEntries.map((achieved, achievedIndex) => (
+                          <div key={achievedIndex} style={{ marginBottom: '1rem', position: 'relative' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                              <span style={{
+                                background: '#06c167',
+                                color: 'white',
+                                minWidth: '24px',
+                                height: '24px',
+                                borderRadius: '50%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '0.75rem',
+                                marginTop: '0.5rem'
+                              }}>
+                                {achievedIndex + 1}
+                              </span>
+                              <div style={{ flex: 1 }}>
+                                <label>
+                                  <span>Achievement {achievedIndex + 1}</span>
+                                  <textarea
+                                    rows={2}
+                                    value={achieved}
+                                    onChange={(e) => updateAchievedEntry(sessionIndex, achievedIndex, e.target.value)}
+                                    placeholder={`Describe achievement ${achievedIndex + 1}...`}
+                                  />
+                                </label>
+                              </div>
+                              {entry.hourlyAchievedEntries.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => removeAchievedEntry(sessionIndex, achievedIndex)}
+                                  style={{
+                                    padding: '0.25rem 0.5rem',
+                                    background: '#ff7a7a',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    fontSize: '0.75rem',
+                                    marginTop: '0.5rem'
+                                  }}
+                                >
+                                  ✕
+                                </button>
+                              )}
                             </div>
-                            {(entry.hourlyAchievedEntries || ['']).length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => removeAchievedEntry(sessionIndex, achievedIndex)}
-                                style={{
-                                  padding: '0.25rem 0.5rem',
-                                  background: '#ff7a7a',
-                                  color: 'white',
-                                  border: 'none',
-                                  borderRadius: '6px',
-                                  cursor: 'pointer',
-                                  fontSize: '0.75rem',
-                                  marginTop: '0.5rem'
-                                }}
-                              >
-                                ✕
-                              </button>
-                            )}
                           </div>
-                        </div>
-                      ))}
+                        ))
+                      ) : (
+                        <p style={{ color: '#6c757d', fontSize: '0.9rem', fontStyle: 'italic' }}>
+                          No achievements added yet. Click "+ Add Achievement" to start.
+                        </p>
+                      )}
                     </div>
 
                     {/* Problem Faced Section */}
@@ -3303,18 +3740,22 @@ export default HourlyReportForm
           ) : (
             // Show all sessions for new reports
             <div>
-              <h3 style={{ color: '#092544', marginBottom: '1rem' }}>New Session Reports (9am - 6pm)</h3>
+              <h3 style={{ color: '#092544', marginBottom: '1rem' }}>New Session Reports (9am-1pm & 2pm-4pm)</h3>
               <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '1rem' }}>
                 Current active session: <strong>{currentActivePeriod || 'None'}</strong><br/>
-                You can fill and submit reports during each 3-hour session or up to 30 minutes after it ends.
+                You can fill and submit reports during each session (9am-1pm or 2pm-4pm) or up to 30 minutes after it ends.
               </p>
 
               {formData.hourlyEntries.map((entry, sessionIndex) => {
                 const periodKey = entry.periodName.toLowerCase().replace(' session', '')
                 const currentSessionStatus = sessionStatus[periodKey]
-                const canEdit = currentSessionStatus?.canEdit || false
+                // For new reports: respect the session status (lock if not started)
+                // For existing reports: always allow editing
+                const hasExistingReport = currentSessionStatus?.report !== undefined
+                const canEdit = hasExistingReport ? true : (currentSessionStatus?.canEdit || false)
                 const isSubmitted = currentSessionStatus?.status === 'submitted' || currentSessionStatus?.status === 'editable'
                 const isActive = currentSessionStatus?.status === 'active'
+                const isPending = currentSessionStatus?.status === 'pending'
 
                 if (isSubmitted) {
                   return null
@@ -3352,7 +3793,18 @@ export default HourlyReportForm
                           ACTIVE - Fill now
                         </span>
                       )}
-                      {!canEdit && (
+                      {!canEdit && isPending && (
+                        <span style={{
+                          background: '#ff7a7a',
+                          color: 'white',
+                          padding: '0.25rem 0.5rem',
+                          borderRadius: '12px',
+                          fontSize: '0.8rem'
+                        }}>
+                          🔒 LOCKED - Starts at {entry.startHour}:{String(0).padStart(2, '0')}
+                        </span>
+                      )}
+                      {!canEdit && !isPending && (
                         <span style={{
                           background: '#ff7a7a',
                           color: 'white',
@@ -3890,6 +4342,143 @@ export default HourlyReportForm
                           </div>
                         </>
                       )}
+
+                      {/* Unplanned/Other Activities Section */}
+                      <div style={{ 
+                        marginTop: '2rem',
+                        paddingTop: '2rem',
+                        borderTop: '2px solid #e9ecef',
+                        background: '#f8f9fa',
+                        padding: '1.5rem',
+                        borderRadius: '8px'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                          <h5 style={{ color: '#092544', margin: 0 }}>
+                            Other/Unplanned Activities
+                          </h5>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => addUnplannedActivityEntry(sessionIndex)}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                padding: '0.4rem 0.75rem',
+                                background: '#6c757d',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '8px',
+                                cursor: 'pointer',
+                                fontSize: '0.85rem'
+                              }}
+                            >
+                              <span style={{ fontSize: '1rem' }}>+</span> Add Other Activity
+                            </button>
+                          )}
+                        </div>
+
+                        {(!entry.unplannedActivities || entry.unplannedActivities.length === 0) ? (
+                          <div style={{
+                            padding: '1rem',
+                            textAlign: 'center',
+                            color: '#6c757d',
+                            fontSize: '0.9rem',
+                            fontStyle: 'italic'
+                          }}>
+                            No other/unplanned activities yet. Click "Add Other Activity" to add one.
+                          </div>
+                        ) : (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
+                            {(entry.unplannedActivities || []).map((unplannedActivity, unplannedIndex) => (
+                              <div key={unplannedIndex} style={{
+                                padding: '1rem',
+                                background: 'white',
+                                border: '1px solid #dee2e6',
+                                borderRadius: '6px',
+                                position: 'relative'
+                              }}>
+                                <div style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: '1fr',
+                                  gap: '0.75rem'
+                                }}>
+                                  <label>
+                                    <span style={{ fontSize: '0.9rem', fontWeight: '500', color: '#092544' }}>
+                                      Activity Description *
+                                    </span>
+                                    <textarea
+                                      rows={2}
+                                      value={unplannedActivity?.activity || ''}
+                                      onChange={(e) => updateUnplannedActivityEntry(sessionIndex, unplannedIndex, 'activity', e.target.value)}
+                                      placeholder="Describe the unplanned/other activity..."
+                                      disabled={!canEdit}
+                                      required
+                                      style={{
+                                        fontSize: '0.9rem',
+                                        borderLeft: '3px solid #6c757d',
+                                        paddingLeft: '0.75rem'
+                                      }}
+                                    />
+                                  </label>
+
+                                  <label>
+                                    <span style={{ fontSize: '0.9rem', fontWeight: '500', color: '#092544' }}>
+                                      Reason/Context
+                                    </span>
+                                    <textarea
+                                      rows={1}
+                                      value={unplannedActivity?.reason || ''}
+                                      onChange={(e) => updateUnplannedActivityEntry(sessionIndex, unplannedIndex, 'reason', e.target.value)}
+                                      placeholder="Why was this activity done? (Optional)"
+                                      disabled={!canEdit}
+                                      style={{ fontSize: '0.9rem' }}
+                                    />
+                                  </label>
+
+                                  <label>
+                                    <span style={{ fontSize: '0.9rem', fontWeight: '500', color: '#092544' }}>
+                                      Priority
+                                    </span>
+                                    <select
+                                      value={unplannedActivity?.priority || 'Normal'}
+                                      onChange={(e) => updateUnplannedActivityEntry(sessionIndex, unplannedIndex, 'priority', e.target.value)}
+                                      disabled={!canEdit}
+                                      style={{ fontSize: '0.9rem' }}
+                                    >
+                                      <option value="Low">Low</option>
+                                      <option value="Normal">Normal</option>
+                                      <option value="High">High</option>
+                                      <option value="Critical">Critical</option>
+                                    </select>
+                                  </label>
+                                </div>
+
+                                {canEdit && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeUnplannedActivityEntry(sessionIndex, unplannedIndex)}
+                                    style={{
+                                      position: 'absolute',
+                                      top: '0.5rem',
+                                      right: '0.5rem',
+                                      padding: '0.25rem 0.5rem',
+                                      background: '#dc3545',
+                                      color: 'white',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '0.75rem'
+                                    }}
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )
@@ -4232,7 +4821,414 @@ export default HourlyReportForm
   )}
 </div>
       </form>
+            {/* Edit Submitted Reports Section - ADD THIS SECTION */}
+      {existingReports.length > 0 && !editingReport && (
+        <div style={{ 
+          marginTop: '3rem',
+          padding: '2rem',
+          background: '#f8f9fa',
+          borderRadius: '12px',
+          border: '1px solid #dee2e6'
+        }}>
+          <h3 style={{ 
+            color: '#092544', 
+            marginBottom: '1rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}>
+            <span>✏️</span> Edit Your Submitted Reports
+          </h3>
+          
+          <div style={{ 
+            background: '#e6f7ff', 
+            padding: '1rem', 
+            borderRadius: '8px',
+            marginBottom: '1.5rem',
+            borderLeft: '4px solid #2ad1ff'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ fontSize: '1.2rem' }}>ℹ️</div>
+              <div>
+                <strong>How to edit reports:</strong>
+                <ol style={{ margin: '0.5rem 0 0 1rem', paddingLeft: '0', fontSize: '0.9rem' }}>
+                  <li>Click "Edit Report" on any submitted report below</li>
+                  <li>The form above will load with the existing data</li>
+                  <li>Make your changes and click "Update Report"</li>
+                  <li>You can edit reports at any time (not just within 30 minutes)</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', 
+            gap: '1rem',
+            marginBottom: '1.5rem'
+          }}>
+            {existingReports.map((report, index) => {
+              const isReportFilled = report.hourly_activity || 
+                                   report.hourly_achieved || 
+                                   report.problem_faced_by_engineer_hourly;
+              
+              return (
+                <div key={index} style={{
+                  padding: '1rem',
+                  background: 'white',
+                  borderRadius: '8px',
+                  border: isReportFilled ? '2px solid #06c167' : '2px solid #ffc107',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                  position: 'relative'
+                }}>
+                  {/* Report status indicator */}
+                  <div style={{
+                    position: 'absolute',
+                    top: '0.5rem',
+                    right: '0.5rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.25rem'
+                  }}>
+                    {isReportFilled ? (
+                      <span style={{
+                        background: '#06c167',
+                        color: 'white',
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '0.75rem'
+                      }}>
+                        ✓
+                      </span>
+                    ) : (
+                      <span style={{
+                        background: '#ffc107',
+                        color: '#092544',
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '0.75rem'
+                      }}>
+                        ✏️
+                      </span>
+                    )}
+                  </div>
+                  
+                  <div style={{ marginBottom: '0.75rem', paddingRight: '1.5rem' }}>
+                    <div style={{ 
+                      fontSize: '1.1rem', 
+                      fontWeight: 'bold',
+                      color: '#092544'
+                    }}>
+                      {report.time_period}
+                    </div>
+                    <div style={{ 
+                      fontSize: '0.9rem', 
+                      color: '#6c757d',
+                      marginTop: '0.25rem'
+                    }}>
+                      <div><strong>Project:</strong> {report.project_name || 'N/A'}</div>
+                      <div style={{ marginTop: '0.25rem' }}>
+                        <strong>Status:</strong> 
+                        <span style={{
+                          color: isReportFilled ? '#06c167' : '#ffc107',
+                          fontWeight: 'bold',
+                          marginLeft: '0.25rem'
+                        }}>
+                          {isReportFilled ? 'Filled' : 'Started'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Report summary */}
+                  <div style={{ 
+                    fontSize: '0.85rem', 
+                    color: '#092544',
+                    marginBottom: '0.75rem'
+                  }}>
+                    <div style={{ marginBottom: '0.25rem' }}>
+                      <strong>Activities:</strong> {
+                        report.hourly_activity ? report.hourly_activity.split('\n').length : 0
+                      }
+                    </div>
+                    <div style={{ marginBottom: '0.25rem' }}>
+                      <strong>Achievements:</strong> {
+                        report.hourly_achieved ? report.hourly_achieved.split('\n').length : 0
+                      }
+                    </div>
+                    {report.problem_faced === 'Yes' && (
+                      <div style={{ marginBottom: '0.25rem' }}>
+                        <strong>Problems:</strong> {
+                          report.problem_faced_by_engineer_hourly ? 
+                          report.problem_faced_by_engineer_hourly.split('\n').length : 0
+                        }
+                      </div>
+                    )}
+                    <div style={{ fontSize: '0.8rem', color: '#6c757d', marginTop: '0.25rem' }}>
+                      Submitted: {new Date(report.created_at).toLocaleTimeString()}
+                    </div>
+                  </div>
+                  
+                  {/* Preview of activities (if any) */}
+                  {report.hourly_activity && (
+                    <div style={{ 
+                      fontSize: '0.8rem',
+                      color: '#666',
+                      background: '#f8f9fa',
+                      padding: '0.5rem',
+                      borderRadius: '4px',
+                      marginBottom: '0.75rem',
+                      maxHeight: '60px',
+                      overflowY: 'auto'
+                    }}>
+                      {report.hourly_activity.split('\n').slice(0, 2).map((line, idx) => (
+                        <div key={idx} style={{ marginBottom: '0.125rem' }}>
+                          • {line.replace(/Activity \d+:\s*/i, '')}
+                        </div>
+                      ))}
+                      {report.hourly_activity.split('\n').length > 2 && (
+                        <div style={{ color: '#2ad1ff', fontSize: '0.75rem' }}>
+                          +{report.hourly_activity.split('\n').length - 2} more...
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Action buttons */}
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        loadReportForEditing(report.id);
+                        // Scroll to top of form
+                        setTimeout(() => {
+                          window.scrollTo({
+                            top: 0,
+                            behavior: 'smooth'
+                          });
+                        }, 100);
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '0.5rem',
+                        background: '#2ad1ff',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        fontWeight: 'bold',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.25rem'
+                      }}
+                    >
+                      <span>✏️</span> Edit Report
+                    </button>
+                    
+                    <button
+                      type="button"
+                      onClick={() => deleteReport(report.id)}
+                      style={{
+                        padding: '0.5rem',
+                        background: '#ff7a7a',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
+                      title="Delete this report"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                  
+                  {/* Quick status message */}
+                  {!isReportFilled && (
+                    <div style={{
+                      marginTop: '0.5rem',
+                      padding: '0.25rem 0.5rem',
+                      background: '#fff3cd',
+                      color: '#856404',
+                      borderRadius: '4px',
+                      fontSize: '0.75rem',
+                      textAlign: 'center'
+                    }}>
+                      ⚠️ This report needs to be filled
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          
+          {/* Quick stats */}
+          <div style={{ 
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            paddingTop: '1rem',
+            borderTop: '1px solid #dee2e6'
+          }}>
+            <div style={{ fontSize: '0.9rem', color: '#6c757d' }}>
+              <strong>Summary:</strong> {existingReports.length} report(s) for {formData.reportDate}
+            </div>
+            <button
+              type="button"
+              onClick={refreshExistingReports}
+              style={{
+                padding: '0.5rem 1rem',
+                background: '#06c167',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.85rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.25rem'
+              }}
+            >
+              <span>↻</span> Refresh List
+            </button>
+          </div>
+        </div>
+      )}
+      
+      {/* Editing Mode Instructions */}
+      {editingReport && (
+        <div style={{ 
+          marginTop: '2rem',
+          padding: '1.5rem',
+          background: '#fffcf0',
+          borderRadius: '12px',
+          border: '2px solid #ffc107'
+        }}>
+          <h3 style={{ 
+            color: '#092544', 
+            marginBottom: '1rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}>
+            <span>✏️</span> Editing Mode Active
+          </h3>
+          
+          <div style={{ 
+            background: '#fff3cd', 
+            padding: '1rem', 
+            borderRadius: '8px',
+            marginBottom: '1rem',
+            border: '1px solid #ffeaa7'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <div style={{ fontSize: '1.2rem' }}>📋</div>
+              <div>
+                <strong>You are editing: {editingReport.timePeriod}</strong>
+                <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+                  The form above is now populated with your existing report data. 
+                  Make any changes needed and click "Update Report" to save.
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+            gap: '1rem',
+            marginTop: '1rem'
+          }}>
+            <button
+              type="button"
+              onClick={() => {
+                // Scroll to the form
+                window.scrollTo({
+                  top: 0,
+                  behavior: 'smooth'
+                });
+              }}
+              style={{
+                padding: '0.75rem',
+                background: '#2ad1ff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <span>↑</span> Go to Edit Form
+            </button>
+            
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('Cancel editing and return to creating new reports?')) {
+                  cancelEditing();
+                }
+              }}
+              style={{
+                padding: '0.75rem',
+                background: '#ff7a7a',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <span>✕</span> Cancel Editing
+            </button>
+            
+            <button
+              type="button"
+              onClick={refreshExistingReports}
+              style={{
+                padding: '0.75rem',
+                background: '#06c167',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <span>↻</span> Refresh Reports
+            </button>
+          </div>
+        </div>
+      )}
     </section>
+    // </section>
   )
 }
 

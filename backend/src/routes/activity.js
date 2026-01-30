@@ -176,20 +176,22 @@ router.get('/activities', verifyTokenAndRole(), async (req, res) => {
       LEFT JOIN users u ON (a.engineer_id = u.employee_id OR a.engineer_name = u.username)
       ${whereClause}
       ORDER BY a.date DESC, a.logged_at DESC
-      LIMIT ? OFFSET ?
     `;
 
     // Create new array for main query with pagination params
-    const mainParams = [...params];
-    // IMPORTANT: Convert to numbers
-    mainParams.push(parseInt(limit, 10), parseInt(offset, 10));
+    const limitNum = Math.max(1, parseInt(limit, 10) || 20);
+    const offsetNum = Math.max(0, parseInt(offset, 10) || 0);
 
-    console.log('🔍 [ACTIVITIES] Main query:', mainQuery);
-    console.log('🔍 [ACTIVITIES] Main params:', mainParams);
-    console.log('🔍 [ACTIVITIES] Main params count:', mainParams.length);
+    // Inject LIMIT/OFFSET directly into SQL using validated integers to avoid
+    // prepared-statement argument count mismatches (safe because values are numeric)
+    const mainQueryWithLimit = mainQuery + `\n      LIMIT ${limitNum} OFFSET ${offsetNum}`;
 
-    // Execute the query
-    const [activities] = await pool.execute(mainQuery, mainParams);
+    console.log('🔍 [ACTIVITIES] Main query:', mainQueryWithLimit);
+    console.log('🔍 [ACTIVITIES] Main params (for WHERE):', params);
+    console.log('🔍 [ACTIVITIES] Main params count:', params.length);
+
+    // Execute the query using only the WHERE params (LIMIT/OFFSET already inlined)
+    const [activities] = await pool.execute(mainQueryWithLimit, params);
     
     console.log(`✅ [ACTIVITIES] Found ${activities.length} activities`);
 

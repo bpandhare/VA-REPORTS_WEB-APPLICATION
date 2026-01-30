@@ -218,6 +218,27 @@ async function migrateDatabase() {
       console.error('Error creating project_collaborators table:', error.message)
     }
 
+    // Create project_assignments table (for many-to-many employee-project relationship)
+    try {
+      await pool.execute(`
+        CREATE TABLE IF NOT EXISTS project_assignments (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          project_id INT NOT NULL,
+          employee_id INT DEFAULT NULL,
+          employee_code VARCHAR(10) DEFAULT NULL,
+          role VARCHAR(80) DEFAULT 'Team Member',
+          assigned_by INT DEFAULT NULL,
+          assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+          FOREIGN KEY (employee_id) REFERENCES users(id) ON DELETE CASCADE,
+          UNIQUE KEY unique_assignment (project_id, employee_id)
+        )
+      `)
+      console.log('✓ Created project_assignments table')
+    } catch (error) {
+      console.error('Error creating project_assignments table:', error.message)
+    }
+
     // Create daily_target_reports table
     try {
       await pool.execute(`
@@ -294,6 +315,7 @@ async function migrateDatabase() {
       { name: 'location_type', type: 'VARCHAR(20) DEFAULT ""' },
       { name: 'leave_type', type: 'VARCHAR(50) DEFAULT NULL' },
       { name: 'site_location', type: 'VARCHAR(255)' },
+      { name: 'number_of_days', type: 'INT DEFAULT 1' },
       { name: 'location_lat', type: 'DECIMAL(10, 8)' },
       { name: 'location_lng', type: 'DECIMAL(11, 8)' },
       { name: 'mom_report_path', type: 'VARCHAR(255)' },

@@ -96,6 +96,7 @@ async function fixMissingColumns() {
 
 // Get all hourly reports for a specific date (for managers)
 // In the /all/:date endpoint, around line 74:
+// Get all hourly reports for a specific date (for managers)
 router.get('/all/:date', verifyToken, async (req, res) => {
   try {
     const { date } = req.params;
@@ -104,7 +105,7 @@ router.get('/all/:date', verifyToken, async (req, res) => {
     // Only managers and team leaders can access all reports
     // Make it case-insensitive
     const userRoleLower = (userRole || '').toLowerCase();
-    if (!userRoleLower.includes('manager') && !userRoleLower.includes('team leader')) {
+    if (!userRoleLower.includes('manager') && !userRoleLower.includes('team leader') && !userRoleLower.includes('group leader')) {
       return res.status(403).json({ 
         success: false,
         message: 'Access denied. Only managers can view all hourly reports.' 
@@ -114,9 +115,9 @@ router.get('/all/:date', verifyToken, async (req, res) => {
     const [reports] = await pool.execute(`
       SELECT 
         hr.*,
-        u.username as employeeName,
-        u.employee_id as employeeId,
-        u.role as employeeRole
+        u.username as employee_name,
+        u.employee_id,
+        u.role as employee_role
       FROM hourly_reports hr
       LEFT JOIN users u ON hr.user_id = u.id
       WHERE hr.report_date = ?
@@ -156,6 +157,45 @@ router.get('/daily-targets/:date', verifyToken, async (req, res) => {
   } catch (error) {
     console.error('Failed to fetch daily target reports', error)
     res.status(500).json({ message: 'Unable to fetch daily target reports' })
+  }
+})
+
+// GET route to fetch a single hourly report by id
+router.get('/id/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const [rows] = await pool.execute('SELECT * FROM hourly_reports WHERE id = ?', [id])
+    if (rows.length === 0) return res.status(404).json({ message: 'Hourly report not found' })
+    res.json(rows[0])
+  } catch (error) {
+    console.error('Failed to fetch hourly report by id:', error)
+    res.status(500).json({ message: 'Unable to fetch hourly report' })
+  }
+})
+
+// DELETE route to remove an hourly report by id
+router.delete('/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const userId = req.user.id
+    const role = (req.user.role || '').toLowerCase()
+    const isManagerish = role.includes('manager') || role.includes('team leader') || role.includes('group leader')
+
+    // Check ownership
+    const [existing] = await pool.execute('SELECT user_id FROM hourly_reports WHERE id = ?', [id])
+    if (existing.length === 0) return res.status(404).json({ message: 'Hourly report not found' })
+    const ownerId = existing[0].user_id
+    if (!isManagerish && ownerId !== userId) {
+      return res.status(403).json({ message: 'Not authorized to delete this hourly report' })
+    }
+
+    const [result] = await pool.execute('DELETE FROM hourly_reports WHERE id = ?', [id])
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'Hourly report not found' })
+
+    res.json({ success: true, message: 'Hourly report deleted' })
+  } catch (error) {
+    console.error('Failed to delete hourly report:', error)
+    res.status(500).json({ message: 'Unable to delete hourly report' })
   }
 })
 
@@ -550,11 +590,15 @@ router.put('/:id', verifyToken, async (req, res) => {
     }
 
     // Check if another report exists for same date and time period (excluding current report)
-    // This prevents duplicate reports but allows editing the existing one
-    const [duplicateCheck] = await pool.execute(
-      'SELECT id FROM hourly_reports WHERE report_date = ? AND time_period = ? AND user_id = ? AND id != ?',
-      [normalized.reportDate, normalized.timePeriod, userId, id]
-    )
+    // Managers/team leaders can override this check and edit any report
+    let duplicateCheck = []
+    if (!isManagerish) {
+      const [rows] = await pool.execute(
+        'SELECT id FROM hourly_reports WHERE report_date = ? AND time_period = ? AND user_id = ? AND id != ?',
+        [normalized.reportDate, normalized.timePeriod, userId, id]
+      )
+      duplicateCheck = rows
+    }
 
     if (duplicateCheck.length > 0) {
       return res.status(409).json({ 
@@ -772,7 +816,7 @@ router.get('/manager/activities-summary', verifyToken, async (req, res) => {
 
     let query = `
       SELECT hr.report_date, hr.time_period, hr.project_name, 
-             hr.hourly_activity, hr.hourly_achieved,
+             hr.hourly_activity,
              hr.problem_faced_by_engineer_hourly, hr.problem_resolved_or_not,
              u.username, u.fullName, u.employeeId
       FROM hourly_reports hr

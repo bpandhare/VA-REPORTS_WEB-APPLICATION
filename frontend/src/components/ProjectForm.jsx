@@ -8,6 +8,7 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
     customer: "",
     end_customer: "",
     assigned_employee: "",
+    assigned_employees: [], // NEW: Array for multiple employees
     newCustomer: "",
     newEndCustomer: "",
     description: "",
@@ -34,6 +35,8 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState({ type: "", text: "" });
   const [isEditMode, setIsEditMode] = useState(false);
+  const [employeeSearchInput, setEmployeeSearchInput] = useState(""); // NEW: For employee search
+  const [availableEmployees, setAvailableEmployees] = useState([]); // NEW: List of available employees
   
   // Customer database with full contact info
   const [customerDatabase, setCustomerDatabase] = useState([]);
@@ -406,6 +409,11 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
       // Add assigned employee if provided
       if (formState.assigned_employee.trim()) {
         cleanedData.assigned_employee = formState.assigned_employee.trim();
+      }
+      
+      // NEW: Add multiple assigned employees
+      if (formState.assigned_employees && formState.assigned_employees.length > 0) {
+        cleanedData.assigned_employees = formState.assigned_employees;
       }
       
       console.log("Cleaned data to send:", cleanedData);
@@ -1027,6 +1035,116 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
           </div>
      
         </div>
+
+        {/* NEW: Multiple Employee Assignments */}
+        <div style={styles.formRow}>
+          <div style={styles.formColumn}>
+            <div style={styles.formGroup}>
+              <label htmlFor="employeeSearchInput" style={styles.label}>
+                Assign Multiple Employees
+              </label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  id="employeeSearchInput"
+                  value={employeeSearchInput}
+                  onChange={(e) => setEmployeeSearchInput(e.target.value)}
+                  disabled={isSubmitting}
+                  placeholder="e.g., EMP001, EMP002, or employee names"
+                  style={{
+                    ...styles.input,
+                    flex: 1,
+                    ...(isSubmitting ? styles.disabled : {}),
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (employeeSearchInput.trim()) {
+                      const empIds = employeeSearchInput.split(',').map(e => e.trim()).filter(e => e);
+                      setFormState(prev => ({
+                        ...prev,
+                        assigned_employees: [...new Set([...prev.assigned_employees, ...empIds])]
+                      }));
+                      setEmployeeSearchInput("");
+                    }
+                  }}
+                  disabled={isSubmitting || !employeeSearchInput.trim()}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#4CAF50',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: isSubmitting || !employeeSearchInput.trim() ? 'not-allowed' : 'pointer',
+                    opacity: isSubmitting || !employeeSearchInput.trim() ? 0.6 : 1,
+                  }}
+                >
+                  Add
+                </button>
+              </div>
+              <small style={styles.fieldHint}>
+                Separate multiple employees with commas (e.g., EMP001, EMP002, johndoe)
+              </small>
+            </div>
+          </div>
+        </div>
+
+        {/* Display assigned employees list */}
+        {formState.assigned_employees && formState.assigned_employees.length > 0 && (
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Assigned Employees ({formState.assigned_employees.length})</label>
+            <div style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '8px',
+              padding: '8px',
+              backgroundColor: '#f5f5f5',
+              borderRadius: '4px',
+              border: '1px solid #ddd'
+            }}>
+              {formState.assigned_employees.map((empId, index) => (
+                <div
+                  key={index}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    backgroundColor: '#2196F3',
+                    color: 'white',
+                    padding: '6px 12px',
+                    borderRadius: '20px',
+                    fontSize: '14px'
+                  }}
+                >
+                  {empId}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormState(prev => ({
+                        ...prev,
+                        assigned_employees: prev.assigned_employees.filter((_, i) => i !== index)
+                      }));
+                    }}
+                    disabled={isSubmitting}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'white',
+                      cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                      fontSize: '18px',
+                      padding: '0',
+                      lineHeight: '1',
+                      opacity: isSubmitting ? 0.6 : 1,
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div style={styles.formRow}>
           <div style={styles.formColumn}>

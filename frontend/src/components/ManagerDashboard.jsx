@@ -31,6 +31,9 @@ function ManagerDashboard() {
   const [groupedReports, setGroupedReports] = useState({});
   const [showReportModal, setShowReportModal] = useState(false);
   const [selectedReport, setSelectedReport] = useState(null);
+  const [expandedReports, setExpandedReports] = useState({});
+  const [editingActivityId, setEditingActivityId] = useState(null);
+  const [editingActivityData, setEditingActivityData] = useState({});
 
   const BASE_URL = 'http://localhost:5000';
 
@@ -40,6 +43,34 @@ function ManagerDashboard() {
       fetchAllDailyReports();
     }
   }, [token, user, selectedDate]);
+
+  // 🔥 NEW: Listen for hourly report edits from ActivityDisplay
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'hourlyReportEdited' || e.key === 'momCreated') {
+        if (e.key === 'hourlyReportEdited') {
+          console.log('📢 [ManagerDashboard] Hourly report edited detected, triggering refresh...')
+          const updateData = JSON.parse(e.newValue || '{}')
+          console.log('   Report Date:', updateData.reportDate)
+          console.log('   User ID:', updateData.userId)
+          console.log('   Report ID:', updateData.reportId)
+        } else if (e.key === 'momCreated') {
+          console.log('📢 [ManagerDashboard] MoM created externally, refreshing MoM list...')
+          try { const momInfo = JSON.parse(e.newValue || '{}'); console.log('   Mom info:', momInfo) } catch(_) {}
+        }
+
+        // Trigger refresh of dashboard data
+        fetchDashboardData()
+
+        // Clean up keys we created
+        localStorage.removeItem('hourlyReportEdited')
+        localStorage.removeItem('momCreated')
+      }
+    }
+    
+    window.addEventListener('storage', handleStorageChange)
+    return () => window.removeEventListener('storage', handleStorageChange)
+  }, [])
 
   const fetchDashboardData = async () => {
     try {
@@ -70,12 +101,16 @@ function ManagerDashboard() {
       
       if (!token) {
         console.error('❌ No token available');
+        setError('⚠️ Authentication token missing. Please login again.');
         setActivities([]);
         return;
       }
       
       // First try the manager endpoint
-      const response = await fetch(`${BASE_URL}/api/hourly-report/all/${selectedDate}`, {
+      const url = `${BASE_URL}/api/hourly-report/all/${selectedDate}`;
+      console.log('📡 Attempting to fetch from:', url);
+      
+      const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -83,6 +118,7 @@ function ManagerDashboard() {
       });
 
       console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
 
       if (response.ok) {
         const data = await response.json();
@@ -93,17 +129,20 @@ function ManagerDashboard() {
       
       // If 403, try individual endpoint
       if (response.status === 403) {
-        console.log('🔄 Access denied to manager endpoint, trying individual endpoint...');
-        const individualResponse = await fetch(`${BASE_URL}/api/hourly-report/${selectedDate}`, {
+        console.log('🔄 Access denied to manager endpoint (403), trying individual endpoint...');
+        const individualUrl = `${BASE_URL}/api/hourly-report/${selectedDate}`;
+        const individualResponse = await fetch(individualUrl, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           }
         });
         
+        console.log('Individual endpoint status:', individualResponse.status);
+        
         if (individualResponse.ok) {
           const individualData = await individualResponse.json();
-          console.log('✅ Got individual hourly reports');
+          console.log('✅ Got individual hourly reports:', individualData);
           
           // Convert to array format
           const activitiesArray = Array.isArray(individualData) ? individualData : [];
@@ -114,14 +153,26 @@ function ManagerDashboard() {
           return;
         }
       }
+
+      // Check for 404
+      if (response.status === 404) {
+        console.log('⚠️ Endpoint not found (404). Creating activities from daily reports...');
+        createActivitiesFromDailyReports();
+        return;
+      }
+
+      // Any other error status
+      const errorText = await response.text();
+      console.error(`❌ API returned status ${response.status}: ${errorText}`);
+      setError(`⚠️ Failed to fetch hourly reports (Status: ${response.status}). Attempting to show daily reports instead...`);
       
-      // If we reach here, both endpoints failed
-      console.log('🔄 Creating activities from daily reports...');
+      // Fallback to daily reports
       createActivitiesFromDailyReports();
       
     } catch (error) {
       console.error('❌ Error in fetchHourlyReports:', error);
       console.error('❌ Error details:', error.message, error.stack);
+      setError(`⚠️ Network error: ${error.message}. Please check your connection.`);
       
       // Fallback to empty array to prevent further errors
       setActivities([]);
@@ -155,6 +206,7 @@ function ManagerDashboard() {
           // Safely extract employee name
           let employeeName = 'Unknown';
           if (activity.employeeName) employeeName = activity.employeeName;
+          else if (activity.employee_name) employeeName = activity.employee_name;
           else if (activity.username) employeeName = activity.username;
           else if (activity.engg_name) employeeName = activity.engg_name;
           
@@ -566,6 +618,33 @@ function ManagerDashboard() {
     }
   };
 
+  const formatEditTimestamp = (timestamp) => {
+    if (!timestamp) return null;
+    try {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diffMs = now - date;
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
+
+      if (diffMins < 1) return 'just now';
+      if (diffMins < 60) return `${diffMins} min ago`;
+      if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+      if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+      
+      return date.toLocaleDateString('en-IN', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch {
+      return 'unknown';
+    }
+  };
+
   const getEmployeeNameFromActivity = (activity) => {
     // First check if activity already has employeeName
     if (activity.employeeName && activity.employeeName !== 'Unknown') {
@@ -738,7 +817,10 @@ Man Hours: ${mom.man_hours}
 
       {error && (
         <div className="error-message">
-          <p>{error}</p>
+          <p>⚠️ {error}</p>
+          <button onClick={fetchDashboardData} className="retry-btn">
+            Retry Loading Data
+          </button>
         </div>
       )}
 
@@ -889,12 +971,12 @@ Man Hours: ${mom.man_hours}
       {activeTab === 'activities' && (
         <div className="activities-section">
           <div className="activities-header">
-            <h2>Hourly Activities Report - All Employees</h2>
+            <h2>Complete Hourly Reports - All Employees</h2>
             <div className="activities-stats">
               <p>Date: {formatDateDisplay(selectedDate)}</p>
               <div className="stats-badges">
                 <span className="stat-badge">Total Reports: {activities.length}</span>
-                <span className="stat-badge">Unique Employees: {[...new Set(activities.map(a => a.employeeName))].length}</span>
+                <span className="stat-badge">Unique Employees: {[...new Set(activities.map(a => a.employeeName || a.user_id))].length}</span>
                 <span className="stat-badge">Resolved Issues: {activities.filter(a => a.problem_resolved_or_not === 'yes').length}</span>
               </div>
             </div>
@@ -904,7 +986,7 @@ Man Hours: ${mom.man_hours}
             <div className="filter-group">
               <input
                 type="text"
-                placeholder="Search by employee or activity..."
+                placeholder="Search by employee name..."
                 className="filter-input"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -919,36 +1001,76 @@ Man Hours: ${mom.man_hours}
           </div>
           
           {(() => {
-            const filteredActivities = activities.filter(activity => {
+            // Group activities by report ID
+            const groupedByReport = {};
+            activities.forEach(activity => {
+              const reportId = activity.id || activity._id || `report-${activity.user_id}-${activity.time_period}`;
+              if (!groupedByReport[reportId]) {
+                groupedByReport[reportId] = {
+                  id: reportId,
+                  user_id: activity.user_id,
+                  employeeName: activity.employeeName || activity.username || 'Unknown',
+                  employee_id: activity.employee_id,
+                  project_name: activity.project_name,
+                  created_at: activity.created_at,
+                  sessions: {}
+                };
+              }
+              
+              const timePeriod = activity.time_period || 'Unknown';
+              if (!groupedByReport[reportId].sessions[timePeriod]) {
+                groupedByReport[reportId].sessions[timePeriod] = [];
+              }
+              groupedByReport[reportId].sessions[timePeriod].push(activity);
+            });
+            
+            const reports = Object.values(groupedByReport);
+            
+            const filteredReports = reports.filter(report => {
               const searchLower = searchTerm.toLowerCase();
               return (
                 searchTerm === '' ||
-                activity.employeeName?.toLowerCase().includes(searchLower) ||
-                activity.hourly_activity?.toLowerCase().includes(searchLower) ||
-                activity.project_name?.toLowerCase().includes(searchLower) ||
-                activity.problem_faced?.toLowerCase().includes(searchLower)
+                report.employeeName?.toLowerCase().includes(searchLower) ||
+                report.project_name?.toLowerCase().includes(searchLower)
               );
             });
             
-            if (filteredActivities.length === 0) {
+            if (filteredReports.length === 0) {
               return (
                 <div className="no-activities">
                   <div className="no-data-icon">📊</div>
                   <p>
                     {searchTerm ? 
-                      `No activities found matching "${searchTerm}"` : 
-                      'No hourly activities found for this date.'
+                      `No reports found matching "${searchTerm}"` : 
+                      'No hourly reports found for this date.'
                     }
                   </p>
+                  <div className="debug-info">
+                    <small>
+                      📊 Total Activities: {activities.length} | 
+                      📅 Daily Reports: {dailyReports.length} | 
+                      👥 Employees: {employees.length}
+                    </small>
+                  </div>
                   <div className="action-buttons">
-                    {!searchTerm && (
-                      <button 
-                        onClick={fetchHourlyReports}
-                        className="btn-retry"
-                      >
-                        Retry Fetching
-                      </button>
-                    )}
+                    <button 
+                      onClick={fetchHourlyReports}
+                      className="btn-retry"
+                    >
+                      🔄 Retry Fetching Reports
+                    </button>
+                    <button 
+                      onClick={() => {
+                        console.log('📊 Debug - Activities:', activities);
+                        console.log('📊 Debug - Daily Reports:', dailyReports);
+                        console.log('📊 Debug - Employees:', employees);
+                        console.log('📊 Debug - Attendance Summary:', attendanceSummary);
+                        alert('Check browser console (F12) for debug data');
+                      }}
+                      className="btn-debug"
+                    >
+                      🐛 Debug Info (F12)
+                    </button>
                     {searchTerm && (
                       <button 
                         onClick={() => setSearchTerm('')}
@@ -964,110 +1086,140 @@ Man Hours: ${mom.man_hours}
             
             return (
               <>
-                <div className="activities-table-container">
-                  <table className="activities-table">
-                    <thead>
-                      <tr>
-                        <th>Employee</th>
-                        <th>Time</th>
-                        <th>Project</th>
-                        <th>Activity Description</th>
-                        <th>Problem</th>
-                        <th>Resolved</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredActivities.map((activity, index) => {
-                        const employeeName = getEmployeeNameFromActivity(activity);
-                        const employeeId = getEmployeeIdFromActivity(activity);
-                        const employeeInitial = employeeName ? employeeName.charAt(0).toUpperCase() : 'U';
-                        const isResolved = activity.problem_resolved_or_not === 'yes';
+                <div className="complete-reports-container">
+                  {filteredReports.map((report, reportIndex) => {
+                    const employeeInitial = report.employeeName ? report.employeeName.charAt(0).toUpperCase() : 'U';
+                    const isExpanded = expandedReports[report.id];
+                    const sessionsArray = Object.entries(report.sessions);
+                    
+                    return (
+                      <div key={report.id} className="complete-report-card">
+                        <div 
+                          className="report-card-header"
+                          onClick={() => setExpandedReports(prev => ({
+                            ...prev,
+                            [report.id]: !prev[report.id]
+                          }))}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <div className="report-header-left">
+                            <div 
+                              className="report-avatar-circle"
+                              style={{ backgroundColor: getColorForInitial(employeeInitial) }}
+                            >
+                              {employeeInitial}
+                            </div>
+                            <div className="report-header-info">
+                              <h3 className="report-employee-name">{report.employeeName}</h3>
+                              <p className="report-employee-id">ID: {report.employee_id || 'N/A'}</p>
+                              <p className="report-project">Project: <strong>{report.project_name || 'N/A'}</strong></p>
+                            </div>
+                          </div>
+                          <div className="report-header-right">
+                            <span className="session-count-badge">{sessionsArray.length} Session{sessionsArray.length !== 1 ? 's' : ''}</span>
+                            <span className="expand-icon">{isExpanded ? '▼' : '▶'}</span>
+                          </div>
+                        </div>
                         
-                        return (
-                          <tr key={activity.id || index}>
-                            <td>
-                              <div className="activity-employee">
-                                <div 
-                                  className="activity-avatar" 
-                                  style={{ backgroundColor: getColorForInitial(employeeInitial) }}
-                                >
-                                  {employeeInitial}
+                        {isExpanded && (
+                          <div className="report-card-content">
+                            {sessionsArray.map(([timePeriod, sessionActivities], sessionIndex) => (
+                              <div key={sessionIndex} className="session-section">
+                                <div className="session-header">
+                                  <h4 className="session-time">📅 {timePeriod}</h4>
+                                  <span className="session-activity-count">{sessionActivities.length} activit{sessionActivities.length !== 1 ? 'ies' : 'y'}</span>
                                 </div>
-                                <div className="employee-details">
-                                  <div className="activity-name">{employeeName}</div>
-                                  <div className="activity-id">ID: {employeeId}</div>
-                                  <div className="activity-time">
-                                    <small>Reported: {formatTime(activity.created_at)}</small>
-                                  </div>
+                                
+                                <div className="session-details">
+                                  {sessionActivities.map((activity, activityIndex) => (
+                                    <div key={activityIndex} className="activity-item">
+                                      {/* Activity Description */}
+                                      <div className="activity-field">
+                                        <label className="field-label">📝 Activity:</label>
+                                        <div className="field-value">
+                                          {activity.hourly_activity || activity.activity_description || 'No activity recorded'}
+                                        </div>
+                                      </div>
+                                      
+                                      {/* Problems Faced */}
+                                      <div className="activity-field">
+                                        <label className="field-label">⚠️ Problems Faced:</label>
+                                        <div className="field-value">
+                                          {activity.problem_faced ? (
+                                            <div className="problem-box">
+                                              {activity.problem_faced}
+                                            </div>
+                                          ) : (
+                                            <span className="no-problem">No problems reported</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                      
+                                      {/* Problem Resolution */}
+                                      <div className="activity-field">
+                                        <label className="field-label">🔧 Resolved:</label>
+                                        <div className="field-value">
+                                          <span className={`resolution-badge ${activity.problem_resolved_or_not === 'yes' ? 'resolved' : 'pending'}`}>
+                                            {activity.problem_resolved_or_not === 'yes' ? '✅ Yes' : '⏳ No'}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      
+                                      {activityIndex < sessionActivities.length - 1 && (
+                                        <div className="activity-divider"></div>
+                                      )}
+                                    </div>
+                                  ))}
                                 </div>
                               </div>
-                            </td>
-                            <td>
-                              <div className="time-cell">
-                                <span className="time-period">{activity.time_period}</span>
+                            ))}
+                            
+                            <div className="report-meta">
+                              <div className="meta-info">
+                                <small>📤 Submitted: {formatTime(report.created_at)}</small>
+                                {report.updated_at && report.updated_at !== report.created_at && (
+                                  <small className="edited-info">✏️ Edited: {formatEditTimestamp(report.updated_at)}</small>
+                                )}
                               </div>
-                            </td>
-                            <td>
-                              <div className="project-cell">
-                                <strong>{activity.project_name}</strong>
-                                {activity.project_no && <div className="project-no">#{activity.project_no}</div>}
-                              </div>
-                            </td>
-                            <td className="activity-description">
-                              <div className="description-content">
-                                {activity.hourly_activity}
-                              </div>
-                              {activity.remark && (
-                                <div className="activity-remark">
-                                  <small>Remark: {activity.remark}</small>
-                                </div>
-                              )}
-                            </td>
-                            <td className="problem-cell">
-                              {activity.problem_faced ? (
-                                <div className="problem-content">
-                                  {activity.problem_faced}
-                                </div>
-                              ) : (
-                                <span className="no-problem">-</span>
-                              )}
-                            </td>
-                            <td>
-                              <span className={`resolved-badge ${isResolved ? 'resolved' : 'pending'}`}>
-                                {isResolved ? '✅ Yes' : '⏳ No'}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                              <button 
+                                onClick={() => alert(`Edit Report ID: ${report.id} - Feature coming soon for manager editing`)}
+                                className="btn-edit-report"
+                                title="Edit this report"
+                              >
+                                ✏️ Edit
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
                 
                 <div className="activities-summary">
                   <div className="summary-card">
-                    <h4>Activity Summary</h4>
+                    <h4>📊 Report Summary</h4>
                     <div className="summary-grid">
                       <div className="summary-item">
                         <span className="summary-label">Total Reports</span>
-                        <span className="summary-value">{filteredActivities.length}</span>
+                        <span className="summary-value">{filteredReports.length}</span>
                       </div>
                       <div className="summary-item">
-                        <span className="summary-label">Active Employees</span>
+                        <span className="summary-label">Total Sessions</span>
                         <span className="summary-value">
-                          {[...new Set(filteredActivities.map(a => a.employeeName))].length}
+                          {filteredReports.reduce((sum, r) => sum + Object.keys(r.sessions).length, 0)}
                         </span>
                       </div>
                       <div className="summary-item">
                         <span className="summary-label">Issues Resolved</span>
                         <span className="summary-value">
-                          {filteredActivities.filter(a => a.problem_resolved_or_not === 'yes').length}
+                          {activities.filter(a => a.problem_resolved_or_not === 'yes').length}
                         </span>
                       </div>
                       <div className="summary-item">
                         <span className="summary-label">Issues Pending</span>
                         <span className="summary-value">
-                          {filteredActivities.filter(a => a.problem_resolved_or_not === 'no').length}
+                          {activities.filter(a => a.problem_resolved_or_not === 'no' && a.problem_faced).length}
                         </span>
                       </div>
                     </div>
@@ -1151,6 +1303,9 @@ Man Hours: ${mom.man_hours}
                         ) : (
                           <span className="status-completed">Completed</span>
                         )}
+                        {report.updated_at && report.updated_at !== report.created_at && (
+                          <div className="edited-badge">✏️ Edited</div>
+                        )}
                       </td>
                       <td>
                         <div className="report-actions">
@@ -1161,7 +1316,14 @@ Man Hours: ${mom.man_hours}
                             }}
                             className="btn-view-report"
                           >
-                            View
+                            👁️ View
+                          </button>
+                          <button 
+                            onClick={() => alert(`Edit Daily Report ID: ${report.id} - Feature coming soon`)}
+                            className="btn-edit-report"
+                            title="Edit this report"
+                          >
+                            ✏️ Edit
                           </button>
                           {report.has_mom && (
                             <button 

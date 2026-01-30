@@ -135,6 +135,38 @@ const LeaveApplication = () => {
         setAlert({ type: 'error', message: 'Cannot apply for leave on a past date' })
         return
       }
+      // If multiple days were selected, keep start/end in sync with the new reportDate
+      setFormData(prev => {
+        if (prev.numberOfDays > 1) {
+          const newStart = prev.startDate || value
+          const newEnd = addDays(newStart, prev.numberOfDays - 1)
+          return { ...prev, reportDate: value, startDate: newStart, endDate: newEnd }
+        }
+        return { ...prev, reportDate: value }
+      })
+      return
+    }
+
+    // When user changes number of days, auto-fill start/end dates based on reportDate
+    if (name === 'numberOfDays') {
+      const num = parseInt(value, 10) || 1
+      setFormData(prev => {
+        const start = prev.startDate || prev.reportDate
+        const newStart = start
+        const newEnd = addDays(newStart, Math.max(0, num - 1))
+        return { ...prev, numberOfDays: num, startDate: newStart, endDate: newEnd }
+      })
+      return
+    }
+
+    // If user updates startDate while multiple days selected, keep endDate aligned
+    if (name === 'startDate') {
+      setFormData(prev => {
+        const num = prev.numberOfDays || 1
+        const newEnd = num > 1 ? addDays(value, Math.max(0, num - 1)) : value
+        return { ...prev, startDate: value, endDate: newEnd }
+      })
+      return
     }
 
     setFormData(prev => ({ ...prev, [name]: value }))
@@ -232,7 +264,7 @@ const LeaveApplication = () => {
         leaveType: formData.leaveType,
         remark: formData.remark || `${selectedType.name} Leave Application`,
         locationType: 'leave',
-        numberOfDays: formData.numberOfDays,
+        numberOfDays: Number(formData.numberOfDays) || 1,
         startDate: formData.startDate || formData.reportDate,
         endDate: formData.endDate || formData.reportDate,
         status: 'pending', // Always set to pending since all leaves require approval
@@ -289,6 +321,13 @@ const LeaveApplication = () => {
   }
 
   // Check if a date is a weekend (for display purposes only, not for validation)
+    // Add days helper: returns YYYY-MM-DD string after adding days
+    const addDays = (dateString, days) => {
+      const d = new Date(dateString)
+      d.setDate(d.getDate() + Number(days || 0))
+      return d.toISOString().slice(0, 10)
+    }
+
   const isWeekend = (dateString) => {
     const date = new Date(dateString)
     const day = date.getDay()
@@ -508,7 +547,11 @@ const LeaveApplication = () => {
                 <div>
                   <strong style={{ color: '#856404' }}>Leave Application</strong>
                   <div style={{ color: '#856404', fontSize: '0.9rem', marginTop: '0.25rem' }}>
-                    Date: {formData.reportDate} | Days: {formData.numberOfDays}
+                    {formData.numberOfDays > 1 ? (
+                      <span>Dates: {formData.startDate || formData.reportDate} → {formData.endDate || formData.reportDate} | Days: {formData.numberOfDays}</span>
+                    ) : (
+                      <span>Date: {formData.reportDate} | Days: {formData.numberOfDays}</span>
+                    )}
                     {new Date(formData.reportDate) > new Date() && (
                       <span style={{ marginLeft: '10px', color: '#155724', fontStyle: 'italic' }}>
                         (Future Date ✓)
@@ -643,8 +686,14 @@ const LeaveApplication = () => {
                 {leaveHistory.map(leave => (
                   <tr key={leave.id} style={{ borderBottom: '1px solid #dee2e6' }}>
                     <td style={{ padding: '0.75rem' }}>
-                      {leave.report_date || leave.leaveDate || '-'}
-                      {new Date(leave.report_date || leave.leaveDate) > new Date() ? ' (Future)' : ''}
+                        {(
+                          (leave.number_of_days || leave.numberOfDays) > 1 ? (
+                            `${leave.site_start_date || leave.startDate || leave.start_date || leave.report_date || leave.leaveDate || '-'} → ${leave.site_end_date || leave.endDate || leave.end_date || leave.report_date || leave.leaveDate || '-'}`
+                          ) : (
+                            (leave.report_date || leave.leaveDate || '-')
+                          )
+                        )}
+                        {new Date(leave.site_start_date || leave.startDate || leave.start_date || leave.report_date || leave.leaveDate) > new Date() ? ' (Future)' : ''}
                     </td>
                     <td style={{ padding: '0.75rem' }}>
                       {leave.leaveTypeName || leave.leave_type || '-'}
@@ -653,7 +702,7 @@ const LeaveApplication = () => {
                       {getStatusBadge(leave.leave_status || 'pending')}
                     </td>
                     <td style={{ padding: '0.75rem' }}>
-                      {leave.number_of_days || leave.numberOfDays || '1'}
+                      {Number(leave.number_of_days || leave.numberOfDays) || 1}
                     </td>
                     <td style={{ padding: '0.75rem', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {leave.remark || '-'}
@@ -698,7 +747,6 @@ const LeaveApplication = () => {
           <li>All leave applications require manager approval</li>
           <li>You will receive notification once your leave is approved or rejected</li>
           <li>You can apply for leaves today, tomorrow, or up to 6 months in advance</li>
-          <li>Only one leave application is allowed per day</li>
           <li>Please ensure you have sufficient leave balance before applying</li>
           <li>For urgent leaves, please contact your manager directly</li>
           <li>Future leaves can be cancelled before the start date</li>

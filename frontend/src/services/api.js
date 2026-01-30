@@ -826,26 +826,20 @@ export const getEmployeeAssignments = async (projectId) => {
   }
 };
 
-// Update this function in your api.js file:
-// In services/api.js
 export const getAssignedProjects = async () => {
-  const token = localStorage.getItem('token');
   try {
-    const response = await fetch(`${API_URL}/api/projects/assigned`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch assigned projects');
-    }
-    
-    return await response.json();
+    // Remove manual Authorization header - interceptor will add it
+    const response = await api.get('/api/assigned-projects');
+    return response.data;
   } catch (error) {
     console.error('Error fetching assigned projects:', error);
-    throw error;
+    // Fallback to mock API on error
+    return {
+      data: {
+        projects: mockProjects,
+        assignments: mockAssignments
+      }
+    };
   }
 };
 
@@ -1339,6 +1333,62 @@ export const quickServerTest = async () => {
   } catch (error) {
     console.error('Server ping failed:', error);
     return false;
+  }
+};
+
+// NEW: Assign multiple employees to a project
+export const assignEmployeesToProject = async (projectId, employee_ids) => {
+  console.log(`📌 Assigning employees to project ${projectId}:`, employee_ids);
+  
+  try {
+    const response = await api.post(`/api/projects/${projectId}/assign-employees`, {
+      employee_ids
+    });
+    return response;
+  } catch (error) {
+    console.warn('❌ Failed to assign employees:', error.message);
+    return {
+      data: {
+        success: false,
+        message: 'Failed to assign employees'
+      }
+    };
+  }
+};
+
+// NEW: Remove employee from project
+export const removeEmployeeFromProject = async (projectId, employeeId) => {
+  console.log(`🗑️ Removing employee ${employeeId} from project ${projectId}`);
+  
+  try {
+    const response = await api.post(`/api/projects/${projectId}/remove-employee/${employeeId}`);
+    return response;
+  } catch (error) {
+    console.warn('❌ Failed to remove employee:', error.message);
+    return {
+      data: {
+        success: false,
+        message: 'Failed to remove employee'
+      }
+    };
+  }
+};
+
+// NEW: Get assigned employees for a project
+export const getAssignedEmployees = async (projectId) => {
+  console.log(`👥 Fetching assigned employees for project ${projectId}`);
+  
+  try {
+    const response = await api.get(`/api/projects/${projectId}/assigned-employees`);
+    return response;
+  } catch (error) {
+    console.warn('❌ Failed to fetch assigned employees:', error.message);
+    return {
+      data: {
+        success: false,
+        assigned_employees: []
+      }
+    };
   }
 };
 
