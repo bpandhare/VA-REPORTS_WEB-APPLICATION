@@ -294,7 +294,37 @@ const ManagerProjectDashboard = () => {
             try {
               const assignmentsRes = await getEmployeeAssignments(project.id);
               if (assignmentsRes.data?.success) {
-                assignedEmployees = assignmentsRes.data.assignments || [];
+                // Support both mock response (`assignments`) and real API (`assigned_employees`)
+                const rawAssignments = assignmentsRes.data.assignments || assignmentsRes.data.assigned_employees || [];
+
+                // Normalize each assignment to a consistent shape the UI expects
+                assignedEmployees = rawAssignments.map(a => {
+                  // Try to determine the actual user id for the assignment. Backends/mocks
+                  // sometimes use `user_id` or `employee_id` (user id), but mocks may use
+                  // `id` as the assignment id. Prefer numeric user ids and fall back to
+                  // matching against `allEmployees` by username or employee code when possible.
+                  let userId = Number(a.user_id ?? a.userId ?? a.employee_id ?? a.employeeId ?? null)
+
+                  // If we couldn't determine userId numerically, try matching by username or employee code
+                  if (!userId && (a.username || a.employee_name || a.employee_id || a.employeeId)) {
+                    const match = allEmployees.find(emp =>
+                      emp.username === (a.username ?? a.employee_name) ||
+                      String(emp.employeeId) === String(a.employee_id ?? a.employeeId)
+                    )
+                    if (match) userId = match.id
+                  }
+
+                  return {
+                    user_id: userId || null,
+                    id: a.id ?? null, // assignment id if present
+                    employee_id: a.employee_id ?? a.employeeId ?? null,
+                    username: a.username ?? a.employee_name ?? ''
+                  }
+                }).filter(a => a)
+
+                // Replace assignedEmployees with only items that have a resolved user_id where possible
+                // (we still keep entries without user_id for visibility but preselection uses user_id)
+                // assignedEmployees variable now holds normalized objects.
               }
             } catch (error) {
               console.error(`Failed to fetch assignments for project ${project.id}:`, error);
@@ -532,31 +562,114 @@ const handleUpdateProject = async (e) => {
   const handleAssignProject = async (projectId) => {
     const project = projects.find(p => p.id === projectId)
     setSelectedProjectForAssign(project)
-    setSelectedEmployees([]) // Clear previous selections
     setSearchTerm('') // Clear search
-    await fetchAllEmployees() // Refresh employee list
+
+    // Refresh employee master list so we can resolve assignment user ids
+    await fetchAllEmployees()
+
+    // Try to fetch the latest assignments from server to avoid stale preselection
+    try {
+      const assignmentsRes = await getEmployeeAssignments(projectId)
+      const rawAssignments = assignmentsRes.data?.assignments || assignmentsRes.data?.assigned_employees || []
+
+      // Resolve to numeric user ids using user_id/employee_id or by matching against allEmployees
+      const existingAssignedIds = rawAssignments.map(a => {
+        let userId = Number(a.user_id ?? a.userId ?? a.employee_id ?? a.employeeId ?? null)
+        if (!userId && (a.username || a.employee_name || a.employee_id || a.employeeId)) {
+          const match = allEmployees.find(emp =>
+            emp.username === (a.username ?? a.employee_name) ||
+            String(emp.employeeId) === String(a.employee_id ?? a.employeeId)
+          )
+          if (match) userId = match.id
+        }
+        return userId
+      }).filter(Boolean)
+
+      // Set selected employees to existing assignments (user can add more)
+      setSelectedEmployees(existingAssignedIds)
+
+      // Keep normalized assignedEmployees on selectedProjectForAssign for consistent usage
+      setSelectedProjectForAssign(prev => ({
+        ...prev,
+        assignedEmployees: rawAssignments.map(a => ({
+          user_id: Number(a.user_id ?? a.userId ?? a.employee_id ?? a.employeeId ?? null) || null,
+          id: a.id ?? null,
+          employee_id: a.employee_id ?? a.employeeId ?? null,
+          username: a.username ?? a.employee_name ?? ''
+        }))
+      }))
+    } catch (error) {
+      console.error('Failed to fetch current assignments for preselection:', error)
+      // Fall back to whatever is present locally
+      const existingAssignedIds = (project?.assignedEmployees || []).map(a => Number(a.user_id ?? a.id ?? a.employee_id ?? a.employeeId)).filter(Boolean)
+      setSelectedEmployees(existingAssignedIds)
+    }
+
     setShowAssignModal(true)
   }
 
   const handleSubmitAssignment = async () => {
-    if (!selectedProjectForAssign || selectedEmployees.length === 0) {
-      alert('Please select at least one employee')
+    if (!selectedProjectForAssign) {
+      alert('No project selected')
       return
     }
 
     setAssignmentLoading(true)
     try {
+      // Preserve existing assigned employees and merge with newly selected ones.
+      // To avoid race conditions or stale data, fetch current assignments from server first.
+      let existingAssignedIds = []
+      try {
+        const assignmentsRes = await getEmployeeAssignments(selectedProjectForAssign.id)
+        const rawAssignments = assignmentsRes.data?.assignments || assignmentsRes.data?.assigned_employees || []
+        existingAssignedIds = rawAssignments.map(a => {
+          let userId = Number(a.user_id ?? a.userId ?? a.employee_id ?? a.employeeId ?? null)
+          if (!userId && (a.username || a.employee_name || a.employee_id || a.employeeId)) {
+            const match = allEmployees.find(emp =>
+              emp.username === (a.username ?? a.employee_name) ||
+              String(emp.employeeId) === String(a.employee_id ?? a.employeeId)
+            )
+            if (match) userId = match.id
+          }
+          return userId
+        }).filter(Boolean)
+
+        // update selectedProjectForAssign assignedEmployees to the freshest set
+        setSelectedProjectForAssign(prev => ({
+          ...prev,
+          assignedEmployees: rawAssignments.map(a => ({
+            user_id: Number(a.user_id ?? a.userId ?? a.employee_id ?? a.employeeId ?? null) || null,
+            id: a.id ?? null,
+            employee_id: a.employee_id ?? a.employeeId ?? null,
+            username: a.username ?? a.employee_name ?? ''
+          }))
+        }))
+      } catch (err) {
+        console.warn('Could not fetch latest assignments before submit:', err)
+        existingAssignedIds = (selectedProjectForAssign?.assignedEmployees || []).map(a => Number(a.employee_id ?? a.employeeId ?? a.user_id ?? a.userId ?? a.id)).filter(Boolean)
+      }
+
+      const mergedEmployeeIds = Array.from(new Set([...(existingAssignedIds || []), ...selectedEmployees.map(Number)]))
+
+      if (mergedEmployeeIds.length === 0) {
+        alert('Please select at least one employee')
+        setAssignmentLoading(false)
+        return
+      }
+
       const assignmentData = {
         project_id: selectedProjectForAssign.id,
-        employee_ids: selectedEmployees,
+        employee_ids: mergedEmployeeIds,
         start_date: new Date().toISOString().split('T')[0],
         end_date: selectedProjectForAssign.end_date || null,
-        reporting_required: true
+        reporting_required: true,
+        // Inform backend to keep existing assignments (if supported)
+        keep_existing_assignments: true
       }
 
       const res = await assignProjectToEmployees(assignmentData)
       if (res.data?.success) {
-        alert('✅ Project assigned successfully!')
+        alert(`✅ Project assigned successfully to ${mergedEmployeeIds.length} employee${mergedEmployeeIds.length !== 1 ? 's' : ''}!`)
         setShowAssignModal(false)
         setSelectedEmployees([])
         setSelectedProjectForAssign(null)

@@ -504,12 +504,28 @@ function ManagerDashboard() {
               resolvedIssues: 0,
               projects: new Set(),
               totalHours: 0,
-              employeeName: report.employeeName || 'Unknown'
+              employeeName: report.employeeName || 'Unknown',
+              on_time: false
             };
           }
           
           userReports[userId].reports.push(report);
           userReports[userId].totalReports++;
+
+          // Track first and last report timestamps for this user
+          try {
+            const ts = report.created_at || report.createdAt || report.timestamp || null;
+            if (ts) {
+              if (!userReports[userId].firstReport || new Date(ts) < new Date(userReports[userId].firstReport)) {
+                userReports[userId].firstReport = ts;
+              }
+              if (!userReports[userId].lastReport || new Date(ts) > new Date(userReports[userId].lastReport)) {
+                userReports[userId].lastReport = ts;
+              }
+            }
+          } catch (dtErr) {
+            // ignore parse errors
+          }
           
           if (report.problem_resolved_or_not === 'yes') {
             userReports[userId].resolvedIssues++;
@@ -533,6 +549,13 @@ function ManagerDashboard() {
         } catch (error) {
           console.error('❌ Error converting projects:', error);
           userReports[userId].projects = [];
+        }
+        // Determine on_time: if user submitted any reports or has a daily report
+        try {
+          const hasDaily = Array.isArray(dailyReports) && dailyReports.some(r => r && (r.user_id === userId || r.employee_id === userId || r.employee_code === userId));
+          userReports[userId].on_time = (userReports[userId].totalReports && userReports[userId].totalReports > 0) || Boolean(hasDaily);
+        } catch (e) {
+          userReports[userId].on_time = userReports[userId].totalReports > 0;
         }
       });
       
@@ -564,7 +587,8 @@ function ManagerDashboard() {
     
     return {
       ...baseStats,
-      hasDailyReport: hasDailyReport || baseStats.hasDailyReport
+      hasDailyReport: hasDailyReport || baseStats.hasDailyReport,
+      on_time: Boolean(baseStats.on_time)
     };
   };
 
@@ -888,6 +912,13 @@ Man Hours: ${mom.man_hours}
                 ({activities.length} hourly, {dailyReports.length} daily)
               </small>
             </div>
+            <div className="stat-card">
+              <h4>On-Time Submissions</h4>
+              <p className="stat-number">
+                {employees.filter(emp => attendanceSummary[emp.id] && attendanceSummary[emp.id].on_time).length}
+              </p>
+              <small>Reports submitted on time</small>
+            </div>
           </div>
         </>
       )}
@@ -936,6 +967,9 @@ Man Hours: ${mom.man_hours}
                           <span className="daily-report-indicator"> (Daily Report)</span>
                         )}
                       </span>
+                      {stats.on_time && (
+                        <span className="on-time-badge">ON-TIME</span>
+                      )}
                     </div>
                   </div>
                   

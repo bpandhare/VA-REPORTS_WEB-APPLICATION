@@ -604,34 +604,24 @@ router.put('/:id', verifyToken, async (req, res) => {
     if (assigned_employee !== undefined) {
       await ensureColumnExists(connection, 'assigned_to', 'INT DEFAULT NULL')
       await ensureColumnExists(connection, 'assigned_employee_id', 'VARCHAR(50) DEFAULT NULL')
-      
-      // Clear previous assignment
-      if (project[0].assigned_to || project[0].assigned_employee_id) {
-        try {
-          await connection.execute(
-            'DELETE FROM project_collaborators WHERE project_id = ? AND role = ?',
-            [projectId, 'Assigned']
-          )
-        } catch (error) {
-          console.error('Failed to remove previous assigned collaborator:', error)
-        }
-      }
-      
-      // Set new assignment
+
+      // Set new assignment (single primary assignee). Do NOT delete existing assigned collaborators here
+      // because that would remove multi-employee assignments. The `assigned_employees` array handling
+      // below is responsible for replacing the full assigned set when provided.
       if (assigned_employee && assigned_employee.trim()) {
         const [users] = await connection.execute(
           'SELECT id, employee_id FROM users WHERE employee_id = ? OR username = ?',
           [assigned_employee.trim(), assigned_employee.trim()]
         )
-        
+
         if (users.length > 0) {
           assignedUserId = users[0].id
           assignedEmployeeId = users[0].employee_id
         } else {
           assignedEmployeeId = assigned_employee.trim()
         }
-        
-        // Add as collaborator with 'Assigned' role
+
+        // Add as collaborator with 'Assigned' role (do not remove other assigned collaborators)
         if (assignedUserId || assignedEmployeeId) {
           try {
             await connection.execute(
@@ -643,9 +633,21 @@ router.put('/:id', verifyToken, async (req, res) => {
           } catch (collabError) {
             console.error('Failed to add assigned employee as collaborator:', collabError)
           }
+
+          // Also add to project_assignments so the single assigned employee is part of the assignments list
+          if (assignedUserId) {
+            try {
+              await connection.execute(
+                'INSERT IGNORE INTO project_assignments (project_id, employee_id, assigned_by) VALUES (?, ?, ?)',
+                [projectId, assignedUserId, req.user?.id]
+              )
+            } catch (assignErr) {
+              console.error('Failed to add primary assigned employee to assignments table:', assignErr)
+            }
+          }
         }
       }
-      
+
       updates.push('assigned_to = ?')
       updates.push('assigned_employee_id = ?')
       values.push(assignedUserId || null)
@@ -1800,37 +1802,39 @@ router.get('/available-for-reporting', verifyToken, async (req, res) => {
 })
 
 // NEW ENDPOINT: Assign multiple employees to a project
-router.post('/:projectId/assign-employees', verifyToken, async (req, res) => {
+// This route accepts either a projectId param or a payload with `project_id`.
+// It also supports `keep_existing_assignments` to control merge vs overwrite behavior.
+router.post('/assign', verifyToken, async (req, res) => {
   const connection = await pool.getConnection()
   try {
     await connection.beginTransaction()
-    
-    const projectId = parseInt(req.params.projectId)
-    const { employee_ids = [] } = req.body // Array of user IDs or employee codes
+
+    const { project_id, employee_ids = [], keep_existing_assignments = false } = req.body
     const assignedBy = req.user?.id
-    
+
+    const projectId = parseInt(project_id)
     if (!projectId) {
       return res.status(400).json({ success: false, message: 'Invalid project ID' })
     }
-    
-    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
-      return res.status(400).json({ success: false, message: 'Please provide at least one employee' })
+
+    if (!Array.isArray(employee_ids)) {
+      return res.status(400).json({ success: false, message: 'employee_ids must be an array' })
     }
-    
-    // Check project exists and user has permission
+
+    // Check project exists and permission
     const [project] = await connection.execute(
       'SELECT created_by FROM projects WHERE id = ?',
       [projectId]
     )
-    
+
     if (project.length === 0) {
       await connection.rollback()
       return res.status(404).json({ success: false, message: 'Project not found' })
     }
-    
+
     const isCreator = project[0].created_by === assignedBy
     const isManager = req.user?.role === 'Manager'
-    
+
     if (!isCreator && !isManager) {
       await connection.rollback()
       return res.status(403).json({
@@ -1838,12 +1842,168 @@ router.post('/:projectId/assign-employees', verifyToken, async (req, res) => {
         message: 'Only project creator or managers can assign employees'
       })
     }
-    
+
+    // If keep_existing_assignments = true, we'll merge new IDs with existing ones.
+    // If false, we'll treat the provided list as the desired final set (overwrite).
+
+    // Fetch existing assignment IDs for the project
+    const [existingRows] = await connection.execute(
+      'SELECT employee_id FROM project_assignments WHERE project_id = ?',
+      [projectId]
+    )
+    const existingIds = existingRows.map(r => r.employee_id)
+
+    let finalEmployeeIds = []
+
+    if (keep_existing_assignments) {
+      finalEmployeeIds = Array.from(new Set([...(existingIds || []), ...employee_ids.map(Number)]))
+    } else {
+      // Overwrite: the final set is exactly the provided employee_ids (deduped)
+      finalEmployeeIds = Array.from(new Set(employee_ids.map(Number)))
+    }
+
     const assignedEmployees = []
     let successCount = 0
     const errors = []
-    
-    // Process each employee ID
+
+    if (!keep_existing_assignments) {
+      // If overwriting, remove any existing assignments not in the final list
+      if (existingIds.length > 0) {
+        const idsToRemove = existingIds.filter(id => !finalEmployeeIds.includes(id))
+        if (idsToRemove.length > 0) {
+          const placeholders = idsToRemove.map(() => '?').join(',')
+          await connection.execute(
+            `DELETE FROM project_assignments WHERE project_id = ? AND employee_id IN (${placeholders})`,
+            [projectId, ...idsToRemove]
+          )
+
+          // Also remove from collaborators where appropriate
+          await connection.execute(
+            `DELETE FROM project_collaborators WHERE project_id = ? AND user_id IN (${placeholders})`,
+            [projectId, ...idsToRemove]
+          )
+        }
+      }
+    }
+
+    // Insert/ensure assignments for each ID in the final set
+    for (const empId of finalEmployeeIds) {
+      try {
+        // Look up the user
+        const [users] = await connection.execute(
+          'SELECT id, username, employee_id FROM users WHERE id = ? OR employee_id = ? OR username = ?',
+          [empId, empId, empId]
+        )
+
+        if (users.length === 0) {
+          errors.push(`Employee ${empId} not found`)
+          continue
+        }
+
+        const userId = users[0].id
+        const userEmployeeId = users[0].employee_id
+        const username = users[0].username
+
+        // Check if already assigned
+        const [existing] = await connection.execute(
+          'SELECT id FROM project_assignments WHERE project_id = ? AND employee_id = ?',
+          [projectId, userId]
+        )
+
+        if (existing.length > 0) {
+          assignedEmployees.push({ id: userId, employee_id: userEmployeeId, username, status: 'already_assigned' })
+          continue
+        }
+
+        // Add to project_assignments
+        await connection.execute(
+          'INSERT INTO project_assignments (project_id, employee_id, assigned_by) VALUES (?, ?, ?)',
+          [projectId, userId, assignedBy]
+        )
+
+        // Also add to project_collaborators for backward compatibility
+        await connection.execute(
+          'INSERT IGNORE INTO project_collaborators (project_id, user_id, collaborator_employee_id, role, added_by) VALUES (?, ?, ?, ?, ?)',
+          [projectId, userId, userEmployeeId, 'Assigned', assignedBy]
+        )
+
+        assignedEmployees.push({ id: userId, employee_id: userEmployeeId, username, status: 'assigned' })
+        successCount++
+      } catch (error) {
+        console.error(`Failed to assign employee ${empId}:`, error)
+        errors.push(`Failed to assign ${empId}: ${error.message}`)
+      }
+    }
+
+    await connection.commit()
+
+    res.json({
+      success: true,
+      message: `Successfully processed assignments. Added ${successCount} new employee(s).`,
+      assigned_count: successCount,
+      total_count: finalEmployeeIds.length,
+      assigned_employees: assignedEmployees,
+      errors: errors.length > 0 ? errors : undefined
+    })
+
+  } catch (error) {
+    await connection.rollback()
+    console.error('Failed to assign employees:', error)
+    res.status(500).json({
+      success: false,
+      message: 'Unable to assign employees',
+      error: error.message
+    })
+  } finally {
+    connection.release()
+  }
+})
+
+// Backwards-compatible endpoint: Accepts projectId in URL and adds non-duplicate employee_ids
+router.post('/:projectId/assign-employees', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection()
+  try {
+    await connection.beginTransaction()
+
+    const projectId = parseInt(req.params.projectId)
+    const { employee_ids = [] } = req.body // Array of user IDs or employee codes
+    const assignedBy = req.user?.id
+
+    if (!projectId) {
+      return res.status(400).json({ success: false, message: 'Invalid project ID' })
+    }
+
+    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'Please provide at least one employee' })
+    }
+
+    // Check project exists and user has permission
+    const [project] = await connection.execute(
+      'SELECT created_by FROM projects WHERE id = ?',
+      [projectId]
+    )
+
+    if (project.length === 0) {
+      await connection.rollback()
+      return res.status(404).json({ success: false, message: 'Project not found' })
+    }
+
+    const isCreator = project[0].created_by === assignedBy
+    const isManager = req.user?.role === 'Manager'
+
+    if (!isCreator && !isManager) {
+      await connection.rollback()
+      return res.status(403).json({
+        success: false,
+        message: 'Only project creator or managers can assign employees'
+      })
+    }
+
+    const assignedEmployees = []
+    let successCount = 0
+    const errors = []
+
+    // Process each employee ID (skip if already assigned)
     for (const empId of employee_ids) {
       try {
         // Look up the user
@@ -1851,22 +2011,22 @@ router.post('/:projectId/assign-employees', verifyToken, async (req, res) => {
           'SELECT id, username, employee_id FROM users WHERE id = ? OR employee_id = ? OR username = ?',
           [empId, empId, empId]
         )
-        
+
         if (users.length === 0) {
           errors.push(`Employee ${empId} not found`)
           continue
         }
-        
+
         const userId = users[0].id
         const userEmployeeId = users[0].employee_id
         const username = users[0].username
-        
+
         // Check if already assigned
         const [existing] = await connection.execute(
           'SELECT id FROM project_assignments WHERE project_id = ? AND employee_id = ?',
           [projectId, userId]
         )
-        
+
         if (existing.length > 0) {
           // Already assigned, skip
           assignedEmployees.push({
@@ -1877,19 +2037,19 @@ router.post('/:projectId/assign-employees', verifyToken, async (req, res) => {
           })
           continue
         }
-        
+
         // Add to project_assignments
         await connection.execute(
           'INSERT INTO project_assignments (project_id, employee_id, assigned_by) VALUES (?, ?, ?)',
           [projectId, userId, assignedBy]
         )
-        
+
         // Also add to project_collaborators for backward compatibility
         await connection.execute(
           'INSERT IGNORE INTO project_collaborators (project_id, user_id, collaborator_employee_id, role, added_by) VALUES (?, ?, ?, ?, ?)',
           [projectId, userId, userEmployeeId, 'Assigned', assignedBy]
         )
-        
+
         assignedEmployees.push({
           id: userId,
           employee_id: userEmployeeId,
@@ -1897,16 +2057,15 @@ router.post('/:projectId/assign-employees', verifyToken, async (req, res) => {
           status: 'assigned'
         })
         successCount++
-        
-        console.log(`✅ Assigned employee ${userEmployeeId} to project ${projectId}`)
+
       } catch (error) {
         console.error(`Failed to assign employee ${empId}:`, error)
         errors.push(`Failed to assign ${empId}: ${error.message}`)
       }
     }
-    
+
     await connection.commit()
-    
+
     res.json({
       success: true,
       message: `Successfully assigned ${successCount} employee(s)`,
@@ -1915,7 +2074,7 @@ router.post('/:projectId/assign-employees', verifyToken, async (req, res) => {
       assigned_employees: assignedEmployees,
       errors: errors.length > 0 ? errors : undefined
     })
-    
+
   } catch (error) {
     await connection.rollback()
     console.error('Failed to assign employees:', error)

@@ -262,6 +262,12 @@ const ProjectForm = ({ projectId, initialData, onSuccess, onClose }) => {
         customer: initialData.customer || "",
         end_customer: initialData.end_customer || "",
         assigned_employee: initialData.assigned_employee || initialData.employee_id || "",
+        // Populate assigned_employees for edit mode from either snake_case or camelCase data
+        assigned_employees: (initialData.assigned_employees && Array.isArray(initialData.assigned_employees))
+          ? Array.from(new Set(initialData.assigned_employees))
+          : (initialData.assignedEmployees && Array.isArray(initialData.assignedEmployees))
+            ? Array.from(new Set(initialData.assignedEmployees.map(a => a.employee_id || a.username || a.user_id || a.id).filter(Boolean)))
+            : [],
         newCustomer: "",
         newEndCustomer: "",
         description: initialData.description || "",

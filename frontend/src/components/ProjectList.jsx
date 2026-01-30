@@ -13,6 +13,9 @@ export default function ProjectList() {
   const [editing, setEditing] = useState(null)
   const [showCollaborators, setShowCollaborators] = useState(false)
   const [userRole, setUserRole] = useState('')
+  // Member modal
+  const [showMemberModal, setShowMemberModal] = useState(false)
+  const [memberModalData, setMemberModalData] = useState(null)
   const [userInfo, setUserInfo] = useState(null)
   const [userInfoLoading, setUserInfoLoading] = useState(true)
 
@@ -39,7 +42,19 @@ export default function ProjectList() {
     try {
       const res = await listProjects()
       if (res.data?.success) {
-        setProjects(res.data.projects || [])
+        const normalized = (res.data.projects || []).map(p => {
+          // Ensure `assigned_employees` exists, support multiple shapes
+          const assigned = p.assigned_employees || p.assignedEmployees || p.assignments || [];
+          // Normalize each assigned entry to a consistent shape
+          const normalizedAssigned = (assigned || []).map(a => ({
+            employee_id: a.employee_id || a.user_id || a.id || a.employeeId || a.employee_code || a.employee_code,
+            username: a.username || a.employee_name || a.name || a.user_name || a.user || null,
+            employee_code: a.employee_code || a.employee_code || null,
+            ...a
+          }));
+          return { ...p, assigned_employees: normalizedAssigned }
+        })
+        setProjects(normalized)
       }
     } catch (e) {
       console.error(e)
@@ -220,12 +235,19 @@ export default function ProjectList() {
         </div>
         <div className="assigned-employees-list">
           {p.assigned_employees.map((employee, index) => (
-            <span key={index} className="employee-tag">
+            <button
+              key={index}
+              className="employee-tag"
+              type="button"
+              onClick={() => { setShowMemberModal(true); setMemberModalData(employee); }}
+              style={{ cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}
+              title={employee.username || employee.name || employee.employee_id}
+            >
               {employee.username || employee.name || employee.employee_id}
               {employee.employee_code && (
                 <span className="employee-id"> (ID: {employee.employee_code})</span>
               )}
-            </span>
+            </button>
           ))}
         </div>
       </div>
@@ -531,6 +553,29 @@ export default function ProjectList() {
                   </div>
                 </div>
               </div>
+
+              {/* Member modal (from ProjectList) */}
+              {showMemberModal && memberModalData && (
+                <div className="modal-backdrop member-modal-backdrop">
+                  <div className="modal-pane member-modal">
+                    <div className="modal-header">
+                      <h3>Member Details</h3>
+                      <button className="btn-close" onClick={() => { setShowMemberModal(false); setMemberModalData(null) }}>✕</button>
+                    </div>
+                    <div className="modal-content">
+                      <div className="member-detail-card">
+                        <div className="member-avatar large">{(memberModalData.username || memberModalData.name || '?').charAt(0).toUpperCase()}</div>
+                        <div className="member-detail-info">
+                          <h4>{memberModalData.username || memberModalData.name || 'Unknown'}</h4>
+                          <p><strong>ID:</strong> {memberModalData.employee_id || memberModalData.employee_code || memberModalData.user_id || 'N/A'}</p>
+                          {memberModalData.email && <p><strong>Email:</strong> {memberModalData.email}</p>}
+                          <p><strong>Role:</strong> {memberModalData.role || memberModalData.employee_role || 'Member'}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="modal-footer">
                 <div className="footer-actions">

@@ -817,7 +817,15 @@ export const getEmployeeAssignments = async (projectId) => {
   console.log(`📤 Fetching assignments for project ${projectId}`);
   
   try {
-    const response = await api.get(`/api/projects/${projectId}/assignments`);
+    // Updated endpoint to match backend: /assigned-employees
+    const response = await api.get(`/api/projects/${projectId}/assigned-employees`);
+
+    // Normalize response shape so callers can use `response.data.assignments` regardless
+    // of whether the server returns `assignments` (mock) or `assigned_employees` (real API).
+    if (response.data) {
+      response.data.assignments = response.data.assignments || response.data.assigned_employees || [];
+    }
+
     return response;
   } catch (error) {
     console.error('❌ Real API failed:', error);

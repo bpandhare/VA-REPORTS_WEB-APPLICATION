@@ -60,8 +60,6 @@ const ProjectDetails = () => {
   // Add these states for the contribute tab
   const [showQuickUpdate, setShowQuickUpdate] = useState(false)
   const [showFileUpload, setShowFileUpload] = useState(false)
-  const [showTaskUpdate, setShowTaskUpdate] = useState(false)
-  const [showCommentForm, setShowCommentForm] = useState(false)
   const [quickUpdate, setQuickUpdate] = useState('')
   const [progressPercentage, setProgressPercentage] = useState(0)
   const [updateStatus, setUpdateStatus] = useState('on_track')
@@ -77,6 +75,9 @@ const ProjectDetails = () => {
   const [assignedEmployees, setAssignedEmployees] = useState([])
   const [projectReports, setProjectReports] = useState([])
   const [showViewReports, setShowViewReports] = useState(false)
+  // Member modal state
+  const [showMemberModal, setShowMemberModal] = useState(false)
+  const [memberModalData, setMemberModalData] = useState(null) 
 
   // Report states
   const [dailyReport, setDailyReport] = useState({
@@ -603,7 +604,9 @@ const ProjectDetails = () => {
 
   const isManager = user?.role === 'Manager'
   const isCollaborator = collaborators.some(c => c.user_id === user?.id)
-  const isAssignedEmployee = assignedEmployees.some(emp => emp.employee_id === user?.id)
+  const currentUserId = user?.id
+  const currentUserEmployeeId = user?.employee_id || user?.employeeId || null
+  const isAssignedEmployee = assignedEmployees.some(emp => emp.user_id === currentUserId || String(emp.employee_id) === String(currentUserEmployeeId))
 
   return (
     <div className="project-details-container">
@@ -1219,14 +1222,22 @@ const ProjectDetails = () => {
                 <h4>Assigned Employees (Reporting)</h4>
                 <div className="team-grid">
                   {assignedEmployees.map(emp => (
-                    <div key={emp.employee_id} className="team-member assigned">
+                    <div
+                      key={emp.employee_id || emp.user_id || emp.id}
+                      className="team-member assigned"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => { setMemberModalData({ ...emp, type: 'assigned' }); setShowMemberModal(true) }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { setMemberModalData({ ...emp, type: 'assigned' }); setShowMemberModal(true) } }}
+                      style={{ cursor: 'pointer' }}
+                    >
                       <div className="member-avatar">
-                        {emp.employee_name?.charAt(0).toUpperCase() || 'E'}
+                        {(emp.employee_name || emp.username || emp.employee_id || String(emp.user_id) || 'E').toString().charAt(0).toUpperCase()}
                       </div>
                       <div className="member-info">
-                        <h4>{emp.employee_name || 'Unknown Employee'}</h4>
-                        <p className="member-role">{emp.employee_role || 'Employee'}</p>
-                        <p className="member-id">ID: {emp.employee_id || 'N/A'}</p>
+                        <h4>{emp.employee_name || emp.username || emp.display_name || 'Unknown Employee'}</h4>
+                        <p className="member-role">{emp.employee_role || emp.role || emp.job_role || 'Employee'}</p>
+                        <p className="member-id">ID: {emp.employee_id || emp.user_id || 'N/A'}</p>
                         <p className="member-status">Status: Assigned for reporting</p>
                       </div>
                       <div className="member-assignment-info">
@@ -1236,7 +1247,7 @@ const ProjectDetails = () => {
                         </span>
                       </div>
                     </div>
-                  ))}
+                  ))} 
                 </div>
               </div>
             )}
@@ -1247,7 +1258,15 @@ const ProjectDetails = () => {
                 <h4>Project Collaborators</h4>
                 <div className="team-grid">
                   {collaborators.map(collab => (
-                    <div key={collab.id} className="team-member collaborator">
+                    <div
+                      key={collab.id}
+                      className="team-member collaborator"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => { setMemberModalData({ ...collab, type: 'collaborator' }); setShowMemberModal(true) }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { setMemberModalData({ ...collab, type: 'collaborator' }); setShowMemberModal(true) } }}
+                      style={{ cursor: 'pointer' }}
+                    >
                       <div className="member-avatar">
                         {collab.username?.charAt(0).toUpperCase() || 'U'}
                       </div>
@@ -1697,24 +1716,20 @@ const ProjectDetails = () => {
         <div className="modal-overlay">
           <div className="modal-content assign-modal">
             <div className="modal-header">
-              <h2>Assign Project: {project.name}</h2>
+              <h2>Assign Project: {project?.name}</h2>
               <button 
                 className="btn-close"
-                onClick={() => {
-                  setShowAssignModal(false)
-                  setSelectedEmployees([])
-                }}
+                onClick={() => { setShowAssignModal(false); setSelectedEmployees([]) }}
               >
                 ×
               </button>
             </div>
-            
+
             <div className="assign-form">
               <div className="project-info-card">
                 <h4>Project Details</h4>
-                <p><strong>Customer:</strong> {project.customer}</p>
-                <p><strong>Description:</strong> {project.description}</p>
-                <p><strong>Duration:</strong> {formatDate(project.start_date)} - {formatDate(project.end_date) || 'Ongoing'}</p>
+                <p><strong>Customer:</strong> {project?.customer}</p>
+                <p><strong>Description:</strong> {project?.description}</p>
               </div>
 
               <div className="form-group">
@@ -1731,78 +1746,58 @@ const ProjectDetails = () => {
                           checked={selectedEmployees.includes(employee.id)}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setSelectedEmployees([...selectedEmployees, employee.id])
+                              setSelectedEmployees(prev => [...prev, employee.id])
                             } else {
-                              setSelectedEmployees(selectedEmployees.filter(id => id !== employee.id))
+                              setSelectedEmployees(prev => prev.filter(id => id !== employee.id))
                             }
                           }}
                         />
                         <div className="employee-info">
                           <span className="employee-name">{employee.name}</span>
-                          <span className="employee-details">
-                            {employee.role} • ID: {employee.employee_id || employee.id}
-                          </span>
+                          <span className="employee-details">{employee.role} • ID: {employee.employee_id || employee.id}</span>
                         </div>
                       </label>
                     ))
                   )}
                 </div>
-                <div className="selected-count">
-                  {selectedEmployees.length} employee(s) selected
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label>Reporting Requirements</label>
-                <div className="reporting-requirements">
-                  <label className="checkbox-label">
-                    <input type="checkbox" defaultChecked />
-                    <span>✅ Daily Report Required</span>
-                  </label>
-                  <label className="checkbox-label">
-                    <input type="checkbox" defaultChecked />
-                    <span>✅ Hourly Report Required</span>
-                  </label>
-                  <label className="checkbox-label">
-                    <input type="checkbox" defaultChecked />
-                    <span>⏰ Time Tracking Enabled</span>
-                  </label>
-                </div>
-              </div>
-
-              <div className="assignment-notes">
-                <label>Assignment Notes (Optional)</label>
-                <textarea 
-                  placeholder="Add any special instructions or notes for the assigned employees..."
-                  rows="2"
-                />
+                <div className="selected-count">{selectedEmployees.length} employee(s) selected</div>
               </div>
 
               <div className="modal-actions">
-                <button 
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => {
-                    setShowAssignModal(false)
-                    setSelectedEmployees([])
-                  }}
-                >
+                <button type="button" className="btn-secondary" onClick={() => { setShowAssignModal(false); setSelectedEmployees([]) }}>
                   Cancel
                 </button>
-                <button 
-                  type="button"
-                  className="btn-primary"
-                  onClick={handleAssignProject}
-                  disabled={assignmentLoading || selectedEmployees.length === 0}
-                >
+                <button type="button" className="btn-primary" onClick={handleAssignProject} disabled={assignmentLoading || selectedEmployees.length === 0}>
                   {assignmentLoading ? (
-                    <>
-                      <span className="spinner"></span> Assigning...
-                    </>
+                    <><span className="spinner"></span> Assigning...</>
                   ) : (
                     'Assign Project'
                   )}
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Member Details Modal */}
+      {showMemberModal && memberModalData && (
+        <div className="modal-overlay">
+          <div className="modal-content member-modal">
+            <div className="modal-header">
+              <h3>Member Details</h3>
+              <button className="btn-close" onClick={() => { setShowMemberModal(false); setMemberModalData(null) }}>✕</button>
+            </div>
+            <div className="modal-content-body">
+              <div className="member-detail-card">
+                <div className="member-avatar large">{(memberModalData.username || memberModalData.employee_name || '?').charAt(0).toUpperCase()}</div>
+                <div className="member-detail-info">
+                  <h4>{memberModalData.username || memberModalData.employee_name || 'Unknown'}</h4>
+                  <p><strong>ID:</strong> {memberModalData.employee_id || memberModalData.user_id || 'N/A'}</p>
+                  {memberModalData.email && <p><strong>Email:</strong> {memberModalData.email}</p>}
+                  <p><strong>Role:</strong> {memberModalData.role || memberModalData.employee_role || 'Member'}</p>
+                  {memberModalData.assigned_date && <p><strong>Assigned on:</strong> {formatDate(memberModalData.assigned_date)}</p>}
+                </div>
               </div>
             </div>
           </div>
@@ -2200,7 +2195,7 @@ const ProjectDetails = () => {
       )}
       
       {/* Debug info - remove in production */}
-      {process.env.NODE_ENV === 'development' && (
+      {import.meta.env.DEV && (
         <div className="debug-info" style={{ marginTop: '20px', padding: '10px', background: '#f5f5f5', borderRadius: '4px' }}>
           <h4>Debug Info:</h4>
           <p>Project ID: {id}</p>

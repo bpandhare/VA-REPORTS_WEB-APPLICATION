@@ -1042,6 +1042,7 @@ const endpoints = useMemo(() => ({
     const presentEmployees = [];
     const absentEmployees = [];
     const leaveEmployees = [];
+    const onTimeEmployees = [];
     const activities = [];
     
     data.attendance.forEach(record => {
@@ -1060,6 +1061,16 @@ const endpoints = useMemo(() => ({
       } else if (status === 'on_leave') {
         leaveEmployees.push(employeeName);
       }
+
+      // Determine if the employee has submitted their report on time.
+      // Business rule: having an hourly report or daily_target_achieved counts as on-time.
+      const onTime = Boolean(
+        record.details?.hasHourlyReport ||
+        record.details?.daily_target_achieved ||
+        record.details?.hourlyReportId ||
+        record.details?.hourlyReportSubmittedAt
+      )
+      if (onTime) onTimeEmployees.push(employeeName)
       
       const activityType = record.details?.hasHourlyReport 
         ? 'Hourly Report' 
@@ -1080,7 +1091,8 @@ const endpoints = useMemo(() => ({
         endTime: record.details?.outTime || '00:00',
         details: record.details,
         hasHourlyReport: record.details?.hasHourlyReport || false,
-        hourlyReportId: record.details?.hourlyReportId // NEW: Store hourly report ID
+        hourlyReportId: record.details?.hourlyReportId, // NEW: Store hourly report ID
+        onTime: onTime
       });
     });
     
@@ -1089,6 +1101,7 @@ const endpoints = useMemo(() => ({
       present: presentEmployees.length,
       absent: absentEmployees.length,
       on_leave: leaveEmployees.length,
+      on_time: onTimeEmployees.length,
       pending_approval: data.attendance.filter(r => r.status === 'pending_approval').length || 0
     };
     
@@ -1116,6 +1129,13 @@ const endpoints = useMemo(() => ({
       finalStatus = 'absent';
     }
     
+    const onTime = Boolean(
+      details.hasHourlyReport ||
+      details.daily_target_achieved ||
+      details.hourlyReportId ||
+      details.hourlyReportSubmittedAt
+    )
+
     const activities = [{
       engineerName: user?.username || user?.name || 'You',
       engineerId: user?.employeeId || user?.id,
@@ -1128,7 +1148,8 @@ const endpoints = useMemo(() => ({
       endTime: details.outTime || '00:00',
       details: details,
       hasHourlyReport: details.hasHourlyReport || false,
-      hourlyReportId: details.hourlyReportId // NEW: Store hourly report ID
+      hourlyReportId: details.hourlyReportId, // NEW: Store hourly report ID
+      onTime: onTime
     }];
     
     const summary = {
@@ -1136,6 +1157,7 @@ const endpoints = useMemo(() => ({
       present: finalStatus === 'present' ? 1 : 0,
       absent: finalStatus === 'absent' ? 1 : 0,
       on_leave: finalStatus === 'on_leave' ? 1 : 0,
+      on_time: onTime ? 1 : 0,
       pending_approval: finalStatus === 'pending_approval' ? 1 : 0
     };
     

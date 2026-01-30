@@ -1,5 +1,5 @@
 CREATE DATABASE IF NOT EXISTS vickhardth_ops;
-USE vickhardth_ops;
+USE vickhardth_ops;0
 
 CREATE TABLE IF NOT EXISTS site_activity (
     id INT AUTO_INCREMENT PRIMARY KEY,
