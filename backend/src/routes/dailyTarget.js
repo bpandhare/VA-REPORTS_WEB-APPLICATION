@@ -1142,6 +1142,7 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       end_customer_person: formData.locationType === 'leave' ? 'N/A' : (formData.endCustomerPerson || ''),
       end_customer_contact: formData.locationType === 'leave' ? 'N/A' : (formData.endCustomerContact || ''),
       project_no: formData.locationType === 'leave' ? 'N/A' : (formData.projectNo || ''),
+      project_name: formData.locationType === 'leave' ? 'N/A' : (formData.projectName || ''),
       location_type: formData.locationType,
       leave_type: formData.leaveType || null,
       site_location: formData.siteLocation || null,
@@ -1173,13 +1174,13 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       INSERT INTO daily_target_reports
       (report_date, in_time, out_time, customer_name, customer_person, customer_contact,
        end_customer_name, end_customer_person, end_customer_contact,
-       project_no, location_type, leave_type, site_location, location_lat, location_lng,
+       project_no, project_name, location_type, leave_type, site_location, location_lat, location_lng,
        mom_report_path, daily_target_planned, daily_target_achieved,
        additional_activity, who_added_activity, daily_pending_target,
        reason_pending_target, problem_faced, problem_resolved,
        online_support_required, support_engineer_name,
        site_start_date, site_end_date, incharge, remark, user_id, leave_status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     const params = [
@@ -1193,6 +1194,7 @@ router.post('/', verifyToken, upload.single('momReport'), async (req, res) => {
       dbData.end_customer_person,
       dbData.end_customer_contact,
       dbData.project_no,
+      dbData.project_name,
       dbData.location_type,
       dbData.leave_type,
       dbData.site_location,

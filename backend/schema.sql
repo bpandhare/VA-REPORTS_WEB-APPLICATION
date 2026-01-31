@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS daily_target_reports (
     end_customer_person VARCHAR(120) NOT NULL,
     end_customer_contact VARCHAR(20) NOT NULL,
     project_no VARCHAR(120) NOT NULL,
+    project_name VARCHAR(120) NOT NULL,
     location_type VARCHAR(20) NOT NULL,
     site_location VARCHAR(255),
     location_lat DECIMAL(10, 8),
@@ -108,6 +109,10 @@ CREATE TABLE IF NOT EXISTS daily_target_reports (
 );
 
 -- Add leave_type column if it doesn't exist
+
+-- Add project_name column if it doesn't exist
+ALTER TABLE daily_target_reports 
+ADD COLUMN IF NOT EXISTS project_name VARCHAR(120) DEFAULT NULL;
 ALTER TABLE daily_target_reports 
 ADD COLUMN IF NOT EXISTS leave_type VARCHAR(50) DEFAULT NULL;
 

@@ -96,14 +96,12 @@ async function fixMissingColumns() {
 
 // Get all hourly reports for a specific date (for managers)
 // In the /all/:date endpoint, around line 74:
-// Get all hourly reports for a specific date (for managers)
+// Get all hourly reports for a specific date (for managers) with daily plan/achievement comparison
 router.get('/all/:date', verifyToken, async (req, res) => {
   try {
     const { date } = req.params;
     const userRole = req.user.role;
-    
     // Only managers and team leaders can access all reports
-    // Make it case-insensitive
     const userRoleLower = (userRole || '').toLowerCase();
     if (!userRoleLower.includes('manager') && !userRoleLower.includes('team leader') && !userRoleLower.includes('group leader')) {
       return res.status(403).json({ 
@@ -111,7 +109,8 @@ router.get('/all/:date', verifyToken, async (req, res) => {
         message: 'Access denied. Only managers can view all hourly reports.' 
       });
     }
-    
+
+    // Get all hourly reports for the date
     const [reports] = await pool.execute(`
       SELECT 
         hr.*,
@@ -123,14 +122,116 @@ router.get('/all/:date', verifyToken, async (req, res) => {
       WHERE hr.report_date = ?
       ORDER BY hr.time_period, hr.created_at ASC
     `, [date]);
-    
+
+
+    // For each report, fetch the daily plan and achievement for that user/date
+    const enhancedReports = await Promise.all(reports.map(async (report) => {
+      try {
+        // Fetch daily target for this user/date, including project_name and problem fields
+        let dailyTarget = null;
+        try {
+          const [dailyTargets] = await pool.execute(
+            `SELECT daily_target_planned, daily_target_achieved, id as daily_target_id, problem_faced, problem_resolved, project_name
+             FROM daily_target_reports
+             WHERE user_id = ? AND report_date = ?
+             ORDER BY created_at DESC LIMIT 1`,
+            [report.user_id, date]
+          );
+          if (dailyTargets.length > 0) {
+            dailyTarget = dailyTargets[0];
+          }
+        } catch (err) {
+          console.error('Error fetching daily target for report', report.id, err);
+        }
+
+
+        // Split daily_target_planned into individual plans (comma or newline separated)
+        let plans = [];
+        if (dailyTarget && dailyTarget.daily_target_planned) {
+          plans = dailyTarget.daily_target_planned
+            .split(/\r?\n|,/)
+            .map(p => p.trim())
+            .filter(Boolean);
+        }
+        // If no plans from daily target, try to get from hourly report's planned_activities field
+        if (plans.length === 0 && report.planned_activities) {
+          plans = report.planned_activities
+            .split(/\r?\n|,/)
+            .map(p => p.trim())
+            .filter(Boolean);
+        }
+
+        // For each plan, check if it is achieved in the hourly_activity
+        let planAchievements = [];
+        if (plans.length > 0 && report.hourly_activity) {
+          planAchievements = plans.map(plan => {
+            const achieved = report.hourly_activity.toLowerCase().includes(plan.toLowerCase());
+            return {
+              plan,
+              achieved
+            };
+          });
+        } else if (plans.length > 0) {
+          planAchievements = plans.map(plan => ({ plan, achieved: false }));
+        }
+
+        // Compare all plans at once for summary
+        let planAchieved = planAchievements.length > 0 && planAchievements.every(p => p.achieved);
+        let planComparison = null;
+        if (dailyTarget && dailyTarget.daily_target_planned && report.hourly_activity) {
+          planComparison = {
+            planned: dailyTarget.daily_target_planned,
+            achieved: report.hourly_activity,
+            achievedFlag: planAchieved,
+            daily_target_achieved: dailyTarget.daily_target_achieved
+          };
+        }
+
+        // Prefer project_name from dailyTarget, fallback to report.project_name or report.project_no
+        let projectName = null;
+        if (dailyTarget && dailyTarget.project_name && dailyTarget.project_name !== 'N/A') {
+          projectName = dailyTarget.project_name;
+        } else if (report.project_name && report.project_name !== 'N/A') {
+          projectName = report.project_name;
+        } else if (report.project_no && report.project_no !== 'N/A') {
+          projectName = report.project_no;
+        } else {
+          projectName = 'Unknown Project';
+        }
+
+        return {
+          ...report,
+          project_name: projectName || 'Unknown',
+          daily_plan: dailyTarget ? dailyTarget.daily_target_planned : null,
+          daily_achieved: dailyTarget ? dailyTarget.daily_target_achieved : null,
+          plan_comparison: planComparison,
+          plan_achievements: planAchievements,
+          // Add daily report's problem fields for display
+          daily_problem_faced: dailyTarget ? dailyTarget.problem_faced : null,
+          daily_problem_resolved: dailyTarget ? dailyTarget.problem_resolved : null
+        };
+      } catch (err) {
+        console.error('Error processing hourly report', report.id, err);
+        return {
+          ...report,
+          project_name: 'Unknown',
+          daily_plan: null,
+          daily_achieved: null,
+          plan_comparison: null,
+          plan_achievements: [],
+          daily_problem_faced: null,
+          daily_problem_resolved: null,
+          error: 'Error processing this report'
+        };
+      }
+    }));
+
     res.json({
       success: true,
       date: date,
-      reports: reports,
-      count: reports.length
+      reports: enhancedReports,
+      count: enhancedReports.length
     });
-    
   } catch (error) {
     console.error('Failed to fetch all hourly reports:', error);
     res.status(500).json({ 

@@ -164,9 +164,7 @@ function ManagerDashboard() {
       // Any other error status
       const errorText = await response.text();
       console.error(`❌ API returned status ${response.status}: ${errorText}`);
-      setError(`⚠️ Failed to fetch hourly reports (Status: ${response.status}). Attempting to show daily reports instead...`);
-      
-      // Fallback to daily reports
+      // Do not set error in UI for 500, just fallback
       createActivitiesFromDailyReports();
       
     } catch (error) {
@@ -200,7 +198,7 @@ function ManagerDashboard() {
       
       console.log(`✅ Found ${activitiesData.length} activities`);
       
-      // Safely map activities
+      // Safely map activities, now with plan/achievement info
       const enhancedActivities = activitiesData.map((activity, index) => {
         try {
           // Safely extract employee name
@@ -209,12 +207,15 @@ function ManagerDashboard() {
           else if (activity.employee_name) employeeName = activity.employee_name;
           else if (activity.username) employeeName = activity.username;
           else if (activity.engg_name) employeeName = activity.engg_name;
-          
+
           // Safely extract employee ID
           let employeeId = 'N/A';
           if (activity.employeeId) employeeId = activity.employeeId;
           else if (activity.employee_id) employeeId = activity.employee_id;
-          
+
+          // Plan/achievement info from backend
+          let planComparison = activity.plan_comparison || null;
+
           return {
             id: activity.id || activity._id || `temp-${index}-${Date.now()}`,
             user_id: activity.user_id || activity.userId || 'unknown',
@@ -226,23 +227,30 @@ function ManagerDashboard() {
             problem_faced: activity.problem_faced_by_engineer_hourly || activity.problem_faced || '',
             problem_resolved_or_not: activity.problem_resolved_or_not || activity.problem_resolved || 'no',
             created_at: activity.created_at || new Date().toISOString(),
+            plan_comparison: planComparison,
+            daily_plan: activity.daily_plan,
+            daily_achieved: activity.daily_achieved,
+            plan_achievements: activity.plan_achievements || []
           };
         } catch (itemError) {
           console.error('❌ Error processing activity item:', itemError);
           return null;
         }
       }).filter(item => item !== null); // Remove null items
-      
+
       console.log('✅ Processed activities:', enhancedActivities.length);
       setActivities(enhancedActivities);
-      
+
       if (enhancedActivities.length > 0) {
         calculateAttendance(enhancedActivities);
+      } else {
+        // Show a message in the UI if no hourly reports are available
+        setError('No hourly reports available for this date.');
       }
-      
     } catch (error) {
       console.error('❌ Error in processHourlyReportsData:', error);
       setActivities([]);
+      setError('No hourly reports available for this date.');
     }
   };
 
@@ -1015,7 +1023,78 @@ Man Hours: ${mom.man_hours}
               </div>
             </div>
           </div>
-          
+
+
+          {/* --- Manager Progress Summary --- */}
+          <div className="manager-progress-summary" style={{margin: '1.5em 0', padding: '1em', background: '#f8f9fa', borderRadius: '8px', boxShadow: '0 1px 4px #e0e0e0'}}>
+            {(() => {
+              // Aggregate all plan achievements
+              let totalPlans = 0;
+              let totalAchieved = 0;
+              activities.forEach(a => {
+                if (Array.isArray(a.plan_achievements)) {
+                  totalPlans += a.plan_achievements.length;
+                  totalAchieved += a.plan_achievements.filter(p => p.achieved).length;
+                }
+              });
+              const percent = totalPlans > 0 ? Math.round((totalAchieved / totalPlans) * 100) : 0;
+              return (
+                <div>
+                  <h3 style={{marginBottom: '0.5em'}}>📈 Progress Summary</h3>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '1em'}}>
+                    <span style={{fontWeight: 500}}>Planned: <span style={{color: '#2980b9'}}>{totalPlans}</span></span>
+                    <span style={{fontWeight: 500}}>Achieved: <span style={{color: '#27ae60'}}>{totalAchieved}</span></span>
+                    <span style={{fontWeight: 500}}>Achievement Rate: <span style={{color: percent >= 80 ? '#27ae60' : percent >= 50 ? '#f39c12' : '#e74c3c'}}>{percent}%</span></span>
+                  </div>
+                  <div style={{marginTop: '0.5em', background: '#e0e0e0', borderRadius: '6px', height: '18px', width: '100%', maxWidth: '400px', overflow: 'hidden'}}>
+                    <div style={{height: '100%', width: `${percent}%`, background: percent >= 80 ? '#27ae60' : percent >= 50 ? '#f39c12' : '#e74c3c', transition: 'width 0.5s'}}></div>
+                  </div>
+                  {totalPlans === 0 && <div style={{color: '#888', marginTop: '0.5em'}}>No planned activities for this date.</div>}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* --- Per-Employee Performance Table --- */}
+          <div className="employee-performance-summary" style={{margin: '1.5em 0', padding: '1em', background: '#f4f8fc', borderRadius: '8px', boxShadow: '0 1px 4px #e0e0e0'}}>
+            <h4 style={{marginBottom: '0.5em'}}>👤 Employee Performance</h4>
+            <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '1em'}}>
+              <thead>
+                <tr style={{background: '#eaf1fb'}}>
+                  <th style={{padding: '0.5em', textAlign: 'left'}}>Employee</th>
+                  <th style={{padding: '0.5em'}}>Planned</th>
+                  <th style={{padding: '0.5em'}}>Achieved</th>
+                  <th style={{padding: '0.5em'}}>Achievement Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  // Group activities by employee
+                  const empMap = {};
+                  activities.forEach(a => {
+                    const emp = a.employeeName || a.username || a.user_id || 'Unknown';
+                    if (!empMap[emp]) empMap[emp] = { planned: 0, achieved: 0 };
+                    if (Array.isArray(a.plan_achievements)) {
+                      empMap[emp].planned += a.plan_achievements.length;
+                      empMap[emp].achieved += a.plan_achievements.filter(p => p.achieved).length;
+                    }
+                  });
+                  return Object.entries(empMap).map(([emp, stats]) => {
+                    const percent = stats.planned > 0 ? Math.round((stats.achieved / stats.planned) * 100) : 0;
+                    return (
+                      <tr key={emp} style={{background: percent >= 80 ? '#eafbe7' : percent >= 50 ? '#fffbe6' : '#fdeaea'}}>
+                        <td style={{padding: '0.5em', fontWeight: 500}}>{emp}</td>
+                        <td style={{padding: '0.5em', textAlign: 'center'}}>{stats.planned}</td>
+                        <td style={{padding: '0.5em', textAlign: 'center'}}>{stats.achieved}</td>
+                        <td style={{padding: '0.5em', textAlign: 'center', color: percent >= 80 ? '#27ae60' : percent >= 50 ? '#f39c12' : '#e74c3c', fontWeight: 500}}>{percent}%</td>
+                      </tr>
+                    );
+                  });
+                })()}
+              </tbody>
+            </table>
+          </div>
+
           <div className="activities-filters">
             <div className="filter-group">
               <input
@@ -1147,6 +1226,20 @@ Man Hours: ${mom.man_hours}
                               <h3 className="report-employee-name">{report.employeeName}</h3>
                               <p className="report-employee-id">ID: {report.employee_id || 'N/A'}</p>
                               <p className="report-project">Project: <strong>{report.project_name || 'N/A'}</strong></p>
+                              {/* Show session(s) for this report */}
+                              <p className="report-sessions">
+                                Sessions: {sessionsArray.map(([timePeriod], idx) => (
+                                  <span key={timePeriod} className="session-time-period">
+                                    {timePeriod}{idx < sessionsArray.length - 1 ? ', ' : ''}
+                                  </span>
+                                ))}
+                              </p>
+                              {/* Edited indicator */}
+                              {report.updated_at && report.updated_at !== report.created_at && (
+                                <span className="edited-badge" title={`Edited: ${formatEditTimestamp(report.updated_at)}`} style={{marginLeft: '0.5em', color: '#e67e22', fontWeight: 500}}>
+                                  ✏️ Edited {formatEditTimestamp(report.updated_at)}
+                                </span>
+                              )}
                             </div>
                           </div>
                           <div className="report-header-right">
@@ -1162,12 +1255,46 @@ Man Hours: ${mom.man_hours}
                                 <div className="session-header">
                                   <h4 className="session-time">📅 {timePeriod}</h4>
                                   <span className="session-activity-count">{sessionActivities.length} activit{sessionActivities.length !== 1 ? 'ies' : 'y'}</span>
+                                  {/* Plan Achieved Indicator (if any activity in this session has plan_comparison) */}
+                                  {sessionActivities.some(a => a.plan_comparison) && (
+                                    <span className="plan-achieved-indicator">
+                                      {sessionActivities.some(a => a.plan_comparison && a.plan_comparison.achievedFlag) ? (
+                                        <span className="plan-achieved-badge achieved">🎯 Plan Achieved</span>
+                                      ) : (
+                                        <span className="plan-achieved-badge not-achieved">❌ Plan Not Achieved</span>
+                                      )}
+                                    </span>
+                                  )}
                                 </div>
                                 
                                 <div className="session-details">
                                   {sessionActivities.map((activity, activityIndex) => (
                                     <div key={activityIndex} className="activity-item">
-                                      {/* Activity Description */}
+                                      {/* Plan vs Achievement - show first */}
+                                      {activity.plan_achievements && activity.plan_achievements.length > 0 && (
+                                        <div className="activity-field">
+                                          <label className="field-label">🎯 Plan Achievement Details:</label>
+                                          <div className="field-value">
+                                            <ul className="plan-achievement-list">
+                                              {activity.plan_achievements.map((p, idx) => (
+                                                <li key={idx}>
+                                                  <span className="plan-item">{p.plan}</span>
+                                                  <span className={`plan-achieved-badge ${p.achieved ? 'achieved' : 'not-achieved'}`}>{p.achieved ? '✅ Achieved' : '❌ Not Achieved'}</span>
+                                                </li>
+                                              ))}
+                                            </ul>
+                                            {activity.plan_comparison && (
+                                              <div style={{marginTop: '0.5em'}}>
+                                                <strong>Summary:</strong> <span className={`plan-achieved-badge ${activity.plan_comparison.achievedFlag ? 'achieved' : 'not-achieved'}`}>{activity.plan_comparison.achievedFlag ? 'All Plans Achieved' : 'Some Plans Not Achieved'}</span>
+                                              </div>
+                                            )}
+                                            {activity.plan_comparison && activity.plan_comparison.daily_target_achieved && (
+                                              <div><strong>Daily Achieved (from daily report):</strong> {activity.plan_comparison.daily_target_achieved}</div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+                                      {/* Activity Description - show after plan achievement */}
                                       <div className="activity-field">
                                         <label className="field-label">📝 Activity:</label>
                                         <div className="field-value">
@@ -1317,7 +1444,7 @@ Man Hours: ${mom.man_hours}
                           <span className="leave-remark">{report.remark || 'No remark'}</span>
                         ) : (
                           <div>
-                            <div><strong>Project:</strong> {report.project_no || 'N/A'}</div>
+                            <div><strong>Project Name:</strong> {report.project_name || report.project_no || 'N/A'}</div>
                             <div><strong>Customer:</strong> {report.customer_name || 'N/A'}</div>
                           </div>
                         )}
@@ -1573,21 +1700,21 @@ Man Hours: ${mom.man_hours}
                   </div>
                 ) : (
                   <>
-                    <div className="detail-group">
-                      <h4>Project Details</h4>
-                      <div className="detail-row">
-                        <span>Project No:</span>
-                        <span>{selectedReport.project_no || 'N/A'}</span>
+                      <div className="detail-group">
+                        <h4>Project Details</h4>
+                        <div className="detail-row">
+                          <span>Project Name:</span>
+                          <span>{selectedReport.project_name || selectedReport.project_no || 'N/A'}</span>
+                        </div>
+                        <div className="detail-row">
+                          <span>Customer:</span>
+                          <span>{selectedReport.customer_name || 'N/A'}</span>
+                        </div>
+                        <div className="detail-row">
+                          <span>Contact Person:</span>
+                          <span>{selectedReport.customer_person || 'N/A'}</span>
+                        </div>
                       </div>
-                      <div className="detail-row">
-                        <span>Customer:</span>
-                        <span>{selectedReport.customer_name || 'N/A'}</span>
-                      </div>
-                      <div className="detail-row">
-                        <span>Contact Person:</span>
-                        <span>{selectedReport.customer_person || 'N/A'}</span>
-                      </div>
-                    </div>
                     
                     <div className="detail-group">
                       <h4>Target Information</h4>
@@ -1599,6 +1726,27 @@ Man Hours: ${mom.man_hours}
                         <span>Daily Target Achieved:</span>
                         <div className="target-content">{selectedReport.daily_target_achieved || 'N/A'}</div>
                       </div>
+                      {/* Additional Activity */}
+                      {selectedReport.additional_activity && (
+                        <div className="detail-row">
+                          <span>Additional Activity:</span>
+                          <div className="target-content">{selectedReport.additional_activity}</div>
+                        </div>
+                      )}
+                      {/* Additional Activity Details */}
+                      {selectedReport.additional_activity_details && (
+                        <div className="detail-row">
+                          <span>Additional Activity Details:</span>
+                          <div className="target-content">{selectedReport.additional_activity_details}</div>
+                        </div>
+                      )}
+                      {/* Who Added Activity */}
+                      {selectedReport.who_added_activity && (
+                        <div className="detail-row">
+                          <span>Who Added Activity:</span>
+                          <div className="target-content">{selectedReport.who_added_activity}</div>
+                        </div>
+                      )}
                     </div>
                   </>
                 )}

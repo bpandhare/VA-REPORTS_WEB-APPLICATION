@@ -29,7 +29,7 @@ const defaultPayload = () => {
     endCustomerContact: '',
     endCustomerCountryCode: '+91',
     endCustomerAddress: '',
-    projectNo: '',
+    projectName: '',
     locationType: '',
     leaveType: '',
     siteLocation: '',
@@ -586,7 +586,7 @@ function DailyTargetForm() {
             endCustomerContact: saved.endCustomerContact || prev.endCustomerContact,
             endCustomerCountryCode: saved.endCustomerCountryCode || prev.endCustomerCountryCode,
             endCustomerAddress: saved.endCustomerAddress || prev.endCustomerAddress,
-            projectNo: saved.projectNo || prev.projectNo,
+            projectName: saved.projectName || prev.projectName,
             locationType: saved.locationType || prev.locationType,
             leaveType: saved.leaveType || prev.leaveType,
             siteLocation: saved.siteLocation || prev.siteLocation,
@@ -940,7 +940,7 @@ function DailyTargetForm() {
           endCustomerPerson: '',
           endCustomerContact: '',
           endCustomerCountryCode: '+91',
-          projectNo: '',
+          projectName: '',
           siteLocation: '',
           locationLat: '',
           locationLng: '',
@@ -1746,7 +1746,7 @@ function DailyTargetForm() {
         dataToSubmit.endCustomerPerson = ''
         dataToSubmit.endCustomerContact = ''
         dataToSubmit.endCustomerCountryCode = '+91'
-        dataToSubmit.projectNo = ''
+        dataToSubmit.projectName = ''
         dataToSubmit.dailyTargetPlanned = ''
         dataToSubmit.dailyTargetAchieved = ''
         dataToSubmit.additionalActivity = 'No'
@@ -2717,13 +2717,13 @@ function DailyTargetForm() {
               </label>
 
               <label className="vh-span-2">
-                <span>Project Number *</span>
+                <span>Project Name *</span>
                 <input
                   type="text"
-                  name="projectNo"
-                  value={formData.projectNo}
+                  name="projectName"
+                  value={formData.projectName}
                   onChange={handleChange}
-                  placeholder="Enter project number"
+                  placeholder="Enter project name"
                   required={formData.locationType !== 'leave'}
                 />
               </label>
